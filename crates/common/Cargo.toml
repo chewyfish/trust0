@@ -1,0 +1,35 @@
+[package]
+name = "trust0-common"
+version = "0.1.0-alpha"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+anyhow = "1.0.75"
+async-trait = "0.1.73"
+clap = "4.4.5"
+futures-util = "0.3.29"
+log = { version = "0.4.4" }
+log4rs = "1.2.0"
+mio = { version = "0.8", features = ["net", "os-poll"] }
+oid-registry = "0.6.1"
+once_cell = "1.18.0"
+pki-types = { package = "rustls-pki-types", version = "0.2" }
+rcgen = { version = "0.11.1", features = ["pem"], default-features = false }
+regex = "1.10.2"
+ring = "0.16.20"
+rustls = { version = "0.21.7", features = [ "logging", "dangerous_configuration", "read_buf" ] }
+rustls-pemfile = "1.0.3"
+sct = "0.7"
+serde = { version = "*", features = ["derive"] }
+serde_derive = "*"
+serde_json = { version = "*", features = ["arbitrary_precision"] }
+shlex = "1.2.0"
+tokio = { version = "*", features = ["full"] }
+webpki-roots = "0.25"
+webpki = { package = "rustls-webpki", version = "0.101.2", features = ["alloc", "std"] }
+x509-parser = "0.15.1"
+
+[dev-dependencies]
+mockall = "0.11.4"

@@ -1,0 +1,14 @@
+## File system
+.DS_Store
+desktop.ini
+
+## Editor
+*.swp
+*.swo
+.idea
+*.iml
+.vscode
+.project
+
+## Build
+target
