@@ -1,0 +1,30 @@
+name: Feature Request
+description: Suggest a feature for Trust0
+title: "[NEW] <title>"
+labels: ["type: feature"]
+body:
+  - type: checkboxes
+    attributes:
+      label: Is there an existing issue for this?
+      description: Please search to see if a similar issue already exists for the requested feature
+      options:
+        - label: I have searched the existing issues
+          required: true
+  - type: textarea
+    attributes:
+      label: Feature Description
+      description: A concise description of the requested feature
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Alternatives Considered
+      description: Any alternative solutions or features you've considered, including references to existing open and closed feature requests in this repository
+    validations:
+      required: false
+  - type: textarea
+    attributes:
+      label: Additional Information
+      description: Any additional information that is relevant to the feature request
+    validations:
+      required: false
