@@ -2,7 +2,6 @@ use std::{process, thread};
 use std::time::Duration;
 use anyhow::Result;
 use futures::executor::block_on;
-use log::error;
 
 use trust0_common::error::AppError;
 use trust0_common::logging::{error, LOG, LogLevel};
@@ -37,11 +36,11 @@ pub async fn main() -> Result<()> {
     match block_on(async_main()) {
 
         Ok(()) => {
-            std::process::exit(0);
+            process::exit(0);
         },
         Err(err) =>  {
-            error!("{:?}", err);
-            std::process::exit(1);
+            eprintln!("{:?}", err);
+            process::exit(1);
         }
     }
 }
