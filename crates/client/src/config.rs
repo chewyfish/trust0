@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
 use clap::Parser;
-use rustls::{OwnedTrustAnchor, RootCertStore, SupportedCipherSuite};
+use rustls::{RootCertStore, SupportedCipherSuite};
+use rustls::crypto::CryptoProvider;
 
 use trust0_common::crypto::file::{load_certificates, load_private_key};
+use trust0_common::error::AppError;
 
 /// Connects to the TLS server at HOSTNAME:PORT.  The default PORT
 /// is 443.  By default, this reads a request from stdin (to EOF)
@@ -28,9 +30,9 @@ pub struct AppConfigArgs {
     #[arg(required=true, short='c', long="auth-cert-file", env, value_parser=trust0_common::crypto::file::verify_certificates)]
     pub auth_cert_file: String,
 
-    /// Read root certificates from <CA_ROOT_CERT_FILE> (otherwise default CA certificates will be used)
-    #[arg(required=false, short='r', long="ca-root-cert-file", env, value_parser=trust0_common::crypto::file::verify_certificates)]
-    pub ca_root_cert_file: Option<String>,
+    /// Read root certificates from <CA_ROOT_CERT_FILE>
+    #[arg(required=true, short='r', long="ca-root-cert-file", env, value_parser=trust0_common::crypto::file::verify_certificates)]
+    pub ca_root_cert_file: String,
 
     /// Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead
     #[arg(required=false, long="protocol-version", env, value_parser=trust0_common::crypto::tls::lookup_version)]
@@ -76,7 +78,7 @@ impl AppConfig {
 
     // load config
 
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, AppError> {
 
         // parse process arguments
 
@@ -84,39 +86,26 @@ impl AppConfig {
 
         // create TLS client configuration
 
-        let auth_certs = load_certificates(&config_args.auth_cert_file).unwrap();
-        let ca_root_certs = match config_args.ca_root_cert_file {
-            Some(ca_root_cert_file) => Some(load_certificates(&ca_root_cert_file).unwrap()),
-            None => None
-        };
+        let auth_certs = load_certificates(config_args.auth_cert_file.clone())?;
+        let ca_root_certs = load_certificates(config_args.ca_root_cert_file.clone())?;
 
         let mut ca_root_store = RootCertStore::empty();
 
-        if ca_root_certs.is_some() {
-            for ca_root_cert in ca_root_certs.unwrap() {
-                ca_root_store
-                    .add(&ca_root_cert)
-                    .expect("Error adding CA root cert");
-            }
-        } else {
-            ca_root_store.add_trust_anchors(
-                webpki_roots::TLS_SERVER_ROOTS
-                    .iter()
-                    .map(|ta| {
-                        OwnedTrustAnchor::from_subject_spki_name_constraints(
-                            ta.subject,
-                            ta.spki,
-                            ta.name_constraints
-                        )
-                    }),
-            );
+        for ca_root_cert in ca_root_certs {
+            ca_root_store
+                .add(ca_root_cert)
+                .map_err(|err| AppError::GenWithMsgAndErr("Error adding CA root cert".to_string(), Box::new(err.clone())))?;
         }
 
-        let auth_key = load_private_key(&config_args.auth_key_file).unwrap();
+        let auth_key = load_private_key(config_args.auth_key_file.clone()).unwrap();
 
-        let mut tls_client_config= rustls::ClientConfig::builder()
-            .with_cipher_suites(&*config_args.cipher_suite.unwrap_or(rustls::ALL_CIPHER_SUITES.to_vec()))
-            .with_safe_default_kx_groups()
+        let cipher_suites: Vec<rustls::SupportedCipherSuite> = config_args.cipher_suite.unwrap_or(rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec());
+
+        let mut tls_client_config = rustls::ClientConfig::builder_with_provider(
+            CryptoProvider {
+                cipher_suites,
+                ..rustls::crypto::ring::default_provider()
+            }.into())
             .with_protocol_versions(&*config_args.protocol_version.unwrap_or(rustls::ALL_VERSIONS.to_vec()))
             .expect("Inconsistent cipher-suite/versions selected")
             .with_root_certificates(ca_root_store)
@@ -146,30 +135,69 @@ impl AppConfig {
 
         // instantiate AppConfig
 
-        AppConfig {
+        Ok(AppConfig {
             gateway_host: config_args.gateway_host.clone(),
             gateway_port: config_args.gateway_port,
             tls_client_config,
             verbose_logging: config_args.verbose
-        }
+        })
 
     }
 }
 
 mod danger {
+    use pki_types::{CertificateDer, ServerName, UnixTime};
+    use rustls::client::danger::HandshakeSignatureValid;
+    use rustls::crypto::{verify_tls12_signature, verify_tls13_signature};
+    use rustls::DigitallySignedStruct;
+
+    #[derive(Debug)]
     pub struct NoCertificateVerification {}
 
-    impl rustls::client::ServerCertVerifier for NoCertificateVerification {
+    impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
         fn verify_server_cert(
             &self,
-            _end_entity: &rustls::Certificate,
-            _intermediates: &[rustls::Certificate],
-            _server_name: &rustls::ServerName,
-            _scts: &mut dyn Iterator<Item = &[u8]>,
+            _end_entity: &CertificateDer<'_>,
+            _intermediates: &[CertificateDer<'_>],
+            _server_name: &ServerName<'_>,
             _ocsp: &[u8],
-            _now: std::time::SystemTime,
-        ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
-            Ok(rustls::client::ServerCertVerified::assertion())
+            _now: UnixTime,
+        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        }
+
+        fn verify_tls12_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, rustls::Error> {
+            verify_tls12_signature(
+                message,
+                cert,
+                dss,
+                &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+            )
+        }
+
+        fn verify_tls13_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &DigitallySignedStruct,
+        ) -> Result<HandshakeSignatureValid, rustls::Error> {
+            verify_tls13_signature(
+                message,
+                cert,
+                dss,
+                &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+            )
+        }
+
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            rustls::crypto::ring::default_provider()
+                .signature_verification_algorithms
+                .supported_schemes()
         }
     }
 }

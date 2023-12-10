@@ -2,8 +2,9 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 use iter_group::IntoGroup;
+use pki_types::CertificateDer;
 use serde::{Deserialize, Serialize};
-use rustls::Certificate;
+use x509_parser::nom::AsBytes;
 use x509_parser::prelude::*;
 
 use trust0_common::crypto::asn;
@@ -33,9 +34,9 @@ pub struct Device {
 impl Device {
 
     /// Device constructor
-    pub fn new(device_cert_chain: &Vec<Certificate>) -> Result<Self, AppError> {
+    pub fn new(device_cert_chain: Vec<CertificateDer<'static>>) -> Result<Self, AppError> {
 
-        let x509_cert = Device::device_cert(device_cert_chain)?;
+        let x509_cert = Device::device_cert(&device_cert_chain)?;
 
         let cert_subj = x509_cert.subject.iter()
             .flat_map(|dn| dn.iter())
@@ -91,10 +92,10 @@ impl Device {
     }
 
     /// Retrieve the end-entity (aka device) certificate, must be the first one.
-    fn device_cert(cert_chain: &[Certificate]) -> Result<X509Certificate, AppError> {
+    fn device_cert<'a>(cert_chain: &'a Vec<CertificateDer<'a>>) -> Result<X509Certificate<'a>, AppError> {
 
         match cert_chain.get(0) {
-            Some(cert) => Ok(parse_x509_certificate(&cert.0)
+            Some(cert) => Ok(parse_x509_certificate(cert.as_bytes())
                 .map_err(|err| AppError::GenWithMsgAndErr("Failed to parse client certificate".to_string(), Box::new(err)))?
                 .1),
             None => Err(AppError::General("Empty client certificate chain (1)".to_string()).into())
@@ -116,9 +117,9 @@ mod tests {
     fn device_new_fn_when_valid_client_cert() -> Result<(), AppError> {
 
         let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let certs = load_certificates(certs_file.to_str().unwrap())?;
+        let certs = load_certificates(certs_file.to_str().unwrap().to_string())?;
 
-        let device_result = Device::new(&certs);
+        let device_result = Device::new(certs);
 
         if let Ok(device) = &device_result {
             assert_eq!(device.cert_access_context.user_id, 100);
@@ -133,9 +134,9 @@ mod tests {
     fn device_new_fn_when_invalid_client_cert() -> Result<(), AppError> {
 
         let certs_file: PathBuf = CERTFILE_NON_CLIENT_PATHPARTS.iter().collect();
-        let certs = load_certificates(certs_file.to_str().unwrap())?;
+        let certs = load_certificates(certs_file.to_str().unwrap().to_string())?;
 
-        let device_result = Device::new(&certs);
+        let device_result = Device::new(certs);
 
         if let Ok(device) = &device_result {
             let default_device = Device::default();
@@ -150,7 +151,7 @@ mod tests {
     #[test]
     fn device_new_fn_when_no_certificates() -> Result<(), AppError> {
 
-        let device_result = Device::new(&vec![]);
+        let device_result = Device::new(vec![]);
 
         if let Err(_) = &device_result {
             return Ok(());

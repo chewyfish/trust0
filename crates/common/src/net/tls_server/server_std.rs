@@ -4,7 +4,7 @@ use std::{io, thread};
 use std::time::Duration;
 
 use anyhow::Result;
-use rustls::server::Acceptor;
+use rustls::server::{Accepted, Acceptor};
 
 use crate::net::tls_server::conn_std::{self, TlsServerConnection};
 use crate::error::AppError;
@@ -16,7 +16,6 @@ use crate::target;
 /// It has a TCP-level stream, a TLS-level connection state, and some other state/metadata.
 pub struct Server {
     visitor: Arc<Mutex<dyn ServerVisitor>>,
-    tls_server_config: Arc<rustls::ServerConfig>,
     _server_port: u16,
     tcp_listener: Option<TcpListener>,
     listen_addr: String,
@@ -30,13 +29,11 @@ impl Server {
     /// Server constructor
     pub fn new(
         visitor: Arc<Mutex<dyn ServerVisitor>>,
-        tls_server_config: Arc<rustls::ServerConfig>,
         server_port: u16
     ) -> Self {
 
         Self {
             visitor,
-            tls_server_config,
             _server_port: server_port,
             tcp_listener: None,
             listen_addr: format!("[::]:{}", server_port),
@@ -208,7 +205,9 @@ impl Server {
             }
         };
 
-        let mut tls_srv_conn = accepted.into_connection(self.tls_server_config.clone()).map_err(|err|
+        let tls_server_config = Arc::new(self.visitor.lock().unwrap().on_tls_handshaking(&accepted)?);
+
+        let mut tls_srv_conn = accepted.into_connection(tls_server_config).map_err(|err|
             AppError::GenWithMsgAndErr(
                 format!("Error creating TLS server connection: server_addr={:?}, peer_addr={:?}", &self.listen_addr, &peer_addr),
                 Box::new(err)))?;
@@ -253,6 +252,9 @@ pub trait ServerVisitor : Send {
     fn on_listening(&mut self) -> Result<(), AppError> {
         Ok(())
     }
+
+    /// Connection TLS handshaking
+    fn on_tls_handshaking(&mut self, _accepted: &Accepted) -> Result<rustls::ServerConfig, AppError>;
 
     /// Connection accepted
     fn on_conn_accepted(&mut self, connection: conn_std::Connection) -> Result<(), AppError> {
