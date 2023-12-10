@@ -1,16 +1,19 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use clap::*;
 use dnsclient::sync::DNSClient;
 use lazy_static::lazy_static;
-use rustls::{RootCertStore, SupportedCipherSuite};
-use rustls::server::AllowAnyAuthenticatedClient;
+use pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
 use trust0_common::crypto::alpn;
-use trust0_common::crypto::file::{load_certificates, load_crl_list, load_private_key};
+use trust0_common::crypto::file::{load_certificates, load_private_key};
+use trust0_common::crypto::file::CRLFile;
 use trust0_common::error::AppError;
 use regex::Regex;
+use rustls::crypto::CryptoProvider;
+use rustls::server::danger::ClientCertVerifier;
+use rustls::server::WebPkiClientVerifier;
 use crate::repository::access_repo::AccessRepository;
 use crate::repository::access_repo::in_memory_repo::InMemAccessRepo;
 use crate::repository::service_repo::in_memory_repo::InMemServiceRepo;
@@ -67,7 +70,7 @@ pub enum ServerMode {
 }
 
 /// Datasource configuration for the trust framework entities
-#[derive(Subcommand, Clone)]
+#[derive(Subcommand, Debug, Clone)]
 pub enum DataSource {
 
     /// No DB configured, used in testing
@@ -77,7 +80,7 @@ pub enum DataSource {
     InMemoryDb(InMemoryDb),
 }
 
-#[derive(Args, Clone)]
+#[derive(Args, Debug, Clone)]
 pub struct InMemoryDb {
 
     /// (Service) Access entity store JSON file path
@@ -112,16 +115,16 @@ pub struct AppConfigArgs {
     #[arg(required=true, short='k', long="key-file", env, value_parser=trust0_common::crypto::file::verify_private_key_file)]
     pub key_file: String,
 
-    /// Read DER-encoded OCSP response from <OCSP_FILE> and staple to certificate
-    #[arg(required=false, short='o', long="ocsp-file", env, value_parser=trust0_common::crypto::file::load_ocsp_response)]
-    pub ocsp_file: Option<Vec<u8>>,
-
     /// Accept client authentication certificates signed by those roots provided in <AUTH_CERT_FILE>
     #[arg(required=true, short='a', long="auth-cert-file", env, value_parser=trust0_common::crypto::file::verify_certificates)]
     pub auth_cert_file: String,
 
-    /// Perform client certificate revocation checking using the DER-encoded <CRL_FILE(s)>
+    /// EXPERIMENTAL. Perform client certificate revocation checking using the DER-encoded <CRL_FILE(s)>. Will update list during runtime, if file has changed.
+    #[cfg(feature = "experimental-crl")]
     #[arg(required=false, long="crl-file", env, value_parser=trust0_common::crypto::file::verify_crl_list)]
+    pub crl_file: Option<String>,
+    #[cfg(not(feature = "experimental-crl"))]
+    #[arg(skip=None)]
     pub crl_file: Option<String>,
 
     /// Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead
@@ -130,7 +133,7 @@ pub struct AppConfigArgs {
 
     /// Disable default cipher suite list, and use <CIPHER_SUITE(s)> instead
     #[arg(required=false, long="cipher-suite", env, value_parser=trust0_common::crypto::tls::lookup_suite)]
-    pub cipher_suite: Option<Vec<SupportedCipherSuite>>,
+    pub cipher_suite: Option<Vec<rustls::SupportedCipherSuite>>,
 
     /// Negotiate ALPN using <ALPN_PROTOCOL(s)>
     #[arg(required=false, long="alpn-protocol", env, value_parser=trust0_common::crypto::tls::parse_alpn_protocol)]
@@ -173,10 +176,73 @@ pub struct AppConfigArgs {
     pub datasource: DataSource,
 }
 
+/// TLS server configuration builder
+pub struct TlsServerConfigBuilder {
+    pub certs: Vec<CertificateDer<'static>>,
+    pub key: PrivateKeyDer<'static>,
+    pub cipher_suites: Vec<rustls::SupportedCipherSuite>,
+    pub protocol_versions: Vec<&'static rustls::SupportedProtocolVersion>,
+    pub auth_root_certs: rustls::RootCertStore,
+    pub crl_file: Option<Arc<Mutex<CRLFile>>>,
+    pub session_resumption: bool,
+    pub alpn_protocols: Vec<Vec<u8>>
+}
+
+impl TlsServerConfigBuilder {
+
+    /// Create TLS server configuration
+    pub fn build(&self) -> Result<rustls::ServerConfig, AppError> {
+
+        let mut tls_server_config = rustls::ServerConfig::builder_with_provider(
+            CryptoProvider {
+                cipher_suites: self.cipher_suites.to_vec(),
+                ..rustls::crypto::ring::default_provider()
+            }.into())
+            .with_protocol_versions(self.protocol_versions.as_slice())
+            .expect("inconsistent cipher-suites/versions specified")
+            .with_client_cert_verifier(self.build_client_cert_verifier()?)
+            .with_single_cert(self.certs.clone(),
+                              PrivatePkcs8KeyDer::from(self.key.secret_der().to_owned()).into())
+            .expect("bad certificates/private key");
+
+        tls_server_config.key_log = Arc::new(rustls::KeyLogFile::new());
+
+        if self.session_resumption {
+            tls_server_config.session_storage = rustls::server::ServerSessionMemoryCache::new(256);
+        }
+
+        tls_server_config.alpn_protocols = self.alpn_protocols.clone();
+
+        Ok(tls_server_config)
+    }
+
+    /// Build a TLS client verifier
+    #[cfg(feature = "experimental-crl")]
+    fn build_client_cert_verifier(&self) -> Result<Arc<dyn ClientCertVerifier>, AppError> {
+
+        let crl_list = match &self.crl_file {
+            Some(crl_file) => vec![crl_file.lock().unwrap().crl_list()?],
+            None => vec![]
+        };
+
+        Ok(WebPkiClientVerifier::builder(Arc::new(self.auth_root_certs.clone()))
+            .with_crls(crl_list)
+            .build()
+            .unwrap())
+    }
+    #[cfg(not(feature = "experimental-crl"))]
+    fn build_client_cert_verifier(&self) -> Result<Arc<dyn ClientCertVerifier>, AppError> {
+        Ok(WebPkiClientVerifier::builder(Arc::new(self.auth_root_certs.clone()))
+            .build()
+            .unwrap())
+    }
+}
+
+/// Main application configuration/context struct
 pub struct AppConfig {
     pub server_mode: ServerMode,
     pub server_port: u16,
-    pub tls_server_config: Arc<rustls::ServerConfig>,
+    pub tls_server_config_builder: TlsServerConfigBuilder,
     pub verbose_logging: bool,
     pub access_repo: Arc<dyn AccessRepository>,
     pub service_repo: Arc<dyn ServiceRepository>,
@@ -197,48 +263,6 @@ impl AppConfig {
 
         let config_args = AppConfigArgs::parse();
 
-        // create TLS server configuration
-
-        let auth_certs = load_certificates(&config_args.auth_cert_file).unwrap();
-        let certs = load_certificates(&config_args.cert_file).unwrap();
-        let key = load_private_key(&config_args.key_file).unwrap();
-        let crl_list = match &config_args.crl_file {
-            Some(crl_file) => vec![load_crl_list(crl_file).unwrap()],
-            None => vec![]
-        };
-
-        let mut auth_root_certs = RootCertStore::empty();
-        for auth_root_cert in auth_certs {
-            auth_root_certs.add(&auth_root_cert).unwrap();
-        }
-
-        let client_verifier = AllowAnyAuthenticatedClient::new(auth_root_certs)
-            .with_crls(crl_list)
-            .map_err(|err| AppError::General(format!("Invalid CRLs: err={:?}", err)))?
-            .boxed();
-
-        let mut tls_server_config= rustls::ServerConfig::builder()
-            //.with_cipher_suites(&*config_args.cipher_suite.unwrap_or(rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec()))
-            .with_cipher_suites(&*config_args.cipher_suite.unwrap_or(rustls::ALL_CIPHER_SUITES.to_vec()))
-            .with_safe_default_kx_groups()
-            .with_protocol_versions(&*config_args.protocol_version.unwrap_or(rustls::ALL_VERSIONS.to_vec()))
-            .expect("inconsistent cipher-suites/versions specified")
-            .with_client_cert_verifier(client_verifier)
-            .with_single_cert_with_ocsp_and_sct(certs, key, config_args.ocsp_file.unwrap_or(Vec::new()), vec![])
-            .expect("bad certificates/private key");
-
-        tls_server_config.key_log = Arc::new(rustls::KeyLogFile::new());
-
-        if config_args.session_resumption {
-            tls_server_config.session_storage = rustls::server::ServerSessionMemoryCache::new(256);
-        }
-
-        /*
-        if config_args.tickets {
-            tls_server_config.ticketer = rustls::crypto::ring::Ticketer::new().unwrap();
-        }
-         */
-
         // Datasource repositories
 
         let repositories: (Arc<dyn AccessRepository>, Arc<dyn ServiceRepository>, Arc<dyn UserRepository>)
@@ -256,15 +280,49 @@ impl AppConfig {
             )
         };
 
-        // Setup ALPN protocols for connection type negotiation
+        // create TLS server configuration builder
+
+        let auth_certs = load_certificates(config_args.auth_cert_file.clone()).unwrap();
+        let certs = load_certificates(config_args.cert_file.clone()).unwrap();
+        let key = load_private_key(config_args.key_file.clone()).unwrap();
+
+        let crl_file = if cfg!(feature = "experimental-crl") {
+            match &config_args.crl_file {
+                Some(filepath) => {
+                    let crl_file = CRLFile::new(filepath.as_str());
+                    crl_file.spawn_list_reloader(None, Some(Box::new(|err| {
+                        panic!("Error during CRL reload, exiting: err={:?}", &err);
+                    })));
+                    Some(Arc::new(Mutex::new(crl_file)))
+                }
+                None => None
+            }
+        } else { None };
+
+        let mut auth_root_certs = rustls::RootCertStore::empty();
+        for auth_root_cert in auth_certs {
+            auth_root_certs.add(auth_root_cert).unwrap();
+        }
+
+        let cipher_suites: Vec<rustls::SupportedCipherSuite> = config_args.cipher_suite.unwrap_or(rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec());
+        let protocol_versions: Vec<&'static rustls::SupportedProtocolVersion> = config_args.protocol_version.unwrap_or(rustls::ALL_VERSIONS.to_vec());
+        let session_resumption = config_args.session_resumption;
 
         let mut alpn_protocols = vec![alpn::Protocol::ControlPlane.to_string().into_bytes()];
-
         for service in repositories.1.as_ref().get_all()? {
             alpn_protocols.push(alpn::Protocol::create_service_protocol(service.service_id).into_bytes())
         }
 
-        tls_server_config.alpn_protocols = alpn_protocols;
+        let tls_server_config_builder = TlsServerConfigBuilder {
+            certs,
+            key,
+            cipher_suites,
+            protocol_versions,
+            auth_root_certs,
+            crl_file,
+            session_resumption,
+            alpn_protocols,
+        };
 
         // Miscellaneous
 
@@ -276,7 +334,7 @@ impl AppConfig {
         Ok(AppConfig {
             server_mode: config_args.mode.unwrap_or_default(),
             server_port: config_args.port,
-            tls_server_config: Arc::new(tls_server_config),
+            tls_server_config_builder,
             verbose_logging: config_args.verbose,
             access_repo: repositories.0,
             service_repo: repositories.1,
@@ -351,21 +409,30 @@ pub mod tests {
         -> Result<AppConfig, AppError> {
 
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
-        let gateway_cert = load_certificates(gateway_cert_file.to_str().unwrap())?;
-
+        let gateway_cert = load_certificates(gateway_cert_file.to_str().unwrap().to_string())?;
         let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
-        let gateway_key = load_private_key(gateway_key_file.to_str().unwrap())?;
+        let gateway_key = load_private_key(gateway_key_file.to_str().unwrap().to_string())?;
+        let mut auth_root_certs = rustls::RootCertStore::empty();
+        let cipher_suites: Vec<rustls::SupportedCipherSuite> = rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
+        let protocol_versions: Vec<&'static rustls::SupportedProtocolVersion> = rustls::ALL_VERSIONS.to_vec();
+        let session_resumption = false;
+        let mut alpn_protocols = vec![alpn::Protocol::ControlPlane.to_string().into_bytes()];
 
-        let server_config = rustls::ServerConfig::builder()
-            .with_safe_defaults()
-            .with_no_client_auth()
-            .with_single_cert(gateway_cert, gateway_key)
-            .expect("bad certificates/private key");
+        let tls_server_config_builder = TlsServerConfigBuilder {
+            certs: gateway_cert,
+            key: gateway_key,
+            cipher_suites,
+            protocol_versions,
+            auth_root_certs,
+            crl_file: None,
+            session_resumption,
+            alpn_protocols,
+        };
 
         Ok(AppConfig {
             server_mode: ServerMode::ControlPlane,
             server_port: 2000,
-            tls_server_config: Arc::new(server_config),
+            tls_server_config_builder,
             verbose_logging: false,
             access_repo,
             service_repo,

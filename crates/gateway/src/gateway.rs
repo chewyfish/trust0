@@ -1,6 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
+use rustls::server::Accepted;
+use rustls::ServerConfig;
 use trust0_common::crypto::alpn::Protocol;
 
 use trust0_common::error::AppError;
@@ -32,7 +34,6 @@ impl Gateway {
             _server_mode: app_config.server_mode.clone(),
             tls_server: server_std::Server::new(
                 visitor.clone(),
-                app_config.tls_server_config.clone(),
                 app_config.server_port
             ),
             _visitor: visitor
@@ -54,7 +55,7 @@ unsafe impl Send for Gateway {}
 
 /// tls_server::server_std::Server strategy visitor pattern implementation
 pub struct ServerVisitor {
-    _app_config: Arc<AppConfig>,
+    app_config: Arc<AppConfig>,
     service_mgr: Arc<Mutex<ServiceMgr>>,
     control_plane_visitor: ControlPlaneServerVisitor,
     shutdown_requested: bool
@@ -67,7 +68,7 @@ impl ServerVisitor {
                service_mgr: Arc<Mutex<ServiceMgr>>) -> Self {
 
         Self {
-            _app_config: app_config.clone(),
+            app_config: app_config.clone(),
             service_mgr: service_mgr.clone(),
             control_plane_visitor: ControlPlaneServerVisitor::new(app_config, service_mgr),
             shutdown_requested: false
@@ -104,6 +105,10 @@ impl server_std::ServerVisitor for ServerVisitor {
             Protocol::Service(service_id) =>
                 self.get_service_proxy(service_id)?.lock().unwrap().create_client_conn(tls_conn)
         }
+    }
+
+    fn on_tls_handshaking(&mut self, _accepted: &Accepted) -> Result<ServerConfig, AppError> {
+        self.app_config.tls_server_config_builder.build()
     }
 
     fn on_conn_accepted(&mut self, connection: conn_std::Connection) -> Result<(), AppError> {

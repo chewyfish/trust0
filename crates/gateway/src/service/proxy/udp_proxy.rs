@@ -4,6 +4,8 @@ use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
 
 use anyhow::Result;
+use rustls::server::Accepted;
+use rustls::ServerConfig;
 
 use trust0_common::error::AppError;
 use trust0_common::model::service::Service;
@@ -27,7 +29,7 @@ impl UdpGatewayProxy {
 
     /// UdpGatewayProxy constructor
     pub fn new(
-        app_config: Arc<AppConfig>,
+        _app_config: Arc<AppConfig>,
         server_visitor: Arc<Mutex<UdpGatewayProxyServerVisitor>>,
         proxy_port: u16,
     ) -> Self {
@@ -35,7 +37,6 @@ impl UdpGatewayProxy {
         Self {
             tls_server: server_std::Server::new(
                 server_visitor.clone(),
-                app_config.tls_server_config.clone(),
                 proxy_port
             ),
             _server_visitor: server_visitor,
@@ -132,6 +133,10 @@ impl server_std::ServerVisitor for UdpGatewayProxyServerVisitor {
         let connection = conn_std::Connection::new(Box::new(conn_visitor), tls_conn, alpn_protocol)?;
 
         Ok(connection)
+    }
+
+    fn on_tls_handshaking(&mut self, _accepted: &Accepted) -> Result<ServerConfig, AppError> {
+        self.app_config.tls_server_config_builder.build()
     }
 
     fn on_conn_accepted(&mut self, connection: conn_std::Connection) -> Result<(), AppError> {
