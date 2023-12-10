@@ -518,7 +518,7 @@ You will be presented with a tmux session w/multiple panes, which represent:
 
 Follow the instructions in step order. The following shows a screencast (using asciinema) of a chat session:
 
-[![asciicast](https://asciinema.org/a/bvCUAUitGA7xfglz3H2Jftyky.png)](https://asciinema.org/a/bvCUAUitGA7xfglz3H2Jftyky)
+[![asciicast](https://asciinema.org/a/626132.png)](https://asciinema.org/a/626132)
 
 ### Example - Echo UDP service
 
@@ -545,4 +545,4 @@ You will be presented with a tmux session w/multiple panes, which represent:
 
 Follow the instructions in step order. The following shows a screencast (using asciinema) of a echo session:
 
-[![asciicast](https://asciinema.org/a/sQSPo1XHy0xjsuTS4S9hOYCjQ.png)](https://asciinema.org/a/sQSPo1XHy0xjsuTS4S9hOYCjQ)
+[![asciicast](https://asciinema.org/a/626134.png)](https://asciinema.org/a/626134)
