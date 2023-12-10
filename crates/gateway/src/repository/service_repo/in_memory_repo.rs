@@ -19,21 +19,6 @@ impl InMemServiceRepo {
         }
     }
 
-    /// Load/parse services from given JSON file path
-    pub fn load_from_file(&mut self, file_path: &str) -> Result<(), AppError> {
-
-        let data = fs::read_to_string(file_path).map_err(|err|
-            AppError::GenWithMsgAndErr(format!("Failed to read file: path={}", file_path), Box::new(err)))?;
-        let services: Vec<Service> = serde_json::from_str(&data).map_err(|err|
-            AppError::GenWithMsgAndErr(format!("Failed to parse JSON: path={}", file_path), Box::new(err)))?;
-
-        for service in services.iter().as_ref() {
-            self.put(service.clone())?;
-        }
-
-        Ok(())
-    }
-
     fn access_data_for_write(&self) -> Result<RwLockWriteGuard<HashMap<u64, Service>>, AppError> {
         self.services.write().map_err(|err|
             AppError::General(format!("Failed to access write lock to DB: err={}", err)))
@@ -46,6 +31,20 @@ impl InMemServiceRepo {
 }
 
 impl ServiceRepository for InMemServiceRepo {
+
+    fn connect_to_datasource(&mut self, connect_spec: &str) -> Result<(), AppError> {
+
+        let data = fs::read_to_string(connect_spec).map_err(|err|
+            AppError::GenWithMsgAndErr(format!("Failed to read file: path={}", connect_spec), Box::new(err)))?;
+        let services: Vec<Service> = serde_json::from_str(&data).map_err(|err|
+            AppError::GenWithMsgAndErr(format!("Failed to parse JSON: path={}", connect_spec), Box::new(err)))?;
+
+        for service in services.iter().as_ref() {
+            self.put(service.clone())?;
+        }
+
+        Ok(())
+    }
 
     fn put(&self, service: Service) -> Result<Option<Service>, AppError> {
         let mut data = self.access_data_for_write()?;

@@ -6,6 +6,9 @@ use trust0_common::model::service::Service;
 /// Service data repository trait
 pub trait ServiceRepository: Sync + Send {
 
+    /// Process given datasource connect string (meaning depends on implementation)
+    fn connect_to_datasource(&mut self, connect_spec: &str) -> Result<(), AppError>;
+
     /// Creates/updates a service.
     ///
     /// Returns a previous service for this id or None on success, otherwise it returns an error.
@@ -40,6 +43,7 @@ pub mod tests {
     mock! {
         pub ServiceRepo {}
         impl ServiceRepository for ServiceRepo {
+            fn connect_to_datasource(&mut self, connect_spec: &str) -> Result<(), AppError>;
             fn put(&self, service: Service) -> std::result::Result<Option<Service>, AppError>;
             fn get(&self, service_id: u64) -> std::result::Result<Option<Service>, AppError>;
             fn get_all(&self) -> std::result::Result<Vec<Service>, AppError>;

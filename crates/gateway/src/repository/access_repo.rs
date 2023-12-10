@@ -6,6 +6,9 @@ use trust0_common::model::access::ServiceAccess;
 /// Access data repository trait
 pub trait AccessRepository: Sync + Send {
 
+    /// Process given datasource connect string (meaning depends on implementation)
+    fn connect_to_datasource(&mut self, connect_spec: &str) -> Result<(), AppError>;
+
     /// Creates/updates a service access.
     ///
     /// Returns a previous service access for this id or None on success, otherwise it returns an error.
@@ -40,6 +43,7 @@ pub mod tests {
     mock! {
         pub AccessRepo {}
         impl AccessRepository for AccessRepo {
+            fn connect_to_datasource(&mut self, connect_spec: &str) -> Result<(), AppError>;
             fn put(&self, access: ServiceAccess) -> Result<Option<ServiceAccess>, AppError>;
             fn get(&self, user_id: u64, service_id: u64) -> Result<Option<ServiceAccess>, AppError>;
             fn get_all_for_user(&self, user_id: u64) -> Result<Vec<ServiceAccess>, AppError>;

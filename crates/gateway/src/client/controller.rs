@@ -24,9 +24,9 @@ use crate::service::manager::ServiceMgr;
 pub struct ControlPlane {
     app_config: Arc<AppConfig>,
     processor: request::RequestProcessor,
-    access_repo: Arc<dyn AccessRepository>,
-    _service_repo: Arc<dyn ServiceRepository>,
-    user_repo: Arc<dyn UserRepository>,
+    access_repo: Arc<Mutex<dyn AccessRepository>>,
+    _service_repo: Arc<Mutex<dyn ServiceRepository>>,
+    user_repo: Arc<Mutex<dyn UserRepository>>,
     event_channel_sender: Sender<ConnectionEvent>,
     device: Device,
     user: model::user::User,
@@ -38,9 +38,9 @@ impl ControlPlane {
 
     /// ControlPlane constructor
     pub fn new(app_config: Arc<AppConfig>,
-               access_repo: Arc<dyn AccessRepository>,
-               service_repo: Arc<dyn ServiceRepository>,
-               user_repo: Arc<dyn UserRepository>,
+               access_repo: Arc<Mutex<dyn AccessRepository>>,
+               service_repo: Arc<Mutex<dyn ServiceRepository>>,
+               user_repo: Arc<Mutex<dyn UserRepository>>,
                event_channel_sender: Sender<ConnectionEvent>,
                device: Device,
                user: model::user::User) -> Result<Self, AppError> {
@@ -168,7 +168,7 @@ impl ControlPlane {
 
         let device = &self.device;
         let user_id = device.get_cert_access_context().user_id;
-        let user = self.user_repo.get(user_id)?.map(|u|
+        let user = self.user_repo.lock().unwrap().get(user_id)?.map(|u|
             response::User::new(u.user_id, &u.name, &format!("{:?}", u.status)));
 
         Self::prepare_response(
@@ -228,7 +228,7 @@ impl ControlPlane {
     fn process_cmd_proxies(&mut self, service_mgr: &Arc<Mutex<ServiceMgr>>)
         -> Result<String, AppError> {
 
-        let user_services: HashSet<u64> = self.access_repo.get_all_for_user(self.user.user_id)?.iter()
+        let user_services: HashSet<u64> = self.access_repo.lock().unwrap().get_all_for_user(self.user.user_id)?.iter()
             .map(|access| access.service_id)
             .collect();
 
@@ -265,7 +265,7 @@ impl ControlPlane {
 
         let mask_addrs  = self.app_config.mask_addresses;
 
-        let user_services: Vec<Value> = self.access_repo.get_all_for_user(self.user.user_id)?.iter()
+        let user_services: Vec<Value> = self.access_repo.lock().unwrap().get_all_for_user(self.user.user_id)?.iter()
             .map(|access| self.services_by_id.get(&access.service_id))
             .flatten()
             .map(|service| {
@@ -292,7 +292,7 @@ impl ControlPlane {
                 response::CODE_NOT_FOUND,
                 format!("Unknown service: svc_name={}", service_name)))?;
 
-        if self.access_repo.get(self.user.user_id, service.service_id)?.is_none() {
+        if self.access_repo.lock().unwrap().get(self.user.user_id, service.service_id)?.is_none() {
             return Err(AppError::GenWithCodeAndMsg(
                 response::CODE_FORBIDDEN,
                 format!("User is not authorized for service: user_id={}, svc_id={}", self.user.user_id, service.service_id)));
@@ -380,10 +380,10 @@ impl ControlPlane {
     }
 
     /// Setup services maps
-    fn setup_services_maps(service_repo: &Arc<dyn ServiceRepository>)
+    fn setup_services_maps(service_repo: &Arc<Mutex<dyn ServiceRepository>>)
         -> Result<(HashMap<u64, model::service::Service>, HashMap<String, model::service::Service>), AppError> {
 
-        let services = service_repo.get_all()?;
+        let services = service_repo.lock().unwrap().get_all()?;
         let services_by_id: HashMap<u64, model::service::Service> = services.iter()
             .map(|service| (service.service_id, service.clone())).collect();
         let services_by_name: HashMap<String, model::service::Service> = services.iter()
