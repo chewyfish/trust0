@@ -33,7 +33,7 @@ if [ "$RECONFIGURE" == 'y' ]; then
   read -rp "Enter an available port for the echo proxy: " echo_proxy_port && echo ECHO_PROXY__PORT=${echo_proxy_port} >> ${EXAMPLE_CONFIG_FILE}
 fi
 
-if [ ! -f "${DATASOURCE_INMEMDB_SERVICE_FILE}" ]; then
+if [ ! -f "${DATASOURCE_INMEMDB_ACCESS_FILE}" ] ||  [ ! -f "${DATASOURCE_INMEMDB_SERVICE_FILE}" ] ||  [ ! -f "${DATASOURCE_INMEMDB_USER_FILE}" ]; then
   source "${EXAMPLE_CONFIG_FILE}"
   ${M4_CMD} "${DATASOURCE_INMEMDB_ACCESS_M4_FILE}" > "${DATASOURCE_INMEMDB_ACCESS_FILE}"
   ${M4_CMD} -D xCHAT_PORT="${CHAT_SERVICE__PORT}" -D xECHO_PORT="${ECHO_SERVICE__PORT}" "${DATASOURCE_INMEMDB_SERVICE_M4_FILE}" > "${DATASOURCE_INMEMDB_SERVICE_FILE}"

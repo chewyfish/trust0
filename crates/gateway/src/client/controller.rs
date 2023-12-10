@@ -3,6 +3,8 @@ use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
 
 use anyhow::Result;
+use rustls::server::Accepted;
+use rustls::ServerConfig;
 use serde_json::Value;
 
 use trust0_common::control::{request, response};
@@ -425,10 +427,15 @@ impl server_std::ServerVisitor for ControlPlaneServerVisitor {
         Ok(connection)
     }
 
+    fn on_tls_handshaking(&mut self, _accepted: &Accepted) -> Result<ServerConfig, AppError> {
+        self.app_config.tls_server_config_builder.build()
+    }
+
     fn on_conn_accepted(&mut self, connection: conn_std::Connection) -> Result<(), AppError> {
 
         server_std::Server::spawn_connection_processor(connection);
 
         Ok(())
     }
+
 }

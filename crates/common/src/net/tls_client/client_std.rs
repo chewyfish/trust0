@@ -2,6 +2,7 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 
 use anyhow::Result;
+use pki_types::ServerName;
 
 use crate::net::tls_client::conn_std;
 use crate::net::tls_client::conn_std::TlsClientConnection;
@@ -47,7 +48,7 @@ impl Client {
     /// Connect to server
     pub fn connect(&mut self) -> Result<(), AppError> {
 
-        let server_host = rustls::ServerName::try_from(self.server_host.as_str()).map_err(|err|
+        let server_host = ServerName::try_from(self.server_host.to_string()).map_err(|err|
             AppError::GenWithMsgAndErr(format!("Failed to resolve server host: host={}", &self.server_host), Box::new(err)))?;
 
         let server_addr = (self.server_host.clone(), self.server_port).to_socket_addrs()?

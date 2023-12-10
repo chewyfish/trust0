@@ -5,6 +5,7 @@ use std::{io, thread};
 use std::time::Duration;
 
 use anyhow::Result;
+use pki_types::CertificateDer;
 use rustls::{self, StreamOwned};
 use crate::crypto::alpn;
 
@@ -21,7 +22,7 @@ pub type TlsServerConnection = StreamOwned<rustls::ServerConnection, TcpStream>;
 pub trait TlsConnection {
 
     /// Retrieves the certificate chain used by the peer to authenticate.
-    fn peer_certificates(&self) -> Option<Vec<rustls::Certificate>>;
+    fn peer_certificates(&self) -> Option<Vec<CertificateDer>>;
 
     /// Retrieves the protocol agreed with the peer via ALPN.
     fn alpn_protocol(&self) -> Option<Vec<u8>>;
@@ -29,7 +30,7 @@ pub trait TlsConnection {
 
 impl TlsConnection for TlsServerConnection {
 
-    fn peer_certificates(&self) -> Option<Vec<rustls::Certificate>> {
+    fn peer_certificates(&self) -> Option<Vec<CertificateDer>> {
         match self.conn.peer_certificates() {
             Some(certs) => Some(certs.iter().cloned().collect()),
             None => None

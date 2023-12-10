@@ -2,13 +2,14 @@ use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
 
 use anyhow::Result;
+use pki_types::CertificateDer;
 
 use trust0_common::crypto::alpn;
 use trust0_common::error::AppError;
 use trust0_common::logging::error;
 use trust0_common::model::user::{Status, User};
 use trust0_common::net::tls_server::conn_std::{self, TlsConnection};
-use trust0_common::target;
+use trust0_common::{crypto, target};
 use crate::client::controller::ControlPlane;
 use crate::client::device::Device;
 use crate::config::{self, AppConfig};
@@ -62,10 +63,15 @@ impl ClientConnVisitor {
                                  -> Result<alpn::Protocol, AppError> {
 
         // parse certificate context details
-        let device = Device::new(&tls_conn.peer_certificates()
+        let peer_certificates: Vec<CertificateDer<'static>> = tls_conn.peer_certificates()
             .ok_or(AppError::GenWithCodeAndMsg(
                 config::RESPCODE_0420_INVALID_CLIENT_CERTIFICATE,
-                "Empty client certificate chain".to_string()))?)?;
+                "Empty client certificate chain".to_string()))?
+            .iter()
+            .map(|c| crypto::x509::create_der_certificate(c.to_vec()))
+            .collect();
+
+        let device = Device::new(peer_certificates)?;
 
         // validate user
         let user_id = device.get_cert_access_context().user_id;
@@ -256,7 +262,7 @@ mod tests {
     fn cliconnvis_process_authorization_fn_when_nosvc_and_gooduser_and_goodproto() -> Result<(), AppError> {
 
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap())?;
+        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap().to_string())?;
         let alpn_proto = alpn::PROTOCOL_CONTROL_PLANE.as_bytes().to_vec();
 
         let mut tls_conn = MockTlsSvrConn::new();
@@ -287,7 +293,7 @@ mod tests {
     fn cliconnvis_process_authorization_fn_when_goodsvc_and_gooduser_and_goodproto() -> Result<(), AppError> {
 
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap())?;
+        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap().to_string())?;
         let alpn_proto = alpn::Protocol::create_service_protocol(200).as_bytes().to_vec();
 
         let mut tls_conn = MockTlsSvrConn::new();
@@ -321,7 +327,7 @@ mod tests {
     fn cliconnvis_process_authorization_fn_when_wrongsvc_and_gooduser_and_goodproto() -> Result<(), AppError> {
 
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap())?;
+        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap().to_string())?;
         let alpn_proto = alpn::Protocol::create_service_protocol(200).as_bytes().to_vec();
 
         let mut tls_conn = MockTlsSvrConn::new();
@@ -352,7 +358,7 @@ mod tests {
     fn cliconnvis_process_authorization_fn_when_goodsvc_and_gooduser_and_wrongproto() -> Result<(), AppError> {
 
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap())?;
+        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap().to_string())?;
         let alpn_proto = alpn::PROTOCOL_CONTROL_PLANE.as_bytes().to_vec();
 
         let mut tls_conn = MockTlsSvrConn::new();
@@ -383,7 +389,7 @@ mod tests {
     fn cliconnvis_process_authorization_fn_when_nosvc_and_badcert() -> Result<(), AppError> {
 
         let peer_certs_file: PathBuf = CERTFILE_NON_CLIENT_PATHPARTS.iter().collect();
-        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap())?;
+        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap().to_string())?;
 
         let mut tls_conn = MockTlsSvrConn::new();
         tls_conn.expect_peer_certificates().times(1).return_once(move || Some(peer_certs));
@@ -412,7 +418,7 @@ mod tests {
     fn cliconnvis_process_authorization_fn_when_nosvc_and_baduid() -> Result<(), AppError> {
 
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap())?;
+        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap().to_string())?;
 
         let mut tls_conn = MockTlsSvrConn::new();
         tls_conn.expect_peer_certificates().times(1).return_once(move || Some(peer_certs));
@@ -441,7 +447,7 @@ mod tests {
     fn cliconnvis_process_authorization_fn_when_nosvc_and_inactiveuser() -> Result<(), AppError> {
 
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap())?;
+        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap().to_string())?;
 
         let mut tls_conn = MockTlsSvrConn::new();
         tls_conn.expect_peer_certificates().times(1).return_once(move || Some(peer_certs));

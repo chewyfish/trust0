@@ -2,7 +2,6 @@ use std::{process, thread};
 use std::time::Duration;
 use anyhow::Result;
 use futures::executor::block_on;
-use log::error;
 
 use trust0_common::error::AppError;
 use trust0_common::logging::{error, LOG, LogLevel};
@@ -11,7 +10,7 @@ use trust0_common::target;
 
 async fn async_main() -> Result<(), AppError> {
 
-    let app_config = AppConfig::new();
+    let app_config = AppConfig::new()?;
 
     LOG.lock().unwrap().configure(
         if app_config.verbose_logging { LogLevel::DEBUG } else { LogLevel::ERROR },
@@ -37,11 +36,11 @@ pub async fn main() -> Result<()> {
     match block_on(async_main()) {
 
         Ok(()) => {
-            std::process::exit(0);
+            process::exit(0);
         },
         Err(err) =>  {
-            error!("{:?}", err);
-            std::process::exit(1);
+            eprintln!("{:?}", err);
+            process::exit(1);
         }
     }
 }

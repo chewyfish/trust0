@@ -4,6 +4,7 @@
   * [Trust0 SDP Service Access Framework](#trust0-sdp-service-access-framework)
     * [Summary](#summary)
     * [To-Do](#to-do)
+    * [Experimental](#experimental)
     * [Change History](#change-history)
     * [Contributions](#contributions)
     * [License](#license)
@@ -40,7 +41,8 @@ This is very early alpha, use with care.
 ### To-Do
 
 * Verify/add macOS and Windows support
-* Enhance gateway for runtime client certificate revocation and/or reissuance (on expiry or on demand)
+* Enhance gateway for runtime client certificate reissuance (on expiry or on demand)
+* Finalize certificate revocation list (CRL) support
 * Incorporate device posture trust assessment and rules processor for security enforcement
 * Build (more) testing: unit, integration, performance, ...
 * Strategize non-name resolution (DNS/hosts file/...) approach to handle client TLS hostname verification for service connections
@@ -52,6 +54,10 @@ This is very early alpha, use with care.
 * Incorporate runtime certificate revocation list (CRL) reload on updated list
 * Accommodate integration to well-known identity provider (IdP) systems/protocols for user authentication and 2FA purposes
 
+### Experimental
+
+* Certificate revocation list (CRL) file support. Handle runtime updates for updated lists
+ 
 ### Change History
 
 Refer to [Change Log](CHANGES.md)
@@ -249,12 +255,8 @@ Options:
           Read server certificates from <CERT_FILE>. This should contain PEM-format certificates in the right order (first certificate should certify <KEY_FILE>, last should be a root CA) [env: CERT_FILE=]
   -k, --key-file <KEY_FILE>
           Read private key from <KEY_FILE>.  This should be a RSA private key or PKCS8-encoded private key, in PEM format [env: KEY_FILE=]
-  -o, --ocsp-file <OCSP_FILE>
-          Read DER-encoded OCSP response from <OCSP_FILE> and staple to certificate [env: OCSP_FILE=]
   -a, --auth-cert-file <AUTH_CERT_FILE>
           Accept client authentication certificates signed by those roots provided in <AUTH_CERT_FILE> [env: AUTH_CERT_FILE=]
-      --crl-file <CRL_FILE>
-          Perform client certificate revocation checking using the DER-encoded <CRL_FILE(s)> [env: CRL_FILE=]
       --protocol-version <PROTOCOL_VERSION>
           Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead [env: PROTOCOL_VERSION=]
       --cipher-suite <CIPHER_SUITE>
@@ -341,7 +343,7 @@ Options:
           [env: AUTH_CERT_FILE=]
 
   -r, --ca-root-cert-file <CA_ROOT_CERT_FILE>
-          Read root certificates from <CA_ROOT_CERT_FILE> (otherwise default CA certificates will be used)
+          Read root certificates from <CA_ROOT_CERT_FILE>
           
           [env: CA_ROOT_CERT_FILE=]
 

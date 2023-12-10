@@ -21,7 +21,7 @@ pub fn lookup_suites(suite_names: &[String]) -> Result<Vec<rustls::SupportedCiph
 /// Find a ciphersuite with the given name
 pub fn lookup_suite(name: &str) -> Result<rustls::SupportedCipherSuite, AppError> {
 
-    for suite in rustls::ALL_CIPHER_SUITES {
+    for suite in rustls::crypto::ring::ALL_CIPHER_SUITES {
         let sname = format!("{:?}", suite.suite()).to_lowercase();
 
         if sname == name.to_string().to_lowercase() {
