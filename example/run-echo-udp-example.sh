@@ -6,10 +6,6 @@ EXAMPLE_DIR=$(dirname "$0")
 NCAT_CMD=ncat
 TMUX_CMD=tmux
 
-# Perform runtime configuration
-
-${EXAMPLE_DIR}/run-configure.sh
-
 # Check pre-requisites
 
 ERROR_MSG="$(make check-prereqs-example-echo-udp)"
@@ -21,6 +17,10 @@ fi
 
 # Build binaries
 
+# Build binaries/pki/db/...
+
+make clean-all
+"${EXAMPLE_DIR}"/run-configure.sh
 make gateway-server-pki
 make client-pki
 make trust0-gateway
