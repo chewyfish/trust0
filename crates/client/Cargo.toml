@@ -1,6 +1,6 @@
 [package]
 name = "trust0-client"
-version = "0.1.0-alpha"
+version = "0.2.0-alpha"
 authors = ["Todd Moir <todd@chewyfish.com>"]
 edition = "2021"
 license = "Apache-2.0"
@@ -16,21 +16,16 @@ dotenvy = "0.15.7"
 futures = "*"
 log = "0.4.20"
 log4rs = "1.2.0"
-#pki-types = { package = "rustls-pki-types", version = "0.2", features = ["alloc"] }
+pki-types = { package = "rustls-pki-types", version = "1.0.1", features = ["std"] }
 rcgen = { version = "0.11.1", features = ["pem"], default-features = false }
-ring = "0.16.20"
-rustls = { version = "0.21.7", features = [ "logging", "dangerous_configuration" ] }
-rustls-pemfile = "1.0.3"
+ring = "0.17.7"
+rustls = { version = "0.22.1", features = [ "logging" ] }
+rustls-pemfile = "2.0.0"
 sct = "0.7"
 serde = { version = "*", features = ["derive"] }
 serde_derive = "*"
 serde_json = { version = "*", features = ["arbitrary_precision"] }
 tokio = { version = "*", features = ["full"] }
 tokio-test = "*"
-trust0-common = { version = "0.1.0-alpha", path = "../common" }
+trust0-common = { version = "0.2.0-alpha", path = "../common" }
 webpki-roots = "0.25"
-webpki = { package = "rustls-webpki", version = "0.101.2", features = ["alloc", "std"] }
-
-#[dev-dependencies]
-#regex = "1.0"
-#ring = "0.16.20"
