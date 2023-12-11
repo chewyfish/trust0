@@ -1,6 +1,6 @@
 use serde_derive::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone, Default, Debug)]
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug)]
 #[serde(rename_all(serialize = "snake_case", deserialize = "camelCase"))]
 pub struct ServiceAccess {
     pub user_id: u64,

@@ -1,13 +1,13 @@
 use serde_derive::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Clone, Default, Debug)]
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug)]
 pub enum Transport {
     #[default]
     TCP,
     UDP
 }
 
-#[derive(Serialize, Deserialize, Clone, Default, Debug)]
+#[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug)]
 #[serde(rename_all(serialize = "snake_case", deserialize = "camelCase"))]
 pub struct Service {
     pub service_id: u64,
