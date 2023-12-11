@@ -274,3 +274,27 @@ impl ServiceMgr for GatewayServiceMgr {
         Ok(())
     }
 }
+
+/// Unit tests
+#[cfg(test)]
+pub mod tests {
+
+    use mockall::mock;
+    use super::*;
+
+    // mocks
+    // =====
+
+    mock! {
+        pub SvcMgr {}
+        impl ServiceMgr for SvcMgr {
+            fn get_service_id_by_proxy_key(&self, proxy_key: &str) -> Option<u64>;
+            fn get_service_proxies(&self) -> Vec<Arc<Mutex<dyn GatewayServiceProxyVisitor>>>;
+            fn get_service_proxy(&self, service_id: u64) -> Option<&'static Arc<Mutex<dyn GatewayServiceProxyVisitor>>>;
+            fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent>;
+            fn startup(&mut self, service_mgr: Arc<Mutex<dyn ServiceMgr>>, service: &Service) -> Result<(Option<String>, u16), AppError>;
+            fn has_proxy_for_user_and_service(&mut self, user_id: u64, service_id: u64) -> bool;
+            fn shutdown_connections(&mut self, user_id: Option<u64>, service_id: Option<u64>) -> Result<(), AppError>;
+        }
+    }
+}

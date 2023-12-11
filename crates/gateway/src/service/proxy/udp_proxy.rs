@@ -219,12 +219,12 @@ impl server_std::ServerVisitor for UdpGatewayProxyServerVisitor {
 
 impl GatewayServiceProxyVisitor for UdpGatewayProxyServerVisitor {
 
-    fn get_service(&self) -> &Service {
-        &self.service
+    fn get_service(&self) -> Service {
+        self.service.clone()
     }
 
-    fn get_proxy_host(&self) -> &Option<String> {
-        &self.proxy_host
+    fn get_proxy_host(&self) -> Option<String> {
+        self.proxy_host.clone()
     }
 
     fn get_proxy_port(&self) -> u16 {

@@ -216,12 +216,12 @@ impl server_std::ServerVisitor for TcpGatewayProxyServerVisitor {
 
 impl GatewayServiceProxyVisitor for TcpGatewayProxyServerVisitor {
 
-    fn get_service(&self) -> &Service {
-        &self.service
+    fn get_service(&self) -> Service {
+        self.service.clone()
     }
 
-    fn get_proxy_host(&self) -> &Option<String> {
-        &self.proxy_host
+    fn get_proxy_host(&self) -> Option<String> {
+        self.proxy_host.clone()
     }
 
     fn get_proxy_port(&self) -> u16 {
