@@ -61,7 +61,7 @@ unsafe impl Send for TcpGatewayProxy {}
 /// tls_server::server_std::Server strategy visitor pattern implementation
 pub struct TcpGatewayProxyServerVisitor {
     app_config: Arc<AppConfig>,
-    service_mgr: Arc<Mutex<ServiceMgr>>,
+    service_mgr: Arc<Mutex<dyn ServiceMgr>>,
     service: Service,
     proxy_host: Option<String>,
     proxy_port: u16,
@@ -77,7 +77,7 @@ impl TcpGatewayProxyServerVisitor {
 
     /// TcpGatewayProxyServerVisitor constructor
     pub fn new(app_config: Arc<AppConfig>,
-               service_mgr: Arc<Mutex<ServiceMgr>>,
+               service_mgr: Arc<Mutex<dyn ServiceMgr>>,
                service: Service,
                proxy_host: Option<String>,
                proxy_port: u16,

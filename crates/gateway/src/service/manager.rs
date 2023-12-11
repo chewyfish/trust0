@@ -23,8 +23,31 @@ use super::proxy::tcp_proxy::TcpGatewayProxy;
 const DEFAULT_SERVICE_PORT_START: u16 = 8200;
 const DEFAULT_SERVICE_PORT_END: u16 = 8250;
 
-/// Manage service connections. Only one of these should be constructed.
-pub struct ServiceMgr {
+
+/// Handles management of service proxy connections
+pub trait ServiceMgr : Send {
+
+    /// Return service ID for given proxy key, else return None
+    fn get_service_id_by_proxy_key(&self, proxy_key: &str) -> Option<u64>;
+
+    /// Active service proxy visitors accessor
+    fn get_service_proxies(&self) -> Vec<Arc<Mutex<dyn GatewayServiceProxyVisitor>>>;
+    /// Service proxy visitor (by service ID) accessor
+    fn get_service_proxy(&self, service_id: u64) -> Option<&Arc<Mutex<dyn GatewayServiceProxyVisitor>>>;
+    /// Clone proxy tasks sender
+    fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent>;
+    /// Startup new proxy service to allow clients to connect/communicate to given service
+    /// Returns service proxy address/port
+    fn startup(&mut self, service_mgr: Arc<Mutex<dyn ServiceMgr>>, service: &Service)
+               -> Result<(Option<String>, u16), AppError>;
+    /// Returns whether there is an active service proxy for given user and service
+    fn has_proxy_for_user_and_service(&mut self, user_id: u64, service_id: u64) -> bool;
+    /// Shutdown service proxy connections. Consider all proxies or by service and/or user (if supplied).
+    fn shutdown_connections(&mut self, user_id: Option<u64>, service_id: Option<u64>) -> Result<(), AppError>;
+}
+
+/// Manage (Gateway <-> Service) service connections. Only one of these should be constructed.
+pub struct GatewayServiceMgr {
     app_config: Arc<AppConfig>,
     service_proxies: HashMap<u64, Arc<Mutex<dyn GatewayServiceProxy>>>,
     service_proxy_visitors: HashMap<u64, Arc<Mutex<dyn GatewayServiceProxyVisitor>>>,
@@ -38,7 +61,7 @@ pub struct ServiceMgr {
     proxy_tasks_sender: Sender<ProxyExecutorEvent>
 }
 
-impl ServiceMgr {
+impl GatewayServiceMgr {
 
     /// ServiceMgr constructor
     pub fn new(app_config: Arc<AppConfig>,
@@ -75,26 +98,8 @@ impl ServiceMgr {
         }
     }
 
-    /// Active service proxy visitors accessor
-    pub fn get_service_proxies(&self) -> Vec<Arc<Mutex<dyn GatewayServiceProxyVisitor>>> {
-
-        self.service_proxy_visitors.values().map(|proxy_visitor| proxy_visitor.clone()).collect()
-    }
-
-    /// Service proxy visitor (by service ID) accessor
-    pub fn get_service_proxy(&self, service_id: u64) -> Option<&Arc<Mutex<dyn GatewayServiceProxyVisitor>>> {
-
-        self.service_proxy_visitors.get(&service_id)
-    }
-
-    /// Clone proxy tasks sender
-    pub fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent> {
-
-        self.proxy_tasks_sender.clone()
-    }
-
     /// Listen and process any proxy events (blocking)
-    pub fn poll_proxy_events(service_mgr: Arc<Mutex<ServiceMgr>>, proxy_events_receiver: Receiver<ProxyEvent>)
+    pub fn poll_proxy_events(service_mgr: Arc<Mutex<dyn ServiceMgr>>, proxy_events_receiver: Receiver<ProxyEvent>)
         -> Result<(), AppError> {
 
         'EVENTS:
@@ -108,8 +113,8 @@ impl ServiceMgr {
             match proxy_event {
 
                 ProxyEvent::Closed(proxy_key) => {
-                    let service_id = *service_mgr.lock().unwrap().services_by_proxy_key.lock().unwrap().get(&proxy_key).unwrap_or(&u64::MAX);
-                    if let Some(proxy_visitor) = service_mgr.lock().unwrap().service_proxy_visitors.get(&service_id) {
+                    let service_id = service_mgr.lock().unwrap().get_service_id_by_proxy_key(&proxy_key).unwrap_or(u64::MAX);
+                    if let Some(proxy_visitor) = service_mgr.lock().unwrap().get_service_proxy(service_id) {
                         if proxy_visitor.lock().unwrap().remove_proxy_for_key(&proxy_key) {
                             continue 'EVENTS; }
                     }
@@ -121,11 +126,25 @@ impl ServiceMgr {
             }
         }
     }
+}
 
-    /// Startup new proxy service to allow clients to connect/communicate to given service
-    /// Returns service proxy address/port
-    pub fn startup(&mut self, service_mgr: Arc<Mutex<ServiceMgr>>, service: &Service)
-        -> Result<(Option<String>,u16), AppError> {
+impl ServiceMgr for GatewayServiceMgr {
+
+    fn get_service_id_by_proxy_key(&self, proxy_key: &str) -> Option<u64> {
+        self.services_by_proxy_key.lock().unwrap().get(proxy_key).cloned()
+    }
+
+    fn get_service_proxies(&self) -> Vec<Arc<Mutex<dyn GatewayServiceProxyVisitor>>> {
+        self.service_proxy_visitors.values().map(|proxy_visitor| proxy_visitor.clone()).collect()
+    }
+    fn get_service_proxy(&self, service_id: u64) -> Option<&Arc<Mutex<dyn GatewayServiceProxyVisitor>>> {
+        self.service_proxy_visitors.get(&service_id)
+    }
+    fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent> {
+        self.proxy_tasks_sender.clone()
+    }
+    fn startup(&mut self, service_mgr: Arc<Mutex<dyn ServiceMgr>>, service: &Service)
+               -> Result<(Option<String>, u16), AppError> {
 
         // Check if already started
         // - - - - - - - - - - - -
@@ -223,12 +242,8 @@ impl ServiceMgr {
 
         Ok((self.app_config.gateway_service_host.clone(), service_port))
     }
-
-    /// Returns whether there is an active service proxy for given user and service
-    pub fn has_proxy_for_user_and_service(&mut self, user_id: u64, service_id: u64) -> bool {
-
+    fn has_proxy_for_user_and_service(&mut self, user_id: u64, service_id: u64) -> bool {
         match self.service_proxy_visitors.get(&service_id) {
-
             Some(proxy_visitor) => {
                 let proxy_visitor = proxy_visitor.lock().unwrap();
                 proxy_visitor.get_proxy_addrs_for_user(user_id).len() > 0
@@ -237,14 +252,10 @@ impl ServiceMgr {
             None => false
         }
     }
-
-    /// Shutdown service proxy connections. Consider all proxies or by service and/or user (if supplied).
-    pub fn shutdown_connections(&mut self, user_id: Option<u64>, service_id: Option<u64>) -> Result<(), AppError> {
-
+    fn shutdown_connections(&mut self, user_id: Option<u64>, service_id: Option<u64>) -> Result<(), AppError> {
         let mut errors: Vec<String> = vec![];
 
         self.service_proxy_visitors.iter().for_each(|(proxy_service_id, proxy_visitor)| {
-
             if service_id.is_none() || (*proxy_service_id == service_id.unwrap()) {
                 let mut proxy_visitor = proxy_visitor.lock().unwrap();
 

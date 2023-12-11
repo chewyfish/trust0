@@ -29,7 +29,7 @@ pub struct ClientConnVisitor {
     control_plane: Option<ControlPlane>,
     device: Option<Device>,
     user: Option<User>,
-    service_mgr: Arc<Mutex<ServiceMgr>>
+    service_mgr: Arc<Mutex<dyn ServiceMgr>>
 }
 
 impl ClientConnVisitor {
@@ -37,7 +37,7 @@ impl ClientConnVisitor {
     /// ClientConnVisitor constructor
     pub fn new(
         app_config: Arc<AppConfig>,
-        service_mgr: Arc<Mutex<ServiceMgr>>) -> Self {
+        service_mgr: Arc<Mutex<dyn ServiceMgr>>) -> Self {
 
         let server_mode = app_config.server_mode.clone();
         let access_repo = Arc::clone(&app_config.access_repo);
@@ -237,6 +237,7 @@ mod tests {
     use crate::repository::access_repo::tests::MockAccessRepo;
     use crate::repository::service_repo::tests::MockServiceRepo;
     use crate::repository::user_repo::tests::MockUserRepo;
+    use crate::service::manager::GatewayServiceMgr;
     use crate::testutils::MockTlsSvrConn;
     use super::*;
 
@@ -254,7 +255,7 @@ mod tests {
         let app_config = Arc::new(config::tests::create_app_config_with_repos(user_repo, service_repo, access_repo)?);
         let proxy_tasks_sender: Sender<ProxyExecutorEvent> = mpsc::channel().0;
         let proxy_events_sender: Sender<ProxyEvent> = mpsc::channel().0;
-        let service_mgr = Arc::new(Mutex::new(ServiceMgr::new(app_config.clone(), proxy_tasks_sender, proxy_events_sender)));
+        let service_mgr = Arc::new(Mutex::new(GatewayServiceMgr::new(app_config.clone(), proxy_tasks_sender, proxy_events_sender)));
         Ok(ClientConnVisitor::new(app_config, service_mgr))
     }
 

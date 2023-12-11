@@ -62,7 +62,7 @@ impl ControlPlane {
     }
 
     /// Process given command request
-    pub fn process_request(&mut self, service_mgr: &Arc<Mutex<ServiceMgr>>, command_line: &str)
+    pub fn process_request(&mut self, service_mgr: &Arc<Mutex<dyn ServiceMgr>>, command_line: &str)
         -> Result<request::Request, AppError> {
 
         let client_request: request::Request;
@@ -185,7 +185,7 @@ impl ControlPlane {
     }
 
     /// Process 'connections' command
-    fn process_cmd_connections(&self, service_mgr: &Arc<Mutex<ServiceMgr>>)
+    fn process_cmd_connections(&self, service_mgr: &Arc<Mutex<dyn ServiceMgr>>)
         -> Result<String, AppError> {
 
         let mask_addrs = self.app_config.mask_addresses;
@@ -225,7 +225,7 @@ impl ControlPlane {
     }
 
     /// Process 'proxies' command
-    fn process_cmd_proxies(&mut self, service_mgr: &Arc<Mutex<ServiceMgr>>)
+    fn process_cmd_proxies(&mut self, service_mgr: &Arc<Mutex<dyn ServiceMgr>>)
         -> Result<String, AppError> {
 
         let user_services: HashSet<u64> = self.access_repo.lock().unwrap().get_all_for_user(self.user.user_id)?.iter()
@@ -283,7 +283,7 @@ impl ControlPlane {
     }
 
     /// Process 'start' command
-    fn process_cmd_start(&mut self, service_mgr: &Arc<Mutex<ServiceMgr>>, service_name: &str, local_port: u16)
+    fn process_cmd_start(&mut self, service_mgr: &Arc<Mutex<dyn ServiceMgr>>, service_name: &str, local_port: u16)
         -> Result<String, AppError> {
 
         // Validate requested service is valid and user is authorized
@@ -319,7 +319,7 @@ impl ControlPlane {
     }
 
     /// Process 'stop' command
-    fn process_cmd_stop(&mut self, service_mgr: &Arc<Mutex<ServiceMgr>>, service_name: &str)
+    fn process_cmd_stop(&mut self, service_mgr: &Arc<Mutex<dyn ServiceMgr>>, service_name: &str)
         -> Result<String, AppError> {
 
         // Validate requested service is valid and proxy is currently active
@@ -396,14 +396,14 @@ impl ControlPlane {
 /// tls_server::server_std::Server strategy visitor pattern implementation
 pub struct ControlPlaneServerVisitor {
     app_config: Arc<AppConfig>,
-    service_mgr: Arc<Mutex<ServiceMgr>>
+    service_mgr: Arc<Mutex<dyn ServiceMgr>>
 }
 
 impl ControlPlaneServerVisitor {
 
     /// ServerVisitor constructor
     pub fn new(app_config: Arc<AppConfig>,
-               service_mgr: Arc<Mutex<ServiceMgr>>) -> Self {
+               service_mgr: Arc<Mutex<dyn ServiceMgr>>) -> Self {
 
         Self {
             app_config,

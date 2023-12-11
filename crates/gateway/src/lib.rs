@@ -19,6 +19,7 @@ pub mod api {
     use trust0_common::error::AppError;
     use trust0_common::proxy::executor::ProxyExecutor;
     pub use config::AppConfig;
+    use crate::service::manager::ServiceMgr;
 
     /// Component lifecycle methods
     #[async_trait]
@@ -33,7 +34,7 @@ pub mod api {
 
     pub struct MainProcessor {
         app_config: Arc<AppConfig>,
-        service_mgr: Arc<Mutex<service::manager::ServiceMgr>>,
+        service_mgr: Arc<Mutex<dyn ServiceMgr>>,
         _proxy_executor_handle: JoinHandle<Result<(), AppError>>,
         _proxy_events_processor_handle: JoinHandle<Result<(), AppError>>,
         gateway: Option<gateway::Gateway>,
@@ -58,11 +59,11 @@ pub mod api {
             let (proxy_events_sender, proxy_events_receiver) = sync::mpsc::channel();
 
             let service_mgr = Arc::new(Mutex::new(
-                service::manager::ServiceMgr::new(app_config.clone(), proxy_tasks_sender, proxy_events_sender)));
+                service::manager::GatewayServiceMgr::new(app_config.clone(), proxy_tasks_sender, proxy_events_sender)));
 
             let service_mgr_copy = service_mgr.clone();
             let proxy_events_processor_handle = tokio::task::spawn_blocking(move || {
-                service::manager::ServiceMgr::poll_proxy_events(service_mgr_copy, proxy_events_receiver)
+                service::manager::GatewayServiceMgr::poll_proxy_events(service_mgr_copy, proxy_events_receiver)
             });
 
             // Construct processor object
