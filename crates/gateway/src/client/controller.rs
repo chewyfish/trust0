@@ -836,6 +836,46 @@ mod tests {
     }
 
     #[test]
+    fn ctlplane_process_request_when_invalid_start() {
+
+        let device = create_device().unwrap();
+        let user = create_user();
+        let repos = create_repos(false, false, true);
+        let event_channel = mpsc::channel();
+        let service_mgr = create_service_mgr(false, false, false, false);
+
+        let mut control_plane = create_control_plane(event_channel.0, &repos.0, &repos.1, &repos.2, device, user).unwrap();
+
+        let service_name = "INVALID_SERVICE";
+        let local_port = 3000;
+
+        let result = control_plane.process_request(&service_mgr,
+                                                   &format!("{} -s {} -p {}", request::PROTOCOL_REQUEST_START, service_name, local_port));
+
+        if let Err(err) = &result {
+            panic!("Unexpected process request result: err={:?}", err);
+        }
+
+        let processed_request = result.unwrap();
+        assert_eq!(processed_request, request::Request::Start { service_name: service_name.to_string(), local_port });
+
+        let result = event_channel.1.try_recv();
+
+        if let Err(err) = &result {
+            panic!("Unexpected channel recv result: err={:?}", err);
+        }
+
+        match &result.unwrap() {
+            ConnectionEvent::Closing => { panic!("Unexpected connection event: val=Closing"); }
+            ConnectionEvent::Closed =>  { panic!("Unexpected connection event: val=Closed"); }
+            ConnectionEvent::Write(response_bytes) => {
+                assert_eq!(String::from_utf8(response_bytes.clone()).unwrap(),
+                           "{\"code\":404,\"message\":\"Response: code=404, msg=Unknown service: svc_name=INVALID_SERVICE\",\"request\":{\"Start\":{\"service_name\":\"INVALID_SERVICE\",\"local_port\":3000}},\"data\":null}\n");
+            }
+        }
+    }
+
+    #[test]
     fn ctlplane_process_request_when_valid_stop() {
 
         let device = create_device().unwrap();
@@ -870,6 +910,45 @@ mod tests {
             ConnectionEvent::Write(response_bytes) => {
                 assert_eq!(String::from_utf8(response_bytes.clone()).unwrap(),
                            "{\"code\":200,\"message\":null,\"request\":{\"Stop\":{\"service_name\":\"Service200\"}},\"data\":null}\n");
+            }
+        }
+    }
+
+    #[test]
+    fn ctlplane_process_request_when_invalid_stop() {
+
+        let device = create_device().unwrap();
+        let user = create_user();
+        let repos = create_repos(false, false, true);
+        let event_channel = mpsc::channel();
+        let service_mgr = create_service_mgr(false, false, false, false);
+
+        let mut control_plane = create_control_plane(event_channel.0, &repos.0, &repos.1, &repos.2, device, user).unwrap();
+
+        let service_name = "INVALID_SERVICE".to_string();
+
+        let result = control_plane.process_request(&service_mgr,
+                                                   &format!("{} -s {}", request::PROTOCOL_REQUEST_STOP, &service_name));
+
+        if let Err(err) = &result {
+            panic!("Unexpected process request result: err={:?}", err);
+        }
+
+        let processed_request = result.unwrap();
+        assert_eq!(processed_request, request::Request::Stop { service_name });
+
+        let result = event_channel.1.try_recv();
+
+        if let Err(err) = &result {
+            panic!("Unexpected channel recv result: err={:?}", err);
+        }
+
+        match &result.unwrap() {
+            ConnectionEvent::Closing => { panic!("Unexpected connection event: val=Closing"); }
+            ConnectionEvent::Closed =>  { panic!("Unexpected connection event: val=Closed"); }
+            ConnectionEvent::Write(response_bytes) => {
+                assert_eq!(String::from_utf8(response_bytes.clone()).unwrap(),
+                           "{\"code\":404,\"message\":\"Response: code=404, msg=Unknown service: svc_name=INVALID_SERVICE\",\"request\":{\"Stop\":{\"service_name\":\"INVALID_SERVICE\"}},\"data\":null}\n");
             }
         }
     }
