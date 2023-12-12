@@ -258,7 +258,7 @@ impl GatewayServiceProxyVisitor for TcpGatewayProxyServerVisitor {
                 } else {
                     self.remove_proxy_for_key(&proxy_key);
                 }
-            };
+            }
 
             if !errors.is_empty() {
                 return Err(AppError::General(format!("Errors closing proxy connection(s), err={}", errors.join(", "))));

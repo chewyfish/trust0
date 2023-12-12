@@ -44,6 +44,9 @@ pub trait ServiceMgr : Send {
     fn has_proxy_for_user_and_service(&mut self, user_id: u64, service_id: u64) -> bool;
     /// Shutdown service proxy connections. Consider all proxies or by service and/or user (if supplied).
     fn shutdown_connections(&mut self, user_id: Option<u64>, service_id: Option<u64>) -> Result<(), AppError>;
+
+    /// Perform cleanup for a closed proxy
+    fn on_closed_proxy(&mut self, proxy_key: &str);
 }
 
 /// Manage (Gateway <-> Service) service connections. Only one of these should be constructed.
@@ -102,7 +105,6 @@ impl GatewayServiceMgr {
     pub fn poll_proxy_events(service_mgr: Arc<Mutex<dyn ServiceMgr>>, proxy_events_receiver: Receiver<ProxyEvent>)
         -> Result<(), AppError> {
 
-        'EVENTS:
         loop {
 
             // Get next request task
@@ -113,11 +115,7 @@ impl GatewayServiceMgr {
             match proxy_event {
 
                 ProxyEvent::Closed(proxy_key) => {
-                    let service_id = service_mgr.lock().unwrap().get_service_id_by_proxy_key(&proxy_key).unwrap_or(u64::MAX);
-                    if let Some(proxy_visitor) = service_mgr.lock().unwrap().get_service_proxy(service_id) {
-                        if proxy_visitor.lock().unwrap().remove_proxy_for_key(&proxy_key) {
-                            continue 'EVENTS; }
-                    }
+                    service_mgr.lock().unwrap().on_closed_proxy(&proxy_key);
                 }
 
                 ProxyEvent::Message(_, _, _) => {
@@ -253,6 +251,7 @@ impl ServiceMgr for GatewayServiceMgr {
         }
     }
     fn shutdown_connections(&mut self, user_id: Option<u64>, service_id: Option<u64>) -> Result<(), AppError> {
+
         let mut errors: Vec<String> = vec![];
 
         self.service_proxy_visitors.iter().for_each(|(proxy_service_id, proxy_visitor)| {
@@ -273,13 +272,26 @@ impl ServiceMgr for GatewayServiceMgr {
 
         Ok(())
     }
+
+    fn on_closed_proxy(&mut self, proxy_key: &str) {
+
+        let service_id = self.get_service_id_by_proxy_key(&proxy_key).unwrap_or(u64::MAX);
+        if let Some(proxy_visitor) = self.get_service_proxy(service_id) {
+            proxy_visitor.lock().unwrap().remove_proxy_for_key(&proxy_key);
+        }
+    }
 }
 
 /// Unit tests
 #[cfg(test)]
 pub mod tests {
-
-    use mockall::mock;
+    use std::sync::mpsc;
+    use mockall::{mock, predicate};
+    use crate::config;
+    use crate::repository::access_repo::tests::MockAccessRepo;
+    use crate::repository::service_repo::tests::MockServiceRepo;
+    use crate::repository::user_repo::tests::MockUserRepo;
+    use crate::service::proxy::proxy::tests::MockGwSvcProxyVisitor;
     use super::*;
 
     // mocks
@@ -295,6 +307,238 @@ pub mod tests {
             fn startup(&mut self, service_mgr: Arc<Mutex<dyn ServiceMgr>>, service: &Service) -> Result<(Option<String>, u16), AppError>;
             fn has_proxy_for_user_and_service(&mut self, user_id: u64, service_id: u64) -> bool;
             fn shutdown_connections(&mut self, user_id: Option<u64>, service_id: Option<u64>) -> Result<(), AppError>;
+            fn on_closed_proxy(&mut self, proxy_key: &str);
         }
+    }
+
+    // GatewayServiceMgr tests
+    // =======================
+    const GATEWAY_HOST: &str = "gwhost1";
+    const GATEWAY_SHARED_PORT: u16 = 4000;
+    const GATEWAY_DISTINCT_PORT_START: u16 = 4100;
+    const GATEWAY_DISTINCT_PORT_END: u16 = 4102;
+
+    fn create_gw_service_mgr(use_shared_port: bool) -> GatewayServiceMgr {
+
+        let mut app_config = config::tests::create_app_config_with_repos(
+            Arc::new(Mutex::new(MockUserRepo::new())),
+            Arc::new(Mutex::new(MockServiceRepo::new())),
+            Arc::new(Mutex::new(MockAccessRepo::new()))).unwrap();
+        app_config.gateway_service_host = Some(GATEWAY_HOST.to_string());
+        if !use_shared_port {
+            app_config.gateway_service_ports = Some((GATEWAY_DISTINCT_PORT_START, GATEWAY_DISTINCT_PORT_END));
+        }
+
+        let mut service_mgr = GatewayServiceMgr::new(Arc::new(app_config), mpsc::channel().0, mpsc::channel().0);
+        if use_shared_port {
+            service_mgr.shared_service_port = Some(GATEWAY_SHARED_PORT);
+        }
+        service_mgr
+    }
+    #[test]
+    fn gwsvcmgr_startup_when_already_started() {
+
+        let service = Service { service_id: 200, name: "Service200".to_string(), transport:Transport::TCP, host: "localhost".to_string(), port: 8200 };
+        let mut service_mgr = create_gw_service_mgr(true);
+        service_mgr.service_ports.insert(service.service_id, GATEWAY_SHARED_PORT);
+        let orig_svc_ports_len = service_mgr.service_ports.len();
+        let orig_svc_proxies_len = service_mgr.service_proxies.len();
+        let orig_svc_proxy_visitors_len = service_mgr.service_proxy_visitors.len();
+        let service_mgr = Arc::new(Mutex::new(service_mgr));
+
+        match service_mgr.lock().unwrap().startup(service_mgr.clone(), &service) {
+            Ok((host, port)) => {
+                assert!(host.is_some());
+                assert_eq!(host.unwrap(), GATEWAY_HOST.to_string());
+                assert_eq!(port, GATEWAY_SHARED_PORT);
+            }
+            Err(err) => {
+                panic!("Unexpected startup result: err={:?}", &err);
+            }
+        }
+
+        assert_eq!(service_mgr.lock().unwrap().service_ports.len(), orig_svc_ports_len);
+        assert_eq!(service_mgr.lock().unwrap().service_proxies.len(), orig_svc_proxies_len);
+        assert_eq!(service_mgr.lock().unwrap().service_proxy_visitors.len(), orig_svc_proxy_visitors_len);
+    }
+
+    #[test]
+    fn gwsvcmgr_startup_when_exhausted_ports() {
+
+        let service = Service { service_id: 200, name: "Service200".to_string(), transport:Transport::TCP, host: "localhost".to_string(), port: 8200 };
+        let mut service_mgr = create_gw_service_mgr(false);
+        service_mgr.next_service_port = GATEWAY_DISTINCT_PORT_END + 1;
+        let orig_svc_ports_len = service_mgr.service_ports.len();
+        let orig_svc_proxies_len = service_mgr.service_proxies.len();
+        let orig_svc_proxy_visitors_len = service_mgr.service_proxy_visitors.len();
+        let service_mgr = Arc::new(Mutex::new(service_mgr));
+
+        match service_mgr.lock().unwrap().startup(service_mgr.clone(), &service) {
+            Ok((host, port)) => {
+                panic!("Unexpected startup result: host={:?}, port={}", host, port);
+            }
+            Err(err) => {
+                if !err.to_string().contains("exhausted") {
+                    panic!("Unexpected startup result: err={:?}", &err);
+                }
+            }
+        }
+
+        assert_eq!(service_mgr.lock().unwrap().service_ports.len(), orig_svc_ports_len);
+        assert_eq!(service_mgr.lock().unwrap().service_proxies.len(), orig_svc_proxies_len);
+        assert_eq!(service_mgr.lock().unwrap().service_proxy_visitors.len(), orig_svc_proxy_visitors_len);
+    }
+
+    #[test]
+    fn gwsvcmgr_startup_when_tcp_service() {
+
+        let service = Service { service_id: 200, name: "Service200".to_string(), transport:Transport::TCP, host: "localhost".to_string(), port: 8200 };
+        let service_mgr = create_gw_service_mgr(true);
+        let orig_svc_ports_len = service_mgr.service_ports.len();
+        let orig_svc_proxies_len = service_mgr.service_proxies.len();
+        let orig_svc_proxy_visitors_len = service_mgr.service_proxy_visitors.len();
+        let service_mgr = Arc::new(Mutex::new(service_mgr));
+
+        match service_mgr.clone().lock().unwrap().startup(service_mgr.clone(), &service) {
+            Ok((host, port)) => {
+                assert!(host.is_some());
+                assert_eq!(host.unwrap(), GATEWAY_HOST.to_string());
+                assert_eq!(port, GATEWAY_SHARED_PORT);
+            }
+            Err(err) => {
+                panic!("Unexpected startup result: err={:?}", &err);
+            }
+        }
+
+        assert_eq!(service_mgr.lock().unwrap().service_ports.len(), orig_svc_ports_len + 1);
+        assert_eq!(service_mgr.lock().unwrap().service_proxies.len(), orig_svc_proxies_len + 1);
+        assert_eq!(service_mgr.lock().unwrap().service_proxy_visitors.len(), orig_svc_proxy_visitors_len + 1);
+    }
+
+    #[test]
+    fn gwsvcmgr_startup_when_udp_service() {
+
+        let service = Service { service_id: 200, name: "Service200".to_string(), transport:Transport::UDP, host: "localhost".to_string(), port: 8200 };
+        let service_mgr = create_gw_service_mgr(true);
+        let orig_svc_ports_len = service_mgr.service_ports.len();
+        let orig_svc_proxies_len = service_mgr.service_proxies.len();
+        let orig_svc_proxy_visitors_len = service_mgr.service_proxy_visitors.len();
+        let service_mgr = Arc::new(Mutex::new(service_mgr));
+
+        match service_mgr.clone().lock().unwrap().startup(service_mgr.clone(), &service) {
+            Ok((host, port)) => {
+                assert!(host.is_some());
+                assert_eq!(host.unwrap(), GATEWAY_HOST.to_string());
+                assert_eq!(port, GATEWAY_SHARED_PORT);
+            }
+            Err(err) => {
+                panic!("Unexpected startup result: err={:?}", &err);
+            }
+        }
+
+        assert_eq!(service_mgr.lock().unwrap().service_ports.len(), orig_svc_ports_len + 1);
+        assert_eq!(service_mgr.lock().unwrap().service_proxies.len(), orig_svc_proxies_len + 1);
+        assert_eq!(service_mgr.lock().unwrap().service_proxy_visitors.len(), orig_svc_proxy_visitors_len + 1);
+    }
+
+    #[test]
+    fn gwsvcmgr_has_proxy_for_user_and_service_when_valid_user_and_svc() {
+
+        let mut proxy_visitor = MockGwSvcProxyVisitor::new();
+        proxy_visitor.expect_get_proxy_addrs_for_user().with(predicate::eq(100)).times(1).return_once(move |_|
+            vec![("addr1".to_string(), "addr2".to_string())]);
+        let mut service_mgr = create_gw_service_mgr(true);
+        service_mgr.service_proxy_visitors.insert(200, Arc::new(Mutex::new(proxy_visitor)));
+
+        assert!(service_mgr.has_proxy_for_user_and_service(100, 200));
+    }
+
+    #[test]
+    fn gwsvcmgr_has_proxy_for_user_and_service_when_invalid_user() {
+
+        let mut proxy_visitor = MockGwSvcProxyVisitor::new();
+        proxy_visitor.expect_get_proxy_addrs_for_user().with(predicate::eq(101)).times(1).return_once(move |_|
+            vec![]);
+        let mut service_mgr = create_gw_service_mgr(true);
+        service_mgr.service_proxy_visitors.insert(200, Arc::new(Mutex::new(proxy_visitor)));
+
+        assert!(!service_mgr.has_proxy_for_user_and_service(101, 200));
+    }
+
+    #[test]
+    fn gwsvcmgr_has_proxy_for_user_and_service_when_invalid_service() {
+
+        let mut proxy_visitor = MockGwSvcProxyVisitor::new();
+        proxy_visitor.expect_get_proxy_addrs_for_user().with(predicate::always()).never();
+        let mut service_mgr = create_gw_service_mgr(true);
+        service_mgr.service_proxy_visitors.insert(200, Arc::new(Mutex::new(proxy_visitor)));
+
+        assert!(!service_mgr.has_proxy_for_user_and_service(100, 201));
+    }
+
+    #[test]
+    fn gwsvcmgr_shutdown_connections_when_no_service_or_user_given() {
+
+        let mut proxy200_visitor = MockGwSvcProxyVisitor::new();
+        proxy200_visitor.expect_shutdown_connections().with(predicate::always(), predicate::eq(None)).times(1).return_once(move |_, _| Ok(()));
+        let mut proxy201_visitor = MockGwSvcProxyVisitor::new();
+        proxy201_visitor.expect_shutdown_connections().with(predicate::always(), predicate::eq(None)).times(1).return_once(move |_, _| Ok(()));
+        let mut service_mgr = create_gw_service_mgr(true);
+        service_mgr.service_proxy_visitors.insert(200, Arc::new(Mutex::new(proxy200_visitor)));
+        service_mgr.service_proxy_visitors.insert(201, Arc::new(Mutex::new(proxy201_visitor)));
+
+        let result = service_mgr.shutdown_connections(None, None);
+
+        if let Err(err) =  &result {
+            panic!("Unexpected shutdown result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn gwsvcmgr_shutdown_connections_when_no_service_given() {
+
+        let mut proxy200_visitor = MockGwSvcProxyVisitor::new();
+        proxy200_visitor.expect_shutdown_connections().with(predicate::always(), predicate::eq(Some(100))).times(1).return_once(move |_, _| Ok(()));
+        let mut proxy201_visitor = MockGwSvcProxyVisitor::new();
+        proxy201_visitor.expect_shutdown_connections().with(predicate::always(), predicate::eq(Some(100))).times(1).return_once(move |_, _| Ok(()));
+        let mut service_mgr = create_gw_service_mgr(true);
+        service_mgr.service_proxy_visitors.insert(200, Arc::new(Mutex::new(proxy200_visitor)));
+        service_mgr.service_proxy_visitors.insert(201, Arc::new(Mutex::new(proxy201_visitor)));
+
+        let result = service_mgr.shutdown_connections(Some(100), None);
+
+        if let Err(err) =  &result {
+            panic!("Unexpected shutdown result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn gwsvcmgr_shutdown_connections_when_no_user_given() {
+
+        let mut proxy200_visitor = MockGwSvcProxyVisitor::new();
+        proxy200_visitor.expect_shutdown_connections().with(predicate::always(), predicate::eq(None)).times(1).return_once(move |_, _| Ok(()));
+        let mut proxy201_visitor = MockGwSvcProxyVisitor::new();
+        proxy201_visitor.expect_shutdown_connections().never();
+        let mut service_mgr = create_gw_service_mgr(true);
+        service_mgr.service_proxy_visitors.insert(200, Arc::new(Mutex::new(proxy200_visitor)));
+        service_mgr.service_proxy_visitors.insert(201, Arc::new(Mutex::new(proxy201_visitor)));
+
+        let result = service_mgr.shutdown_connections(None, Some(200));
+
+        if let Err(err) =  &result {
+            panic!("Unexpected shutdown result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn gwsvcmgr_on_closed_proxy_when_valid_proxy_key() {
+
+        let mut proxy_visitor = MockGwSvcProxyVisitor::new();
+        proxy_visitor.expect_remove_proxy_for_key().with(predicate::eq("key200")).times(1).return_once(move |_| true);
+        let mut service_mgr = create_gw_service_mgr(true);
+        service_mgr.services_by_proxy_key.lock().unwrap().insert("key200".to_string(), 200);
+        service_mgr.service_proxy_visitors.insert(200, Arc::new(Mutex::new(proxy_visitor)));
+
+        service_mgr.on_closed_proxy("key200");
     }
 }

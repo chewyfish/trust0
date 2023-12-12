@@ -558,7 +558,7 @@ mod tests {
                             access_repo: &Arc<Mutex<dyn AccessRepository>>,
                             device: Device,
                             user: model::user::User)
-                            -> Result<ControlPlane, AppError> {
+        -> Result<ControlPlane, AppError> {
 
         let app_config = Arc::new(config::tests::create_app_config_with_repos(user_repo.clone(), service_repo.clone(), access_repo.clone())?);
 
