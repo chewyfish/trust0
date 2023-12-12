@@ -61,7 +61,7 @@ unsafe impl Send for TcpGatewayProxy {}
 /// tls_server::server_std::Server strategy visitor pattern implementation
 pub struct TcpGatewayProxyServerVisitor {
     app_config: Arc<AppConfig>,
-    service_mgr: Arc<Mutex<ServiceMgr>>,
+    service_mgr: Arc<Mutex<dyn ServiceMgr>>,
     service: Service,
     proxy_host: Option<String>,
     proxy_port: u16,
@@ -77,7 +77,7 @@ impl TcpGatewayProxyServerVisitor {
 
     /// TcpGatewayProxyServerVisitor constructor
     pub fn new(app_config: Arc<AppConfig>,
-               service_mgr: Arc<Mutex<ServiceMgr>>,
+               service_mgr: Arc<Mutex<dyn ServiceMgr>>,
                service: Service,
                proxy_host: Option<String>,
                proxy_port: u16,
@@ -216,12 +216,12 @@ impl server_std::ServerVisitor for TcpGatewayProxyServerVisitor {
 
 impl GatewayServiceProxyVisitor for TcpGatewayProxyServerVisitor {
 
-    fn get_service(&self) -> &Service {
-        &self.service
+    fn get_service(&self) -> Service {
+        self.service.clone()
     }
 
-    fn get_proxy_host(&self) -> &Option<String> {
-        &self.proxy_host
+    fn get_proxy_host(&self) -> Option<String> {
+        self.proxy_host.clone()
     }
 
     fn get_proxy_port(&self) -> u16 {
@@ -258,7 +258,7 @@ impl GatewayServiceProxyVisitor for TcpGatewayProxyServerVisitor {
                 } else {
                     self.remove_proxy_for_key(&proxy_key);
                 }
-            };
+            }
 
             if !errors.is_empty() {
                 return Err(AppError::General(format!("Errors closing proxy connection(s), err={}", errors.join(", "))));

@@ -80,6 +80,22 @@ pub enum DataSource {
     InMemoryDb(InMemoryDb),
 }
 
+impl DataSource {
+
+    /// Return tuple of repository factory closures (respectively for access, service and user repositories)
+    pub fn repository_factories(&self) -> (
+        Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
+        Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,
+        Box<dyn Fn() -> Arc<Mutex<dyn UserRepository>>>
+    ) {
+        (
+            Box::new(|| { Arc::new(Mutex::new(InMemAccessRepo::new())) }),
+            Box::new(|| { Arc::new(Mutex::new(InMemServiceRepo::new())) }),
+            Box::new(|| { Arc::new(Mutex::new(InMemUserRepo::new())) })
+        )
+    }
+}
+
 #[derive(Args, Debug, Clone)]
 pub struct InMemoryDb {
 
@@ -244,9 +260,9 @@ pub struct AppConfig {
     pub server_port: u16,
     pub tls_server_config_builder: TlsServerConfigBuilder,
     pub verbose_logging: bool,
-    pub access_repo: Arc<dyn AccessRepository>,
-    pub service_repo: Arc<dyn ServiceRepository>,
-    pub user_repo: Arc<dyn UserRepository>,
+    pub access_repo: Arc<Mutex<dyn AccessRepository>>,
+    pub service_repo: Arc<Mutex<dyn ServiceRepository>>,
+    pub user_repo: Arc<Mutex<dyn UserRepository>>,
     pub gateway_service_host: Option<String>,
     pub gateway_service_ports: Option<(u16, u16)>,
     pub gateway_service_reply_host: String,
@@ -265,20 +281,7 @@ impl AppConfig {
 
         // Datasource repositories
 
-        let repositories: (Arc<dyn AccessRepository>, Arc<dyn ServiceRepository>, Arc<dyn UserRepository>)
-            = match config_args.datasource {
-
-            DataSource::NoDB => (
-                Arc::new(InMemAccessRepo::new()),
-                Arc::new(InMemServiceRepo::new()),
-                Arc::new(InMemUserRepo::new())
-            ),
-            DataSource::InMemoryDb(args) => (
-                AppConfig::parse_access_db_file(&args.access_db_file)?,
-                AppConfig::parse_service_db_file(&args.service_db_file)?,
-                AppConfig::parse_user_db_file(&args.user_db_file)?,
-            )
-        };
+        let repositories = Self::create_datasource_repositories(&config_args.datasource, &config_args.datasource.repository_factories())?;
 
         // create TLS server configuration builder
 
@@ -309,7 +312,7 @@ impl AppConfig {
         let session_resumption = config_args.session_resumption;
 
         let mut alpn_protocols = vec![alpn::Protocol::ControlPlane.to_string().into_bytes()];
-        for service in repositories.1.as_ref().get_all()? {
+        for service in repositories.1.as_ref().lock().unwrap().get_all()? {
             alpn_protocols.push(alpn::Protocol::create_service_protocol(service.service_id).into_bytes())
         }
 
@@ -347,26 +350,30 @@ impl AppConfig {
         })
     }
 
-    /// Parse/load service access entity JSON file and return repository (else error is returned)
-    fn parse_access_db_file(filepath: &str) -> Result<Arc<dyn AccessRepository>, AppError> {
-        let mut repo = InMemAccessRepo::new();
-        repo.load_from_file(filepath)?;
-        Ok(Arc::new(repo))
+    /// Instantiate main repositories based on datasource config. Returns tuple of access, service and user repositories.
+    fn create_datasource_repositories(datasource: &DataSource,
+                                      repo_factories: &(
+                                          Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
+                                          Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,
+                                          Box<dyn Fn() -> Arc<Mutex<dyn UserRepository>>>
+                                      ))
+        -> Result<(
+            Arc<Mutex<dyn AccessRepository>>,
+            Arc<Mutex<dyn ServiceRepository>>,
+            Arc<Mutex<dyn UserRepository>>
+        ), AppError> {
 
-    }
+        let access_repository = repo_factories.0();
+        let service_repository = repo_factories.1();
+        let user_repository = repo_factories.2();
 
-    /// Parse/load service entity JSON file and return repository (else error is returned)
-    fn parse_service_db_file(filepath: &str) -> Result<Arc<dyn ServiceRepository>, AppError> {
-        let mut repo = InMemServiceRepo::new();
-        repo.load_from_file(filepath)?;
-        Ok(Arc::new(repo))
-    }
+        if let DataSource::InMemoryDb(args) = datasource {
+            access_repository.lock().unwrap().connect_to_datasource(&args.access_db_file)?;
+            service_repository.lock().unwrap().connect_to_datasource(&args.service_db_file)?;
+            user_repository.lock().unwrap().connect_to_datasource(&args.user_db_file)?;
+        }
 
-    /// Parse/load user entity JSON file and return repository (else error is returned)
-    fn parse_user_db_file(filepath: &str) -> Result<Arc<dyn UserRepository>, AppError> {
-        let mut repo = InMemUserRepo::new();
-        repo.load_from_file(filepath)?;
-        Ok(Arc::new(repo))
+        Ok((access_repository, service_repository, user_repository))
     }
 
     /// Parse service port range (format "{port_start:u16}-{port_end:u16}")
@@ -393,9 +400,13 @@ impl AppConfig {
 pub mod tests {
 
     use std::path::PathBuf;
+    use mockall::predicate;
     use crate::repository::access_repo::AccessRepository;
     use crate::repository::service_repo::ServiceRepository;
     use crate::repository::user_repo::UserRepository;
+    use crate::repository::access_repo::tests::MockAccessRepo;
+    use crate::repository::service_repo::tests::MockServiceRepo;
+    use crate::repository::user_repo::tests::MockUserRepo;
     use super::*;
 
     const CERTFILE_GATEWAY_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "gateway.crt.pem"];
@@ -403,20 +414,20 @@ pub mod tests {
 
     // Utilities
 
-    pub fn create_app_config_with_repos(user_repo: Arc<dyn UserRepository>,
-                                        service_repo: Arc<dyn ServiceRepository>,
-                                        access_repo: Arc<dyn AccessRepository>)
+    pub fn create_app_config_with_repos(user_repo: Arc<Mutex<dyn UserRepository>>,
+                                        service_repo: Arc<Mutex<dyn ServiceRepository>>,
+                                        access_repo: Arc<Mutex<dyn AccessRepository>>)
         -> Result<AppConfig, AppError> {
 
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_cert = load_certificates(gateway_cert_file.to_str().unwrap().to_string())?;
         let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_key = load_private_key(gateway_key_file.to_str().unwrap().to_string())?;
-        let mut auth_root_certs = rustls::RootCertStore::empty();
+        let auth_root_certs = rustls::RootCertStore::empty();
         let cipher_suites: Vec<rustls::SupportedCipherSuite> = rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
         let protocol_versions: Vec<&'static rustls::SupportedProtocolVersion> = rustls::ALL_VERSIONS.to_vec();
         let session_resumption = false;
-        let mut alpn_protocols = vec![alpn::Protocol::ControlPlane.to_string().into_bytes()];
+        let alpn_protocols = vec![alpn::Protocol::ControlPlane.to_string().into_bytes()];
 
         let tls_server_config_builder = TlsServerConfigBuilder {
             certs: gateway_cert,
@@ -445,4 +456,92 @@ pub mod tests {
                 AppError::GenWithMsgAndErr("Error instantiating DNSClient".to_string(), Box::new(err)))?
         })
     }
+
+    #[test]
+    pub fn appconfig_parse_gateway_service_ports_when_invalid_range() {
+
+        if let Ok(range) = AppConfig::parse_gateway_service_ports("20-NAN") {
+            panic!("Unexpected result: val={:?}", &range);
+        }
+    }
+
+    #[test]
+    pub fn appconfig_parse_gateway_service_ports_when_valid_range() {
+
+        let result = AppConfig::parse_gateway_service_ports("20-40");
+        if let Ok(range) = result {
+            assert_eq!(range, (20,40));
+            return;
+        }
+
+        panic!("Unexpected result: val={:?}", &result);
+    }
+
+    #[test]
+    pub fn appconfig_create_datasource_repositories_when_inmemdb_ds() {
+
+        let repo_factories: (Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
+                             Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,
+                             Box<dyn Fn() -> Arc<Mutex<dyn UserRepository>>>) = (
+            Box::new(move || {
+                let mut access_repo = MockAccessRepo::new();
+                access_repo.expect_connect_to_datasource().with(predicate::eq("adf")).times(1).return_once(move |_| Ok(()));
+                Arc::new(Mutex::new(access_repo))
+            }),
+            Box::new(move || {
+                let mut service_repo = MockServiceRepo::new();
+                service_repo.expect_connect_to_datasource().with(predicate::eq("sdf")).times(1).return_once(move |_| Ok(()));
+                Arc::new(Mutex::new(service_repo))
+            }),
+            Box::new(move || {
+                let mut user_repo = MockUserRepo::new();
+                user_repo.expect_connect_to_datasource().with(predicate::eq("udf")).times(1).return_once(move |_| Ok(()));
+                Arc::new(Mutex::new(user_repo))
+            })
+        );
+
+        let datasource = DataSource::InMemoryDb(InMemoryDb {
+            access_db_file: "adf".to_string(),
+            service_db_file: "sdf".to_string(),
+            user_db_file: "udf".to_string() });
+
+        let result = AppConfig::create_datasource_repositories(&datasource, &repo_factories);
+
+        if let Err(err) = &result {
+            panic!("Unexpected result: err={:?}", err);
+        }
+    }
+
+    #[test]
+    pub fn appconfig_create_datasource_repositories_when_nodb_ds() {
+
+        let repo_factories: (Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
+                             Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,
+                             Box<dyn Fn() -> Arc<Mutex<dyn UserRepository>>>) = (
+            Box::new(move || {
+                let mut access_repo = MockAccessRepo::new();
+                access_repo.expect_connect_to_datasource().never();
+                Arc::new(Mutex::new(access_repo))
+            }),
+            Box::new(move || {
+                let mut service_repo = MockServiceRepo::new();
+                service_repo.expect_connect_to_datasource().never();
+                Arc::new(Mutex::new(service_repo))
+            }),
+            Box::new(move || {
+                let mut user_repo = MockUserRepo::new();
+                user_repo.expect_connect_to_datasource().never();
+                Arc::new(Mutex::new(user_repo))
+            })
+        );
+
+        let datasource = DataSource::NoDB;
+
+        let result = AppConfig::create_datasource_repositories(&datasource, &repo_factories);
+
+        if let Err(err) = &result {
+            panic!("Unexpected result: err={:?}", err);
+        }
+    }
+
 }

@@ -23,10 +23,10 @@ pub trait GatewayServiceProxy: Send {
 pub trait GatewayServiceProxyVisitor: server_std::ServerVisitor + Send {
 
     /// Service accessor
-    fn get_service(&self) -> &Service;
+    fn get_service(&self) -> Service;
 
     /// Gateway host for service proxy
-    fn get_proxy_host(&self) -> &Option<String>;
+    fn get_proxy_host(&self) -> Option<String>;
 
     /// Gateway port for service proxy
     fn get_proxy_port(&self) -> u16;
@@ -40,4 +40,35 @@ pub trait GatewayServiceProxyVisitor: server_std::ServerVisitor + Send {
 
     /// Remove proxy for given proxy key. Returns true if service proxy contained proxy key (and removed)
     fn remove_proxy_for_key(&mut self, proxy_key: &str) -> bool;
+}
+
+/// Unit tests
+#[cfg(test)]
+pub mod tests {
+
+    use mockall::mock;
+    use rustls::server::Accepted;
+    use rustls::ServerConfig;
+    use trust0_common::net::tls_server::{conn_std, server_std};
+    use super::*;
+
+    // mocks
+    // =====
+
+    mock! {
+        pub GwSvcProxyVisitor {}
+        impl server_std::ServerVisitor for GwSvcProxyVisitor {
+            fn create_client_conn(&mut self, tls_conn: conn_std::TlsServerConnection) -> Result<conn_std::Connection, AppError>;
+            fn on_tls_handshaking(&mut self, _accepted: &Accepted) -> Result<ServerConfig, AppError>;
+            fn on_conn_accepted(&mut self, connection: conn_std::Connection) -> Result<(), AppError>;
+        }
+        impl GatewayServiceProxyVisitor for GwSvcProxyVisitor {
+            fn get_service(&self) -> Service;
+            fn get_proxy_host(&self) -> Option<String>;
+            fn get_proxy_port(&self) -> u16;
+            fn get_proxy_addrs_for_user(&self, user_id: u64) -> Vec<ProxyAddrs>;
+            fn shutdown_connections(&mut self, proxy_tasks_sender: Sender<ProxyExecutorEvent>, user_id: Option<u64>) -> Result<(), AppError>;
+            fn remove_proxy_for_key(&mut self, proxy_key: &str) -> bool;
+        }
+    }
 }

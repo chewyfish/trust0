@@ -19,21 +19,6 @@ impl InMemUserRepo {
         }
     }
 
-    /// Load/parse users from given JSON file path
-    pub fn load_from_file(&mut self, file_path: &str) -> Result<(), AppError> {
-
-        let data = fs::read_to_string(file_path).map_err(|err|
-            AppError::GenWithMsgAndErr(format!("Failed to read file: path={}", file_path), Box::new(err)))?;
-        let users: Vec<User> = serde_json::from_str(&data).map_err(|err|
-            AppError::GenWithMsgAndErr(format!("Failed to parse JSON: path={}", file_path), Box::new(err)))?;
-
-        for user in users.iter().as_ref() {
-            self.put(user.clone())?;
-        }
-
-        Ok(())
-    }
-
     fn access_data_for_write(&self) -> Result<RwLockWriteGuard<HashMap<u64, User>>, AppError> {
         self.users.write().map_err(|err|
             AppError::General(format!("Failed to access write lock to DB: err={}", err)))
@@ -46,6 +31,20 @@ impl InMemUserRepo {
 }
 
 impl UserRepository for InMemUserRepo {
+
+    fn connect_to_datasource(&mut self, connect_spec: &str) -> Result<(), AppError> {
+
+        let data = fs::read_to_string(connect_spec).map_err(|err|
+            AppError::GenWithMsgAndErr(format!("Failed to read file: path={}", connect_spec), Box::new(err)))?;
+        let users: Vec<User> = serde_json::from_str(&data).map_err(|err|
+            AppError::GenWithMsgAndErr(format!("Failed to parse JSON: path={}", connect_spec), Box::new(err)))?;
+
+        for user in users.iter().as_ref() {
+            self.put(user.clone())?;
+        }
+
+        Ok(())
+    }
 
     fn put(&self, user: User) -> Result<Option<User>, AppError> {
         let mut data = self.access_data_for_write()?;
@@ -71,236 +70,190 @@ impl UserRepository for InMemUserRepo {
     }
 }
 
-/*
+/// Unit tests
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+    use trust0_common::model::user::{User, Status};
+    use crate::repository::user_repo::in_memory_repo::InMemUserRepo;
     use super::*;
-    use test_context::{test_context, AsyncTestContext};
 
-    #[test_context(Context)]
-    #[tokio::test]
-    async fn create_order_adds_order_to_store(ctx: &mut Context) {
+    const VALID_USER_DB_FILE_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "db-user.json"];
+    const INVALID_USER_DB_FILE_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "db-user-INVALID.json"];
+
+    #[test]
+    fn inmemuserrepo_connect_to_datasource_when_invalid_filepath() {
+
+        let invalid_user_db_path: PathBuf = INVALID_USER_DB_FILE_PATHPARTS.iter().collect();
+        let invalid_user_db_pathstr = invalid_user_db_path.to_str().unwrap();
+
+        let mut user_repo = InMemUserRepo::new();
+
+        if let Ok(()) = user_repo.connect_to_datasource(invalid_user_db_pathstr) {
+            panic!("Unexpected result: file={}", invalid_user_db_pathstr);
+        }
+    }
+
+    #[test]
+    fn inmemuserrepo_connect_to_datasource_when_valid_filepath() {
+
+        let valid_user_db_path: PathBuf = VALID_USER_DB_FILE_PATHPARTS.iter().collect();
+        let valid_user_db_pathstr = valid_user_db_path.to_str().unwrap();
+
+        let mut user_repo = InMemUserRepo::new();
+
+        if let Err(err) = user_repo.connect_to_datasource(valid_user_db_pathstr) {
+            panic!("Unexpected result: file={}, err={:?}", valid_user_db_pathstr, &err);
+        }
+
+        let expected_user_db_map: HashMap<u64, User> = HashMap::from([
+            (100, User { user_id: 100, name: "User100".to_string(), status:  Status::Active }),
+            (101, User { user_id: 101, name: "User101".to_string(), status:  Status::Active })
+        ]);
+
+        let actual_user_db_map: HashMap<u64, User> = HashMap::from_iter(
+            user_repo.users.into_inner().unwrap().iter().map(|e| (e.0.clone(), e.1.clone())).collect::<Vec<(u64, User)>>());
+
+        assert_eq!(actual_user_db_map.len(), expected_user_db_map.len());
+        assert_eq!(actual_user_db_map.iter().filter(|entry| !expected_user_db_map.contains_key(entry.0)).count(), 0);
+    }
+
+    #[test]
+    fn inmemuserrepo_put() {
+
+        let user_repo = InMemUserRepo::new();
+        let user_key = 1;
+        let user = User { user_id: 1, name: "user1".to_string(), status: Status::Active };
+
+        if let Err(err) = user_repo.put(user.clone()) {
+            panic!("Unexpected result: err={:?}", &err)
+        }
+
+        let stored_map = user_repo.users.read().unwrap();
+        let stored_entry = stored_map.get(&user_key);
+
+        assert!(stored_entry.is_some());
+        assert_eq!(*stored_entry.unwrap(), user);
+    }
+
+    #[test]
+    fn inmemuserrepo_get_when_invalid_user() {
+
+        let user_repo = InMemUserRepo::new();
+        let user_key = 1;
+        let user = User { user_id: 1, name: "user1".to_string(), status: Status::Active };
+
+        user_repo.users.write().unwrap().insert(user_key, user);
+
+        let result = user_repo.get( 10);
+
+        if let Err(err) = &result {
+            panic!("Unexpected result: err={:?}", &err)
+        }
+
+        assert!(result.unwrap().is_none());
+    }
+
+    #[test]
+    fn inmemuserrepo_get_when_valid_user() {
+
+        let user_repo = InMemUserRepo::new();
+        let user_keys = [1, 2, 3];
+        let users = [
+            User { user_id: 1, name: "user1".to_string(), status: Status::Active },
+            User { user_id: 2, name: "user2".to_string(), status: Status::Active },
+            User { user_id: 3, name: "user3".to_string(), status: Status::Inactive }
+        ];
+
+        user_repo.users.write().unwrap().insert(user_keys[0], users[0].clone());
+        user_repo.users.write().unwrap().insert(user_keys[1], users[1].clone());
+        user_repo.users.write().unwrap().insert(user_keys[2], users[2].clone());
+
+        let result = user_repo.get(2);
+
+        if let Err(err) = &result {
+            panic!("Unexpected result: err={:?}", &err)
+        }
+
+        let actual_user = result.unwrap();
+
+        assert!(actual_user.is_some());
+        assert_eq!(actual_user.unwrap(), users[1]);
+    }
+
+    #[test]
+    fn inmemuserrepo_get_all() {
+
+        let user_repo = InMemUserRepo::new();
+        let user_keys = [1, 2, 3];
+        let users = [
+            User { user_id: 1, name: "user1".to_string(), status: Status::Active },
+            User { user_id: 2, name: "user2".to_string(), status: Status::Active },
+            User { user_id: 3, name: "user3".to_string(), status: Status::Inactive }
+        ];
+
+        user_repo.users.write().unwrap().insert(user_keys[0], users[0].clone());
+        user_repo.users.write().unwrap().insert(user_keys[1], users[1].clone());
+        user_repo.users.write().unwrap().insert(user_keys[2], users[2].clone());
+
+        let result = user_repo.get_all();
+
+        if let Err(err) = &result {
+            panic!("Unexpected result: err={:?}", &err)
+        }
+
+        let actual_users = result.unwrap();
+        assert_eq!(actual_users.len(), 3);
+
+        let expected_access_db_map: HashMap<u64, User> = HashMap::from([
+            (1, User { user_id: 1, name: "user1".to_string(), status: Status::Active }),
+            (2, User { user_id: 2, name: "user2".to_string(), status: Status::Active }),
+            (3, User { user_id: 3, name: "user3".to_string(), status: Status::Inactive })
+        ]);
+
+
         assert_eq!(
-            ctx.in_mem_store
-                .list_orders(ctx.user_id_1)
-                .await
-                .unwrap()
-                .len(),
-            2
-        );
-        assert_eq!(
-            ctx.in_mem_store
-                .list_orders(ctx.user_id_2)
-                .await
-                .unwrap()
-                .len(),
-            1
-        );
+            actual_users.iter()
+                .filter(|entry| !expected_access_db_map.contains_key(&entry.user_id)).count(),
+            0);
     }
 
-    #[test_context(Context)]
-    #[tokio::test]
-    async fn get_order_retrieves_existing_order(ctx: &mut Context) {
-        if let Ok(stored_order) = ctx.in_mem_store.get_order(ctx.order_1_user_1.id).await {
-            assert_eq!(stored_order, ctx.order_1_user_1);
-        } else {
-            panic!("Order not found after being created");
+    #[test]
+    fn inmemuserrepo_delete_when_invalid_user() {
+
+        let user_repo = InMemUserRepo::new();
+        let user_key = 1;
+        let user = User { user_id: 1, name: "user1".to_string(), status: Status::Active };
+
+        user_repo.users.write().unwrap().insert(user_key, user);
+
+        let result = user_repo.delete(10);
+
+        if let Err(err) = &result {
+            panic!("Unexpected result: err={:?}", &err)
         }
+
+        assert!(result.unwrap().is_none());
     }
 
-    #[test_context(Context)]
-    #[tokio::test]
-    async fn get_order_returns_error_for_non_existing_order(ctx: &mut Context) {
-        let order_id = Uuid::new_v4();
-        if let Err(OrderStoreError::OrderNotFound(not_found_id)) =
-            ctx.in_mem_store.get_order(order_id).await
-        {
-            assert_eq!(order_id, not_found_id);
-        } else {
-            panic!("Unexpected order found");
+    #[test]
+    fn inmemuserrepo_delete_when_valid_user() {
+
+        let user_repo = InMemUserRepo::new();
+        let user_key = 1;
+        let user = User { user_id: 1, name: "user1".to_string(), status: Status::Active };
+
+        user_repo.users.write().unwrap().insert(user_key, user.clone());
+
+        let result = user_repo.delete(1);
+
+        if let Err(err) = &result {
+            panic!("Unexpected result: err={:?}", &err)
         }
-    }
 
-    #[tokio::test]
-    async fn item_cannot_be_added_to_non_existing_order() {
-        let in_mem_store = InMemOrderStore::new();
-        assert!(in_mem_store
-            .add_item(Uuid::new_v4(), Uuid::new_v4(), 1)
-            .await
-            .is_err());
-    }
+        let actual_prev_user = result.unwrap();
 
-    #[test_context(Context)]
-    #[tokio::test]
-    async fn order_contains_added_item(ctx: &mut Context) {
-        let product_id = Uuid::new_v4();
-        let quantity = 42;
-        if let Ok(()) = ctx
-            .in_mem_store
-            .add_item(ctx.order_1_user_1.id, product_id, quantity)
-            .await
-        {
-            if let Ok(stored_order) = ctx.in_mem_store.get_order(ctx.order_1_user_1.id).await {
-                assert_eq!(stored_order.items.len(), 1);
-                assert_eq!(stored_order.items[0].product_id, product_id);
-                assert_eq!(stored_order.items[0].quantity, quantity);
-            } else {
-                panic!("Order not found after being created");
-            }
-        } else {
-            panic!("Failed to add item to order");
-        }
-    }
-
-    #[test_context(Context)]
-    #[tokio::test]
-    async fn order_contains_added_items(ctx: &mut Context) {
-        let product_id_0 = Uuid::new_v4();
-        let quantity_0 = 42;
-        let product_id_1 = Uuid::new_v4();
-        let quantity_1 = 7;
-        if let (Ok(()), Ok(())) = (
-            ctx.in_mem_store
-                .add_item(ctx.order_1_user_1.id, product_id_0, quantity_0)
-                .await,
-            ctx.in_mem_store
-                .add_item(ctx.order_1_user_1.id, product_id_1, quantity_1)
-                .await,
-        ) {
-            if let Ok(stored_order) = ctx.in_mem_store.get_order(ctx.order_1_user_1.id).await {
-                assert_eq!(stored_order.items.len(), 2);
-                assert_eq!(stored_order.items[0].product_id, product_id_0);
-                assert_eq!(stored_order.items[0].quantity, quantity_0);
-                assert_eq!(stored_order.items[1].product_id, product_id_1);
-                assert_eq!(stored_order.items[1].quantity, quantity_1);
-            } else {
-                panic!("Order not found after being created");
-            }
-        } else {
-            panic!("Failed to add items to order");
-        }
-    }
-
-    #[tokio::test]
-    async fn item_cannot_be_deleted_from_non_existing_order() {
-        let in_mem_store = InMemOrderStore::new();
-        assert!(in_mem_store.delete_item(Uuid::new_v4(), 1).await.is_err());
-    }
-
-    #[test_context(Context)]
-    #[tokio::test]
-    async fn attempt_to_delete_non_existent_item_from_order_returns_error(ctx: &mut Context) {
-        let product_id_0 = Uuid::new_v4();
-        let quantity_0 = 42;
-        let product_id_1 = Uuid::new_v4();
-        let quantity_1 = 7;
-        if let (Ok(()), Ok(())) = (
-            ctx.in_mem_store
-                .add_item(ctx.order_1_user_1.id, product_id_0, quantity_0)
-                .await,
-            ctx.in_mem_store
-                .add_item(ctx.order_1_user_1.id, product_id_1, quantity_1)
-                .await,
-        ) {
-            if let Err(OrderStoreError::ItemIndexOutOfBounds(index)) =
-                ctx.in_mem_store.delete_item(ctx.order_1_user_1.id, 2).await
-            {
-                assert_eq!(index, 2);
-            } else {
-                panic!("Deleting non-existent item must produce error");
-            }
-        } else {
-            panic!("Failed to add items to order");
-        }
-    }
-
-    #[test_context(Context)]
-    #[tokio::test]
-    async fn last_item_can_be_deleted_from_order(ctx: &mut Context) {
-        let product_id_0 = Uuid::new_v4();
-        let quantity_0 = 42;
-        let product_id_1 = Uuid::new_v4();
-        let quantity_1 = 7;
-        if let (Ok(()), Ok(())) = (
-            ctx.in_mem_store
-                .add_item(ctx.order_1_user_1.id, product_id_0, quantity_0)
-                .await,
-            ctx.in_mem_store
-                .add_item(ctx.order_1_user_1.id, product_id_1, quantity_1)
-                .await,
-        ) {
-            if let Ok(()) = ctx.in_mem_store.delete_item(ctx.order_1_user_1.id, 1).await {
-                if let Ok(stored_order) = ctx.in_mem_store.get_order(ctx.order_1_user_1.id).await {
-                    assert_eq!(stored_order.items.len(), 1);
-                    assert_eq!(stored_order.items[0].product_id, product_id_0);
-                    assert_eq!(stored_order.items[0].quantity, quantity_0);
-                } else {
-                    panic!("Order not found after being created");
-                }
-            } else {
-                panic!("Failed to delete item from order");
-            }
-        } else {
-            panic!("Failed to add items to order");
-        }
-    }
-
-    #[test_context(Context)]
-    #[tokio::test]
-    async fn first_item_can_be_deleted_from_order(ctx: &mut Context) {
-        let product_id_0 = Uuid::new_v4();
-        let quantity_0 = 42;
-        let product_id_1 = Uuid::new_v4();
-        let quantity_1 = 7;
-        if let (Ok(()), Ok(())) = (
-            ctx.in_mem_store
-                .add_item(ctx.order_1_user_1.id, product_id_0, quantity_0)
-                .await,
-            ctx.in_mem_store
-                .add_item(ctx.order_1_user_1.id, product_id_1, quantity_1)
-                .await,
-        ) {
-            if let Ok(()) = ctx.in_mem_store.delete_item(ctx.order_1_user_1.id, 0).await {
-                if let Ok(stored_order) = ctx.in_mem_store.get_order(ctx.order_1_user_1.id).await {
-                    assert_eq!(stored_order.items.len(), 1);
-                    assert_eq!(stored_order.items[0].product_id, product_id_1);
-                    assert_eq!(stored_order.items[0].quantity, quantity_1);
-                } else {
-                    panic!("Order not found after being created");
-                }
-            } else {
-                panic!("Failed to delete item from order");
-            }
-        } else {
-            panic!("Failed to add items to order");
-        }
-    }
-
-    struct Context {
-        user_id_1: Uuid,
-        user_id_2: Uuid,
-        in_mem_store: InMemOrderStore,
-        order_1_user_1: Order,
-    }
-
-    #[async_trait::async_trait]
-    impl AsyncTestContext for Context {
-        async fn setup() -> Context {
-            let user_id_1 = Uuid::new_v4();
-            let in_mem_store = InMemOrderStore::new();
-            let order = in_mem_store.create_order(user_id_1).await;
-            let ctx = Context {
-                user_id_1,
-                user_id_2: Uuid::new_v4(),
-                in_mem_store,
-                order_1_user_1: order.unwrap(),
-            };
-            _ = ctx.in_mem_store.create_order(ctx.user_id_2).await;
-            _ = ctx.in_mem_store.create_order(ctx.user_id_1).await;
-
-            ctx
-        }
-        async fn teardown(self) {}
+        assert!(actual_prev_user.is_some());
+        assert_eq!(actual_prev_user.unwrap(), user);
     }
 }
-*/

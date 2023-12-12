@@ -6,15 +6,15 @@ use crate::control::response;
 use crate::error::AppError;
 
 // Protocol text
-const PROTOCOL_REQUEST_ABOUT: &str = "about";
-const PROTOCOL_REQUEST_CONNECTIONS: &str = "connections";
-const PROTOCOL_REQUEST_PING: &str = "ping";
-const PROTOCOL_REQUEST_PROXIES: &str = "proxies";
-const PROTOCOL_REQUEST_SERVICES: &str = "services";
-const PROTOCOL_REQUEST_START: &str = "start";
-const PROTOCOL_REQUEST_STOP: &str = "stop";
-const PROTOCOL_REQUEST_QUIT: &str = "quit";
-const PROTOCOL_REQUEST_EXIT: &str = "exit";
+pub const PROTOCOL_REQUEST_ABOUT: &str = "about";
+pub const PROTOCOL_REQUEST_CONNECTIONS: &str = "connections";
+pub const PROTOCOL_REQUEST_PING: &str = "ping";
+pub const PROTOCOL_REQUEST_PROXIES: &str = "proxies";
+pub const PROTOCOL_REQUEST_SERVICES: &str = "services";
+pub const PROTOCOL_REQUEST_START: &str = "start";
+pub const PROTOCOL_REQUEST_STOP: &str = "stop";
+pub const PROTOCOL_REQUEST_QUIT: &str = "quit";
+pub const PROTOCOL_REQUEST_EXIT: &str = "exit";
 
 // Help templates
 const PARSER_TEMPLATE: &str = "\
@@ -28,7 +28,7 @@ const COMMAND_TEMPLATE: &str = "\
         {all-args}{after-help}\
     ";
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Request {
     #[default]
     None,

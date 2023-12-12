@@ -56,7 +56,7 @@ unsafe impl Send for Gateway {}
 /// tls_server::server_std::Server strategy visitor pattern implementation
 pub struct ServerVisitor {
     app_config: Arc<AppConfig>,
-    service_mgr: Arc<Mutex<ServiceMgr>>,
+    service_mgr: Arc<Mutex<dyn ServiceMgr>>,
     control_plane_visitor: ControlPlaneServerVisitor,
     shutdown_requested: bool
 }
@@ -65,7 +65,7 @@ impl ServerVisitor {
 
     /// ServerVisitor constructor
     pub fn new(app_config: Arc<AppConfig>,
-               service_mgr: Arc<Mutex<ServiceMgr>>) -> Self {
+               service_mgr: Arc<Mutex<dyn ServiceMgr>>) -> Self {
 
         Self {
             app_config: app_config.clone(),

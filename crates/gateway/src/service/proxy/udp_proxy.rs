@@ -61,7 +61,7 @@ unsafe impl Send for UdpGatewayProxy {}
 /// tls_server::server_std::Server strategy visitor pattern implementation
 pub struct UdpGatewayProxyServerVisitor {
     app_config: Arc<AppConfig>,
-    service_mgr: Arc<Mutex<ServiceMgr>>,
+    service_mgr: Arc<Mutex<dyn ServiceMgr>>,
     service: Service,
     proxy_host: Option<String>,
     proxy_port: u16,
@@ -77,7 +77,7 @@ impl UdpGatewayProxyServerVisitor {
 
     /// UdpGatewayProxyServerVisitor constructor
     pub fn new(app_config: Arc<AppConfig>,
-               service_mgr: Arc<Mutex<ServiceMgr>>,
+               service_mgr: Arc<Mutex<dyn ServiceMgr>>,
                service: Service,
                proxy_host: Option<String>,
                proxy_port: u16,
@@ -219,12 +219,12 @@ impl server_std::ServerVisitor for UdpGatewayProxyServerVisitor {
 
 impl GatewayServiceProxyVisitor for UdpGatewayProxyServerVisitor {
 
-    fn get_service(&self) -> &Service {
-        &self.service
+    fn get_service(&self) -> Service {
+        self.service.clone()
     }
 
-    fn get_proxy_host(&self) -> &Option<String> {
-        &self.proxy_host
+    fn get_proxy_host(&self) -> Option<String> {
+        self.proxy_host.clone()
     }
 
     fn get_proxy_port(&self) -> u16 {

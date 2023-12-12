@@ -24,9 +24,9 @@ use crate::service::manager::ServiceMgr;
 pub struct ControlPlane {
     app_config: Arc<AppConfig>,
     processor: request::RequestProcessor,
-    access_repo: Arc<dyn AccessRepository>,
-    _service_repo: Arc<dyn ServiceRepository>,
-    user_repo: Arc<dyn UserRepository>,
+    access_repo: Arc<Mutex<dyn AccessRepository>>,
+    _service_repo: Arc<Mutex<dyn ServiceRepository>>,
+    user_repo: Arc<Mutex<dyn UserRepository>>,
     event_channel_sender: Sender<ConnectionEvent>,
     device: Device,
     user: model::user::User,
@@ -38,9 +38,9 @@ impl ControlPlane {
 
     /// ControlPlane constructor
     pub fn new(app_config: Arc<AppConfig>,
-               access_repo: Arc<dyn AccessRepository>,
-               service_repo: Arc<dyn ServiceRepository>,
-               user_repo: Arc<dyn UserRepository>,
+               access_repo: Arc<Mutex<dyn AccessRepository>>,
+               service_repo: Arc<Mutex<dyn ServiceRepository>>,
+               user_repo: Arc<Mutex<dyn UserRepository>>,
                event_channel_sender: Sender<ConnectionEvent>,
                device: Device,
                user: model::user::User) -> Result<Self, AppError> {
@@ -62,7 +62,7 @@ impl ControlPlane {
     }
 
     /// Process given command request
-    pub fn process_request(&mut self, service_mgr: &Arc<Mutex<ServiceMgr>>, command_line: &str)
+    pub fn process_request(&mut self, service_mgr: &Arc<Mutex<dyn ServiceMgr>>, command_line: &str)
         -> Result<request::Request, AppError> {
 
         let client_request: request::Request;
@@ -168,7 +168,7 @@ impl ControlPlane {
 
         let device = &self.device;
         let user_id = device.get_cert_access_context().user_id;
-        let user = self.user_repo.get(user_id)?.map(|u|
+        let user = self.user_repo.lock().unwrap().get(user_id)?.map(|u|
             response::User::new(u.user_id, &u.name, &format!("{:?}", u.status)));
 
         Self::prepare_response(
@@ -185,7 +185,7 @@ impl ControlPlane {
     }
 
     /// Process 'connections' command
-    fn process_cmd_connections(&self, service_mgr: &Arc<Mutex<ServiceMgr>>)
+    fn process_cmd_connections(&self, service_mgr: &Arc<Mutex<dyn ServiceMgr>>)
         -> Result<String, AppError> {
 
         let mask_addrs = self.app_config.mask_addresses;
@@ -225,10 +225,10 @@ impl ControlPlane {
     }
 
     /// Process 'proxies' command
-    fn process_cmd_proxies(&mut self, service_mgr: &Arc<Mutex<ServiceMgr>>)
+    fn process_cmd_proxies(&mut self, service_mgr: &Arc<Mutex<dyn ServiceMgr>>)
         -> Result<String, AppError> {
 
-        let user_services: HashSet<u64> = self.access_repo.get_all_for_user(self.user.user_id)?.iter()
+        let user_services: HashSet<u64> = self.access_repo.lock().unwrap().get_all_for_user(self.user.user_id)?.iter()
             .map(|access| access.service_id)
             .collect();
 
@@ -238,9 +238,10 @@ impl ControlPlane {
             .map(|service_proxy| {
 
                 let service_proxy = service_proxy.lock().unwrap();
-                if user_services.contains(&service_proxy.get_service().service_id) {
+                let service = service_proxy.get_service();
+                if user_services.contains(&service.service_id) {
                     Some(response::Proxy::new(
-                        &service_proxy.get_service().into(),
+                        &service.into(),
                         &service_proxy.get_proxy_host(),
                         service_proxy.get_proxy_port(),
                         &None).try_into())
@@ -265,7 +266,7 @@ impl ControlPlane {
 
         let mask_addrs  = self.app_config.mask_addresses;
 
-        let user_services: Vec<Value> = self.access_repo.get_all_for_user(self.user.user_id)?.iter()
+        let user_services: Vec<Value> = self.access_repo.lock().unwrap().get_all_for_user(self.user.user_id)?.iter()
             .map(|access| self.services_by_id.get(&access.service_id))
             .flatten()
             .map(|service| {
@@ -283,7 +284,7 @@ impl ControlPlane {
     }
 
     /// Process 'start' command
-    fn process_cmd_start(&mut self, service_mgr: &Arc<Mutex<ServiceMgr>>, service_name: &str, local_port: u16)
+    fn process_cmd_start(&mut self, service_mgr: &Arc<Mutex<dyn ServiceMgr>>, service_name: &str, local_port: u16)
         -> Result<String, AppError> {
 
         // Validate requested service is valid and user is authorized
@@ -292,7 +293,7 @@ impl ControlPlane {
                 response::CODE_NOT_FOUND,
                 format!("Unknown service: svc_name={}", service_name)))?;
 
-        if self.access_repo.get(self.user.user_id, service.service_id)?.is_none() {
+        if self.access_repo.lock().unwrap().get(self.user.user_id, service.service_id)?.is_none() {
             return Err(AppError::GenWithCodeAndMsg(
                 response::CODE_FORBIDDEN,
                 format!("User is not authorized for service: user_id={}, svc_id={}", self.user.user_id, service.service_id)));
@@ -319,7 +320,7 @@ impl ControlPlane {
     }
 
     /// Process 'stop' command
-    fn process_cmd_stop(&mut self, service_mgr: &Arc<Mutex<ServiceMgr>>, service_name: &str)
+    fn process_cmd_stop(&mut self, service_mgr: &Arc<Mutex<dyn ServiceMgr>>, service_name: &str)
         -> Result<String, AppError> {
 
         // Validate requested service is valid and proxy is currently active
@@ -380,10 +381,10 @@ impl ControlPlane {
     }
 
     /// Setup services maps
-    fn setup_services_maps(service_repo: &Arc<dyn ServiceRepository>)
+    fn setup_services_maps(service_repo: &Arc<Mutex<dyn ServiceRepository>>)
         -> Result<(HashMap<u64, model::service::Service>, HashMap<String, model::service::Service>), AppError> {
 
-        let services = service_repo.get_all()?;
+        let services = service_repo.lock().unwrap().get_all()?;
         let services_by_id: HashMap<u64, model::service::Service> = services.iter()
             .map(|service| (service.service_id, service.clone())).collect();
         let services_by_name: HashMap<String, model::service::Service> = services.iter()
@@ -396,14 +397,14 @@ impl ControlPlane {
 /// tls_server::server_std::Server strategy visitor pattern implementation
 pub struct ControlPlaneServerVisitor {
     app_config: Arc<AppConfig>,
-    service_mgr: Arc<Mutex<ServiceMgr>>
+    service_mgr: Arc<Mutex<dyn ServiceMgr>>
 }
 
 impl ControlPlaneServerVisitor {
 
     /// ServerVisitor constructor
     pub fn new(app_config: Arc<AppConfig>,
-               service_mgr: Arc<Mutex<ServiceMgr>>) -> Self {
+               service_mgr: Arc<Mutex<dyn ServiceMgr>>) -> Self {
 
         Self {
             app_config,
@@ -436,6 +437,520 @@ impl server_std::ServerVisitor for ControlPlaneServerVisitor {
         server_std::Server::spawn_connection_processor(connection);
 
         Ok(())
+    }
+
+}
+
+
+/// Unit tests
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::mpsc;
+    use mockall::predicate;
+    use trust0_common::crypto::file::load_certificates;
+    use trust0_common::model::access::ServiceAccess;
+    use crate::config;
+    use crate::repository::access_repo::tests::MockAccessRepo;
+    use crate::repository::service_repo::tests::MockServiceRepo;
+    use crate::repository::user_repo::tests::MockUserRepo;
+    use crate::service::manager::tests::MockSvcMgr;
+    use crate::service::proxy::proxy::tests::MockGwSvcProxyVisitor;
+    use super::*;
+
+    const CERTFILE_CLIENT_UID100_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "client-uid100.crt.pem"];
+
+    fn create_device() -> Result<Device, AppError> {
+        let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().unwrap().to_string())?;
+        Device::new(certs)
+    }
+
+    fn create_user() -> model::user::User {
+        model::user::User { user_id: 100, name: "user100".to_string(), status: model::user::Status::Active }
+    }
+
+    fn create_repos(expect_user_get: bool, expect_access_get_all_for_user: bool, expect_access_get: bool)
+        -> (Arc<Mutex<dyn UserRepository>>,
+            Arc<Mutex<dyn ServiceRepository>>,
+            Arc<Mutex<dyn AccessRepository>>) {
+
+        let mut user_repo = MockUserRepo::new();
+        if expect_user_get {
+            user_repo.expect_get().with(predicate::eq(100)).times(1).return_once(move |_| Ok(Some(
+                create_user()
+            )));
+        }
+
+        let mut service_repo = MockServiceRepo::new();
+        service_repo.expect_get_all().times(1).return_once(move || Ok(vec![
+            model::service::Service {service_id: 200, name:  "Service200".to_string(), transport: model::service::Transport::TCP, host: "localhost".to_string(), port:  8200},
+            model::service::Service {service_id: 201, name:  "Service201".to_string(), transport: model::service::Transport::TCP, host: "localhost".to_string(), port:  8201},
+            model::service::Service {service_id: 202, name:  "Service202".to_string(), transport: model::service::Transport::TCP, host: "localhost".to_string(), port:  8202},
+            model::service::Service {service_id: 203, name:  "chat-tcp".to_string(), transport: model::service::Transport::TCP, host: "localhost".to_string(), port:  8500},
+            model::service::Service {service_id: 204, name:  "echo-udp".to_string(), transport: model::service::Transport::UDP, host: "localhost".to_string(), port:  8600}
+        ]));
+
+        let mut access_repo = MockAccessRepo::new();
+        if expect_access_get_all_for_user {
+            access_repo.expect_get_all_for_user().with(predicate::eq(100)).times(1).return_once(move |_| Ok(vec![
+                ServiceAccess { user_id: 100, service_id: 200 },
+                ServiceAccess { user_id: 100, service_id: 203 },
+                ServiceAccess { user_id: 100, service_id: 204 },
+                ServiceAccess { user_id: 101, service_id: 202 },
+                ServiceAccess { user_id: 101, service_id: 203 }
+            ]));
+        }
+        if expect_access_get {
+            access_repo.expect_get().with(predicate::eq(100), predicate::eq(200)).return_once(move |_, _| Ok(Some(
+                ServiceAccess { user_id: 100, service_id: 200 },
+            )));
+        }
+
+        (Arc::new(Mutex::new(user_repo)),
+         Arc::new(Mutex::new(service_repo)),
+         Arc::new(Mutex::new(access_repo)))
+    }
+
+    fn create_service_mgr(expect_connection_details: bool,
+                          expect_proxy_details: bool,
+                          expect_startup_proxy: bool,
+                          expect_shutdown_proxy: bool) -> Arc<Mutex<dyn ServiceMgr>> {
+
+        let mut service_mgr = MockSvcMgr::new();
+
+        if expect_connection_details || expect_proxy_details {
+            let mut service_proxy = MockGwSvcProxyVisitor::new();
+            service_proxy.expect_get_service().times(1).return_once(move ||
+                model::service::Service { service_id: 200, name: "Service200".to_string(), transport: model::service::Transport::TCP, host: "localhost".to_string(), port: 8200 }
+            );
+            if expect_connection_details {
+                service_proxy.expect_get_proxy_addrs_for_user().with(predicate::eq(100)).times(1).return_once(move |_| vec![
+                    ("addr1".to_string(), "addr2".to_string())
+                ]);
+            }
+            if expect_proxy_details {
+                    service_proxy.expect_get_proxy_host().times(1).return_once(move || Some("proxyhost1".to_string()));
+                    service_proxy.expect_get_proxy_port().times(1).return_once(move || 6000);
+            }
+            service_mgr.expect_get_service_proxies().times(1).return_once(move || vec![
+                Arc::new(Mutex::new(service_proxy))
+            ]);
+        }
+
+        if expect_startup_proxy {
+            let service = model::service::Service { service_id: 200, name: "Service200".to_string(), transport: model::service::Transport::TCP, host: "localhost".to_string(), port: 8200 };
+            service_mgr.expect_startup().with(predicate::always(), predicate::eq(service)).times(1).return_once(move |_, _|
+                Ok((Some("proxyhost1".to_string()), 6000)));
+        }
+
+        if expect_shutdown_proxy {
+            service_mgr.expect_has_proxy_for_user_and_service().with(predicate::eq(100), predicate::eq(200)).times(1).return_once(move |_, _| true);
+            service_mgr.expect_shutdown_connections().with(predicate::eq(Some(100)), predicate::eq(Some(200))).times(1).return_once(move |_, _| Ok(()));
+        }
+
+        Arc::new(Mutex::new(service_mgr))
+    }
+
+    fn create_control_plane(event_channel_sender: Sender<ConnectionEvent>,
+                            user_repo: &Arc<Mutex<dyn UserRepository>>,
+                            service_repo: &Arc<Mutex<dyn ServiceRepository>>,
+                            access_repo: &Arc<Mutex<dyn AccessRepository>>,
+                            device: Device,
+                            user: model::user::User)
+        -> Result<ControlPlane, AppError> {
+
+        let app_config = Arc::new(config::tests::create_app_config_with_repos(user_repo.clone(), service_repo.clone(), access_repo.clone())?);
+
+        Ok(ControlPlane::new(app_config, access_repo.clone(), service_repo.clone(), user_repo.clone(), event_channel_sender, device, user)?)
+    }
+
+    #[test]
+    fn ctlplane_process_request_when_valid_about() {
+
+        let device = create_device().unwrap();
+        let user = create_user();
+        let repos = create_repos(true, false, false);
+        let event_channel = mpsc::channel();
+        let service_mgr = create_service_mgr(false, false, false, false);
+
+        let mut control_plane = create_control_plane(event_channel.0, &repos.0, &repos.1, &repos.2, device, user).unwrap();
+
+        let result = control_plane.process_request(&service_mgr, request::PROTOCOL_REQUEST_ABOUT);
+
+        if let Err(err) = &result {
+            panic!("Unexpected process request result: err={:?}", err);
+        }
+
+        let processed_request = result.unwrap();
+        assert_eq!(processed_request, request::Request::About);
+
+        let result = event_channel.1.try_recv();
+
+        if let Err(err) = &result {
+            panic!("Unexpected channel recv result: err={:?}", err);
+        }
+
+        match &result.unwrap() {
+            ConnectionEvent::Closing => { panic!("Unexpected connection event: val=Closing"); }
+            ConnectionEvent::Closed =>  { panic!("Unexpected connection event: val=Closed"); }
+            ConnectionEvent::Write(response_bytes) => {
+                let actual_response_str = String::from_utf8(response_bytes.clone()).unwrap();
+                assert!(actual_response_str.contains(
+                    "{\"code\":200,\"message\":null,\"request\":\"About\",\"data\":{\"cert_alt_subj\":\"{\\\"URI\\\": [\\\"{\\\\\\\"userId\\\\\\\":100,\\\\\\\"platform\\\\\\\":\\\\\\\"Linux\\\\\\\"}\\\"]}"));
+                assert!(actual_response_str.contains(
+                    "user\":{\"name\":\"user100\",\"status\":\"Active\",\"user_id\":100}"));
+            }
+        }
+
+    }
+
+    #[test]
+    fn ctlplane_process_request_when_valid_connections() {
+
+        let device = create_device().unwrap();
+        let user = create_user();
+        let repos = create_repos(false, false, false);
+        let event_channel = mpsc::channel();
+        let service_mgr = create_service_mgr(true, false, false, false);
+
+        let mut control_plane = create_control_plane(event_channel.0, &repos.0, &repos.1, &repos.2, device, user).unwrap();
+
+        let result = control_plane.process_request(&service_mgr, request::PROTOCOL_REQUEST_CONNECTIONS);
+
+        if let Err(err) = &result {
+            panic!("Unexpected process request result: err={:?}", err);
+        }
+
+        let processed_request = result.unwrap();
+        assert_eq!(processed_request, request::Request::Connections);
+
+        let result = event_channel.1.try_recv();
+
+        if let Err(err) = &result {
+            panic!("Unexpected channel recv result: err={:?}", err);
+        }
+
+        match &result.unwrap() {
+            ConnectionEvent::Closing => { panic!("Unexpected connection event: val=Closing"); }
+            ConnectionEvent::Closed =>  { panic!("Unexpected connection event: val=Closed"); }
+            ConnectionEvent::Write(response_bytes) => {
+                assert_eq!(String::from_utf8(response_bytes.clone()).unwrap(),
+                           "{\"code\":200,\"message\":null,\"request\":\"Connections\",\"data\":[{\"binds\":[[\"addr1\",\"addr2\"]],\"service_name\":\"Service200\"}]}\n");
+            }
+        }
+    }
+
+    #[test]
+    fn ctlplane_process_request_when_valid_ping() {
+
+        let device = create_device().unwrap();
+        let user = create_user();
+        let repos = create_repos(false, false, false);
+        let event_channel = mpsc::channel();
+        let service_mgr = create_service_mgr(false, false, false, false);
+
+        let mut control_plane = create_control_plane(event_channel.0, &repos.0, &repos.1, &repos.2, device, user).unwrap();
+
+        let result = control_plane.process_request(&service_mgr, request::PROTOCOL_REQUEST_PING);
+
+        if let Err(err) = &result {
+            panic!("Unexpected process request result: err={:?}", err);
+        }
+
+        let processed_request = result.unwrap();
+        assert_eq!(processed_request, request::Request::Ping);
+
+        let result = event_channel.1.try_recv();
+
+        if let Err(err) = &result {
+            panic!("Unexpected channel recv result: err={:?}", err);
+        }
+
+        match &result.unwrap() {
+            ConnectionEvent::Closing => { panic!("Unexpected connection event: val=Closing"); }
+            ConnectionEvent::Closed =>  { panic!("Unexpected connection event: val=Closed"); }
+            ConnectionEvent::Write(response_bytes) => {
+                assert_eq!(String::from_utf8(response_bytes.clone()).unwrap(),
+                           "{\"code\":200,\"message\":\"pong\",\"request\":\"Ping\",\"data\":null}\n");
+            }
+        }
+    }
+
+    #[test]
+    fn ctlplane_process_request_when_valid_proxies() {
+
+        let device = create_device().unwrap();
+        let user = create_user();
+        let repos = create_repos(false, true, false);
+        let event_channel = mpsc::channel();
+        let service_mgr = create_service_mgr(false, true, false, false);
+
+        let mut control_plane = create_control_plane(event_channel.0, &repos.0, &repos.1, &repos.2, device, user).unwrap();
+
+        let result = control_plane.process_request(&service_mgr, request::PROTOCOL_REQUEST_PROXIES);
+
+        if let Err(err) = &result {
+            panic!("Unexpected process request result: err={:?}", err);
+        }
+
+        let processed_request = result.unwrap();
+        assert_eq!(processed_request, request::Request::Proxies);
+
+        let result = event_channel.1.try_recv();
+
+        if let Err(err) = &result {
+            panic!("Unexpected channel recv result: err={:?}", err);
+        }
+
+        match &result.unwrap() {
+            ConnectionEvent::Closing => { panic!("Unexpected connection event: val=Closing"); }
+            ConnectionEvent::Closed =>  { panic!("Unexpected connection event: val=Closed"); }
+            ConnectionEvent::Write(response_bytes) => {
+                assert_eq!(String::from_utf8(response_bytes.clone()).unwrap(),
+                           "{\"code\":200,\"message\":null,\"request\":\"Proxies\",\"data\":[{\"client_port\":null,\"gateway_host\":\"proxyhost1\",\"gateway_port\":6000,\"service\":{\"address\":\"localhost:8200\",\"id\":200,\"name\":\"Service200\",\"transport\":\"TCP\"}}]}\n");
+            }
+        }
+    }
+
+    #[test]
+    fn ctlplane_process_request_when_valid_quit() {
+
+        let device = create_device().unwrap();
+        let user = create_user();
+        let repos = create_repos(false, false, false);
+        let event_channel = mpsc::channel();
+        let service_mgr = create_service_mgr(false, false, false, false);
+
+        let mut control_plane = create_control_plane(event_channel.0, &repos.0, &repos.1, &repos.2, device, user).unwrap();
+
+        let result = control_plane.process_request(&service_mgr, request::PROTOCOL_REQUEST_QUIT);
+
+        if let Err(err) = &result {
+            panic!("Unexpected process request result: err={:?}", err);
+        }
+
+        let processed_request = result.unwrap();
+        assert_eq!(processed_request, request::Request::Quit);
+
+        let result0 = event_channel.1.try_recv();
+        if let Err(err) = &result0 {
+            panic!("Unexpected first channel recv result: err={:?}", err);
+        }
+        let result1 = event_channel.1.try_recv();
+        if let Err(err) = &result1 {
+            panic!("Unexpected second channel recv result: err={:?}", err);
+        }
+
+        match &result0.unwrap() {
+            ConnectionEvent::Closed =>  { panic!("Unexpected connection event: val=Closed"); }
+            ConnectionEvent::Write(response_bytes) => {
+                panic!("Unexpected connection event: val=Write, resp={}", String::from_utf8(response_bytes.clone()).unwrap());
+            }
+            _ => {}
+        }
+        match &result1.unwrap() {
+            ConnectionEvent::Closing => { panic!("Unexpected connection event: val=Closing"); }
+            ConnectionEvent::Closed =>  { panic!("Unexpected connection event: val=Closed"); }
+            ConnectionEvent::Write(response_bytes) => {
+                assert_eq!(String::from_utf8(response_bytes.clone()).unwrap(),
+                           "{\"code\":200,\"message\":null,\"request\":\"Quit\",\"data\":\"bye\"}\n");
+            }
+        }
+    }
+
+    #[test]
+    fn ctlplane_process_request_when_valid_services() {
+
+        let device = create_device().unwrap();
+        let user = create_user();
+        let repos = create_repos(false, true, false);
+        let event_channel = mpsc::channel();
+        let service_mgr = create_service_mgr(false, false, false, false);
+
+        let mut control_plane = create_control_plane(event_channel.0, &repos.0, &repos.1, &repos.2, device, user).unwrap();
+
+        let result = control_plane.process_request(&service_mgr, request::PROTOCOL_REQUEST_SERVICES);
+
+        if let Err(err) = &result {
+            panic!("Unexpected process request result: err={:?}", err);
+        }
+
+        let processed_request = result.unwrap();
+        assert_eq!(processed_request, request::Request::Services);
+
+        let result = event_channel.1.try_recv();
+
+        if let Err(err) = &result {
+            panic!("Unexpected channel recv result: err={:?}", err);
+        }
+
+        match &result.unwrap() {
+            ConnectionEvent::Closing => { panic!("Unexpected connection event: val=Closing"); }
+            ConnectionEvent::Closed =>  { panic!("Unexpected connection event: val=Closed"); }
+            ConnectionEvent::Write(response_bytes) => {
+                assert_eq!(String::from_utf8(response_bytes.clone()).unwrap(),
+                           "{\"code\":200,\"message\":null,\"request\":\"Services\",\"data\":[{\"address\":\"localhost:8200\",\"id\":200,\"name\":\"Service200\",\"transport\":\"TCP\"},{\"address\":\"localhost:8500\",\"id\":203,\"name\":\"chat-tcp\",\"transport\":\"TCP\"},{\"address\":\"localhost:8600\",\"id\":204,\"name\":\"echo-udp\",\"transport\":\"UDP\"},{\"address\":\"localhost:8202\",\"id\":202,\"name\":\"Service202\",\"transport\":\"TCP\"},{\"address\":\"localhost:8500\",\"id\":203,\"name\":\"chat-tcp\",\"transport\":\"TCP\"}]}\n");
+            }
+        }
+    }
+
+
+    #[test]
+    fn ctlplane_process_request_when_valid_start() {
+
+        let device = create_device().unwrap();
+        let user = create_user();
+        let repos = create_repos(false, false, true);
+        let event_channel = mpsc::channel();
+        let service_mgr = create_service_mgr(false, false, true, false);
+
+        let mut control_plane = create_control_plane(event_channel.0, &repos.0, &repos.1, &repos.2, device, user).unwrap();
+
+        let service = model::service::Service { service_id: 200, name: "Service200".to_string(), transport: model::service::Transport::TCP, host: "localhost".to_string(), port: 8200 };
+
+        let result = control_plane.process_request(&service_mgr,
+                                                   &format!("{} -s {} -p {}", request::PROTOCOL_REQUEST_START, &service.name, 3000));
+
+        if let Err(err) = &result {
+            panic!("Unexpected process request result: err={:?}", err);
+        }
+
+        let processed_request = result.unwrap();
+        assert_eq!(processed_request, request::Request::Start { service_name: service.name.to_string(), local_port: 3000 });
+
+        let result = event_channel.1.try_recv();
+
+        if let Err(err) = &result {
+            panic!("Unexpected channel recv result: err={:?}", err);
+        }
+
+        match &result.unwrap() {
+            ConnectionEvent::Closing => { panic!("Unexpected connection event: val=Closing"); }
+            ConnectionEvent::Closed =>  { panic!("Unexpected connection event: val=Closed"); }
+            ConnectionEvent::Write(response_bytes) => {
+                assert_eq!(String::from_utf8(response_bytes.clone()).unwrap(),
+                           "{\"code\":200,\"message\":null,\"request\":{\"Start\":{\"service_name\":\"Service200\",\"local_port\":3000}},\"data\":{\"client_port\":3000,\"gateway_host\":\"proxyhost1\",\"gateway_port\":6000,\"service\":{\"address\":\"localhost:8200\",\"id\":200,\"name\":\"Service200\",\"transport\":\"TCP\"}}}\n");
+            }
+        }
+    }
+
+    #[test]
+    fn ctlplane_process_request_when_invalid_start() {
+
+        let device = create_device().unwrap();
+        let user = create_user();
+        let repos = create_repos(false, false, true);
+        let event_channel = mpsc::channel();
+        let service_mgr = create_service_mgr(false, false, false, false);
+
+        let mut control_plane = create_control_plane(event_channel.0, &repos.0, &repos.1, &repos.2, device, user).unwrap();
+
+        let service_name = "INVALID_SERVICE";
+        let local_port = 3000;
+
+        let result = control_plane.process_request(&service_mgr,
+                                                   &format!("{} -s {} -p {}", request::PROTOCOL_REQUEST_START, service_name, local_port));
+
+        if let Err(err) = &result {
+            panic!("Unexpected process request result: err={:?}", err);
+        }
+
+        let processed_request = result.unwrap();
+        assert_eq!(processed_request, request::Request::Start { service_name: service_name.to_string(), local_port });
+
+        let result = event_channel.1.try_recv();
+
+        if let Err(err) = &result {
+            panic!("Unexpected channel recv result: err={:?}", err);
+        }
+
+        match &result.unwrap() {
+            ConnectionEvent::Closing => { panic!("Unexpected connection event: val=Closing"); }
+            ConnectionEvent::Closed =>  { panic!("Unexpected connection event: val=Closed"); }
+            ConnectionEvent::Write(response_bytes) => {
+                assert_eq!(String::from_utf8(response_bytes.clone()).unwrap(),
+                           "{\"code\":404,\"message\":\"Response: code=404, msg=Unknown service: svc_name=INVALID_SERVICE\",\"request\":{\"Start\":{\"service_name\":\"INVALID_SERVICE\",\"local_port\":3000}},\"data\":null}\n");
+            }
+        }
+    }
+
+    #[test]
+    fn ctlplane_process_request_when_valid_stop() {
+
+        let device = create_device().unwrap();
+        let user = create_user();
+        let repos = create_repos(false, false, true);
+        let event_channel = mpsc::channel();
+        let service_mgr = create_service_mgr(false, false, false, true);
+
+        let mut control_plane = create_control_plane(event_channel.0, &repos.0, &repos.1, &repos.2, device, user).unwrap();
+
+        let service_name = "Service200".to_string();
+
+        let result = control_plane.process_request(&service_mgr,
+                                                   &format!("{} -s {}", request::PROTOCOL_REQUEST_STOP, &service_name));
+
+        if let Err(err) = &result {
+            panic!("Unexpected process request result: err={:?}", err);
+        }
+
+        let processed_request = result.unwrap();
+        assert_eq!(processed_request, request::Request::Stop { service_name });
+
+        let result = event_channel.1.try_recv();
+
+        if let Err(err) = &result {
+            panic!("Unexpected channel recv result: err={:?}", err);
+        }
+
+        match &result.unwrap() {
+            ConnectionEvent::Closing => { panic!("Unexpected connection event: val=Closing"); }
+            ConnectionEvent::Closed =>  { panic!("Unexpected connection event: val=Closed"); }
+            ConnectionEvent::Write(response_bytes) => {
+                assert_eq!(String::from_utf8(response_bytes.clone()).unwrap(),
+                           "{\"code\":200,\"message\":null,\"request\":{\"Stop\":{\"service_name\":\"Service200\"}},\"data\":null}\n");
+            }
+        }
+    }
+
+    #[test]
+    fn ctlplane_process_request_when_invalid_stop() {
+
+        let device = create_device().unwrap();
+        let user = create_user();
+        let repos = create_repos(false, false, true);
+        let event_channel = mpsc::channel();
+        let service_mgr = create_service_mgr(false, false, false, false);
+
+        let mut control_plane = create_control_plane(event_channel.0, &repos.0, &repos.1, &repos.2, device, user).unwrap();
+
+        let service_name = "INVALID_SERVICE".to_string();
+
+        let result = control_plane.process_request(&service_mgr,
+                                                   &format!("{} -s {}", request::PROTOCOL_REQUEST_STOP, &service_name));
+
+        if let Err(err) = &result {
+            panic!("Unexpected process request result: err={:?}", err);
+        }
+
+        let processed_request = result.unwrap();
+        assert_eq!(processed_request, request::Request::Stop { service_name });
+
+        let result = event_channel.1.try_recv();
+
+        if let Err(err) = &result {
+            panic!("Unexpected channel recv result: err={:?}", err);
+        }
+
+        match &result.unwrap() {
+            ConnectionEvent::Closing => { panic!("Unexpected connection event: val=Closing"); }
+            ConnectionEvent::Closed =>  { panic!("Unexpected connection event: val=Closed"); }
+            ConnectionEvent::Write(response_bytes) => {
+                assert_eq!(String::from_utf8(response_bytes.clone()).unwrap(),
+                           "{\"code\":404,\"message\":\"Response: code=404, msg=Unknown service: svc_name=INVALID_SERVICE\",\"request\":{\"Stop\":{\"service_name\":\"INVALID_SERVICE\"}},\"data\":null}\n");
+            }
+        }
     }
 
 }
