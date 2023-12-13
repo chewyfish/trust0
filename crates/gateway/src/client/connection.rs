@@ -10,7 +10,7 @@ use trust0_common::logging::error;
 use trust0_common::model::user::{Status, User};
 use trust0_common::net::tls_server::conn_std::{self, TlsConnection};
 use trust0_common::{crypto, target};
-use crate::client::controller::ControlPlane;
+use crate::client::controller::{ControlPlane, RequestProcessor};
 use crate::client::device::Device;
 use crate::config::{self, AppConfig};
 use crate::repository::access_repo::AccessRepository;
@@ -26,7 +26,7 @@ pub struct ClientConnVisitor {
     service_repo: Arc<Mutex<dyn ServiceRepository>>,
     user_repo: Arc<Mutex<dyn UserRepository>>,
     event_channel_sender: Option<Sender<conn_std::ConnectionEvent>>,
-    control_plane: Option<ControlPlane>,
+    request_processor: Option<Box<dyn RequestProcessor>>,
     device: Option<Device>,
     user: Option<User>,
     service_mgr: Arc<Mutex<dyn ServiceMgr>>
@@ -51,7 +51,7 @@ impl ClientConnVisitor {
             service_repo,
             user_repo,
             event_channel_sender: None,
-            control_plane: None,
+            request_processor: None,
             device: None,
             user: None,
             service_mgr
@@ -159,14 +159,14 @@ impl conn_std::ConnectionVisitor for ClientConnVisitor {
     fn set_event_channel_sender(&mut self, event_channel_sender: Sender<conn_std::ConnectionEvent>)
         -> Result<(), AppError> {
 
-        self.control_plane = Some(ControlPlane::new(
+        self.request_processor = Some(Box::new(ControlPlane::new(
             self.app_config.clone(),
             self.access_repo.clone(),
             self.service_repo.clone(),
             self.user_repo.clone(),
             event_channel_sender.clone(),
             self.device.as_ref().unwrap_or(&Device::default()).clone(),
-            self.user.as_ref().unwrap_or(&User::default()).clone())?);
+            self.user.as_ref().unwrap_or(&User::default()).clone())?));
 
         self.event_channel_sender = Some(event_channel_sender);
 
@@ -182,7 +182,7 @@ impl conn_std::ConnectionVisitor for ClientConnVisitor {
                 let data_text = String::from_utf8(data.to_vec()).map_err(|err|
                     AppError::GenWithMsgAndErr("Error converting client input as UTF8".to_string(), Box::new(err)))?;
 
-                let _ = self.control_plane.as_mut().unwrap().process_request(&self.service_mgr, &data_text)?;
+                let _ = self.request_processor.as_mut().unwrap().process_request(&self.service_mgr, &data_text)?;
             }
 
             config::ServerMode::Proxy => {}

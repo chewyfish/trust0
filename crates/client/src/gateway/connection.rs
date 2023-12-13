@@ -11,7 +11,7 @@ use trust0_common::net::tls_client::conn_std;
 use trust0_common::target;
 use crate::config::AppConfig;
 use crate::console::{self, ThreadedStdin};
-use crate::gateway::controller::ControlPlane;
+use crate::gateway::controller::{ControlPlane, RequestProcessor};
 use crate::service::manager::ServiceMgr;
 
 /// tls_client::std_conn::Connection strategy visitor pattern implementation
@@ -20,7 +20,7 @@ pub struct ServerConnVisitor {
     stdin: Option<ThreadedStdin>,
     event_channel_sender: Option<Sender<conn_std::ConnectionEvent>>,
     service_mgr: Arc<Mutex<ServiceMgr>>,
-    control_plane: ControlPlane
+    request_processor: Box<dyn RequestProcessor>
 }
 
 impl ServerConnVisitor {
@@ -36,7 +36,7 @@ impl ServerConnVisitor {
             stdin: None,
             event_channel_sender: None,
             service_mgr,
-            control_plane: ControlPlane::new()
+            request_processor: Box::new(ControlPlane::new())
         })
     }
 }
@@ -62,7 +62,7 @@ impl conn_std::ConnectionVisitor for ServerConnVisitor {
             AppError::GenWithMsgAndErr("Error converting gateway response data as UTF8".to_string(), Box::new(err)))?;
 
         for line in text_data.lines() {
-            let _ = self.control_plane.process_response(&self.service_mgr, &line)?;
+            let _ = self.request_processor.process_response(&self.service_mgr, &line)?;
         }
 
         console::write_shell_prompt(false)
@@ -75,7 +75,7 @@ impl conn_std::ConnectionVisitor for ServerConnVisitor {
         let line = line.unwrap();
 
         // validate command
-        let validated_request = self.control_plane.validate_request(&line);
+        let validated_request = self.request_processor.validate_request(&line);
 
         match validated_request {
 

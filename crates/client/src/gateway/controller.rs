@@ -23,63 +23,6 @@ impl ControlPlane {
         }
     }
 
-    /// Validate given command request, prior to being sent to the gateway control plane
-    pub fn validate_request(&mut self, command_line: &str)
-        -> Result<request::Request, AppError> {
-
-        let result: Result<request::Request, AppError>;
-
-        let processed_request = self.processor.parse(command_line);
-
-        match processed_request {
-
-            Ok(request::Request::None) => {
-                result = Ok(request::Request::None);
-            }
-            Err(err) => {
-                result = Err(err)
-            }
-            _ => result = Ok(processed_request.unwrap().clone())
-        }
-
-        return result;
-    }
-
-    /// Process gateway response data
-    pub fn process_response(&mut self, service_mgr: &Arc<Mutex<ServiceMgr>>, response_line: &str)
-        -> Result<response::Response, AppError> {
-
-        // Process response based on request context
-        let mut gateway_response = response::Response::parse(&response_line)?;
-
-        if gateway_response.code == response::CODE_OK {
-
-            match &gateway_response.request.borrow() {
-
-                &request::Request::Proxies => {
-                    self.process_response_proxies(service_mgr, &mut gateway_response)?;
-                }
-                &request::Request::Start { service_name: _, local_port: _ } => {
-                    self.process_response_start(service_mgr, &mut gateway_response)?;
-                }
-                &request::Request::Quit => {
-                    self.process_response_quit(service_mgr)?;
-                }
-                _ => {}
-            }
-        }
-
-        // Write response to REPL shell
-        let repl_shell_response = format!("{}\n",
-            serde_json::to_string_pretty(&gateway_response).map_err(|err|
-                AppError::GenWithMsgAndErr("Error serializing response".to_ascii_lowercase(), Box::new(err)))?);
-
-        io::stdout().write_all(&repl_shell_response.as_bytes()).map_err(|err|
-            AppError::GenWithMsgAndErr("Error writing response to STDOUT".to_string(), Box::new(err)))?;
-
-        Ok(gateway_response)
-    }
-
     /// Process 'proxies' response
     fn process_response_proxies(&self,
                                 service_mgr: &Arc<Mutex<ServiceMgr>>,
@@ -121,4 +64,68 @@ impl ControlPlane {
 
         service_mgr.lock().unwrap().shutdown()
     }
+}
+
+impl RequestProcessor for ControlPlane {
+    /// Validate given command request, prior to being sent to the gateway control plane
+    fn validate_request(&mut self, command_line: &str)
+                        -> Result<request::Request, AppError> {
+        let result: Result<request::Request, AppError>;
+
+        let processed_request = self.processor.parse(command_line);
+
+        match processed_request {
+            Ok(request::Request::None) => {
+                result = Ok(request::Request::None);
+            }
+            Err(err) => {
+                result = Err(err)
+            }
+            _ => result = Ok(processed_request.unwrap().clone())
+        }
+
+        return result;
+    }
+    /// Process gateway response data
+    fn process_response(&mut self, service_mgr: &Arc<Mutex<ServiceMgr>>, response_line: &str)
+                        -> Result<response::Response, AppError> {
+
+        // Process response based on request context
+        let mut gateway_response = response::Response::parse(&response_line)?;
+
+        if gateway_response.code == response::CODE_OK {
+            match &gateway_response.request.borrow() {
+                &request::Request::Proxies => {
+                    self.process_response_proxies(service_mgr, &mut gateway_response)?;
+                }
+                &request::Request::Start { service_name: _, local_port: _ } => {
+                    self.process_response_start(service_mgr, &mut gateway_response)?;
+                }
+                &request::Request::Quit => {
+                    self.process_response_quit(service_mgr)?;
+                }
+                _ => {}
+            }
+        }
+
+        // Write response to REPL shell
+        let repl_shell_response = format!("{}\n",
+                                          serde_json::to_string_pretty(&gateway_response).map_err(|err|
+                                              AppError::GenWithMsgAndErr("Error serializing response".to_ascii_lowercase(), Box::new(err)))?);
+
+        io::stdout().write_all(&repl_shell_response.as_bytes()).map_err(|err|
+            AppError::GenWithMsgAndErr("Error writing response to STDOUT".to_string(), Box::new(err)))?;
+
+        Ok(gateway_response)
+    }
+}
+
+pub trait RequestProcessor {
+
+    /// Validate given command request, prior to being sent to the gateway control plane
+    fn validate_request(&mut self, command_line: &str)
+                        -> Result<request::Request, AppError>;
+    /// Process gateway response data
+    fn process_response(&mut self, service_mgr: &Arc<Mutex<ServiceMgr>>, response_line: &str)
+                        -> Result<response::Response, AppError>;
 }
