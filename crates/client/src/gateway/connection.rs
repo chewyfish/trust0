@@ -111,3 +111,10 @@ impl conn_std::ConnectionVisitor for ServerConnVisitor {
 }
 
 unsafe impl Send for ServerConnVisitor {}
+
+/// Unit tests
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+}

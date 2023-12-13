@@ -25,7 +25,7 @@ impl ControlPlane {
 
     /// Process 'proxies' response
     fn process_response_proxies(&self,
-                                service_mgr: &Arc<Mutex<ServiceMgr>>,
+                                service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
                                 gateway_response: &mut response::Response)
         -> Result<(), AppError> {
 
@@ -45,7 +45,7 @@ impl ControlPlane {
 
     /// Process 'start' response
     fn process_response_start(&self,
-                              service_mgr: &Arc<Mutex<ServiceMgr>>,
+                              service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
                               gateway_response: &mut response::Response)
         -> Result<(), AppError> {
 
@@ -60,7 +60,7 @@ impl ControlPlane {
     }
 
     /// Process 'quit' response
-    fn process_response_quit(&self, service_mgr: &Arc<Mutex<ServiceMgr>>) -> Result<(), AppError> {
+    fn process_response_quit(&self, service_mgr: &Arc<Mutex<dyn ServiceMgr>>) -> Result<(), AppError> {
 
         service_mgr.lock().unwrap().shutdown()
     }
@@ -87,7 +87,7 @@ impl RequestProcessor for ControlPlane {
         return result;
     }
     /// Process gateway response data
-    fn process_response(&mut self, service_mgr: &Arc<Mutex<ServiceMgr>>, response_line: &str)
+    fn process_response(&mut self, service_mgr: &Arc<Mutex<dyn ServiceMgr>>, response_line: &str)
                         -> Result<response::Response, AppError> {
 
         // Process response based on request context
@@ -126,6 +126,28 @@ pub trait RequestProcessor {
     fn validate_request(&mut self, command_line: &str)
                         -> Result<request::Request, AppError>;
     /// Process gateway response data
-    fn process_response(&mut self, service_mgr: &Arc<Mutex<ServiceMgr>>, response_line: &str)
+    fn process_response(&mut self, service_mgr: &Arc<Mutex<dyn ServiceMgr>>, response_line: &str)
                         -> Result<response::Response, AppError>;
 }
+
+/// Unit tests
+#[cfg(test)]
+mod tests {
+
+    use mockall::mock;
+    use super::*;
+
+    // mocks
+    // =====
+
+    mock! {
+    pub GwReqProcessor {}
+        impl RequestProcessor for GwReqProcessor {
+            fn validate_request(&mut self, command_line: &str)
+                            -> Result<request::Request, AppError>;
+            fn process_response(&mut self, service_mgr: &Arc<Mutex<dyn ServiceMgr>>, response_line: &str)
+                            -> Result<response::Response, AppError>;
+        }
+    }
+}
+
