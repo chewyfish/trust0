@@ -73,12 +73,31 @@ impl ClientServiceMgr {
             proxy_tasks_sender
         }
     }
+
+    pub fn poll_proxy_events(service_mgr: Arc<Mutex<dyn ServiceMgr>>, proxy_events_receiver: Receiver<ProxyEvent>)
+        -> Result<(), AppError> {
+        'EVENTS:
+        loop {
+            let proxy_event = proxy_events_receiver.recv().map_err(|err|
+                AppError::GenWithMsgAndErr("Error receiving proxy event".to_string(), Box::new(err)))?;
+
+            if let ProxyEvent::Closed(proxy_key) = proxy_event {
+                let service_id = service_mgr.lock().unwrap().get_proxy_service_for_proxy_key(&proxy_key).unwrap_or(u64::MAX);
+
+                if let Some(proxy_visitor) = service_mgr.lock().unwrap().get_proxy_visitor_for_service(service_id) {
+                    if proxy_visitor.lock().unwrap().remove_proxy_for_key(&proxy_key) {
+                        continue 'EVENTS;
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl ServiceMgr for ClientServiceMgr {
 
-    fn get_proxy_service_for_proxy_key(&self, proxy_key: &str) -> Option<&u64> {
-        self.services_by_proxy_key.lock().unwrap().get(proxy_key)
+    fn get_proxy_service_for_proxy_key(&self, proxy_key: &str) -> Option<u64> {
+        self.services_by_proxy_key.lock().unwrap().get(proxy_key).cloned()
     }
 
     fn get_proxy_addrs_for_service(&self, service_id: u64) -> Option<&ProxyAddrs> {
@@ -91,26 +110,6 @@ impl ServiceMgr for ClientServiceMgr {
 
     fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent> {
         self.proxy_tasks_sender.clone()
-    }
-
-    fn poll_proxy_events(service_mgr: Arc<Mutex<dyn ServiceMgr>>, proxy_events_receiver: Receiver<ProxyEvent>)
-        -> Result<(), AppError> {
-
-        'EVENTS:
-        loop {
-            let proxy_event = proxy_events_receiver.recv().map_err(|err|
-                AppError::GenWithMsgAndErr("Error receiving proxy event".to_string(), Box::new(err)))?;
-
-            if let ProxyEvent::Closed(proxy_key) = proxy_event {
-                let service_id = *service_mgr.lock().unwrap().get_proxy_service_for_proxy_key(&proxy_key).unwrap_or(&u64::MAX);
-
-                if let Some(proxy_visitor) = service_mgr.lock().unwrap().get_proxy_visitor_for_service(service_id) {
-                    if proxy_visitor.lock().unwrap().remove_proxy_for_key(&proxy_key) {
-                        continue 'EVENTS;
-                    }
-                }
-            }
-        }
     }
 
     fn startup(&mut self,
@@ -218,10 +217,10 @@ impl ServiceMgr for ClientServiceMgr {
     }
 }
 
-pub trait ServiceMgr {
+pub trait ServiceMgr : Send {
 
     /// Active proxy service's ID for given proxy key
-    fn get_proxy_service_for_proxy_key(&self, proxy_key: &str) -> Option<&u64>;
+    fn get_proxy_service_for_proxy_key(&self, proxy_key: &str) -> Option<u64>;
 
     /// Proxy addresses for active service proxy
     fn get_proxy_addrs_for_service(&self, service_id: u64) -> Option<&ProxyAddrs>;
@@ -231,10 +230,6 @@ pub trait ServiceMgr {
 
         /// Clone proxy tasks sender
     fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent>;
-
-    /// Listen and process any proxy events (blocking)
-    fn poll_proxy_events(service_mgr: Arc<Mutex<dyn ServiceMgr>>, proxy_events_receiver: Receiver<ProxyEvent>)
-                         -> Result<(), AppError>;
 
     /// Startup new proxy service to allow clients to connect/communicate to given service
     fn startup(&mut self,
@@ -259,11 +254,10 @@ pub mod tests {
     mock! {
         pub SvcMgr {}
         impl ServiceMgr for SvcMgr {
-            fn get_proxy_service_for_proxy_key(&self, proxy_key: &str) -> Option<&u64>;
+            fn get_proxy_service_for_proxy_key(&self, proxy_key: &str) -> Option<u64>;
             fn get_proxy_addrs_for_service(&self, service_id: u64) -> Option<&ProxyAddrs>;
             fn get_proxy_visitor_for_service(&self, service_id: u64) -> Option<&Arc<Mutex<dyn ClientServiceProxyVisitor>>>;
             fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent>;
-            fn poll_proxy_events(service_mgr: Arc<Mutex<dyn ServiceMgr>>, proxy_events_receiver: Receiver<ProxyEvent>) -> Result<(), AppError>;
             fn startup(&mut self, service: &Service, proxy_addrs: &ProxyAddrs) -> Result<ProxyAddrs, AppError>;
             fn shutdown(&mut self) -> Result<(), AppError>;
         }

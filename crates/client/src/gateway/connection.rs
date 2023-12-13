@@ -19,7 +19,7 @@ pub struct ServerConnVisitor {
     _app_config: Arc<AppConfig>,
     stdin: Option<ThreadedStdin>,
     event_channel_sender: Option<Sender<conn_std::ConnectionEvent>>,
-    service_mgr: Arc<Mutex<ServiceMgr>>,
+    service_mgr: Arc<Mutex<dyn ServiceMgr>>,
     request_processor: Box<dyn RequestProcessor>
 }
 
@@ -28,7 +28,7 @@ impl ServerConnVisitor {
     /// ServerConnVisitor constructor
     pub fn new(
         app_config: Arc<AppConfig>,
-        service_mgr: Arc<Mutex<ServiceMgr>>
+        service_mgr: Arc<Mutex<dyn ServiceMgr>>
     ) -> Result<Self, AppError> {
 
         Ok(Self {

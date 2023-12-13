@@ -61,7 +61,7 @@ pub mod api {
 
             let service_mgr_copy = service_mgr.clone();
             let proxy_events_processor_handle = tokio::task::spawn_blocking(move || {
-                service::manager::ServiceMgr::poll_proxy_events(service_mgr_copy, proxy_events_receiver)
+                service::manager::ClientServiceMgr::poll_proxy_events(service_mgr_copy, proxy_events_receiver)
             });
 
             // Construct processor object
