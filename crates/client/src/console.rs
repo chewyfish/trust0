@@ -8,65 +8,79 @@ const SHELL_MSG_APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SHELL_MSG_APP_HELP: &str = "(enter 'help' for commands)";
 const SHELL_PROMPT: &str = "> ";
 
-/// print REPL shell prompt to STDOUT
+/// Used by logger after lines are displayed
 pub fn write_shell_prompt(include_welcome: bool) -> Result<(), AppError> {
-    write_shell_prompt_impl(&mut io::stdout(), include_welcome)
+    let mut writer = ShellOutputWriter::new(None);
+    writer.write_shell_prompt(include_welcome)
 }
 
-fn write_shell_prompt_impl(writer: &mut impl Write, include_welcome: bool) -> Result<(), AppError> {
+/// Handles REPL shell's output
+pub struct ShellOutputWriter {
+    writer: Option<Box<dyn Write + Send>>
+}
 
-    if include_welcome {
-        writer.write_all(
-            format!("{} v{} {}\n",
-                    SHELL_MSG_APP_TITLE,
-                    SHELL_MSG_APP_VERSION,
-                    SHELL_MSG_APP_HELP).as_bytes()).map_err(|err|
-            AppError::GenWithMsgAndErr("Error writing welcome msg".to_string(), Box::new(err)))?;
+impl ShellOutputWriter {
+
+    /// ShellOutputWriter constructor. If writer object is not given, will use STDOUT.
+    pub fn new(writer: Option<Box<dyn Write + Send>>) -> Self {
+        Self {
+            writer
+        }
     }
 
-    writer.write_all(SHELL_PROMPT.as_bytes()).map_err(|err|
-        AppError::GenWithMsgAndErr("Error writing prompt".to_string(), Box::new(err)))?;
-    writer.flush().map_err(|err|
-        AppError::GenWithMsgAndErr("Error flushing STDOUT".to_string(), Box::new(err)))
+    /// print REPL shell prompt to STDOUT
+    pub fn write_shell_prompt(&mut self, include_welcome: bool) -> Result<(), AppError> {
+
+        let mut stdout_writer: Box<dyn Write + Send> = Box::new(io::stdout());
+        let writer = self.writer.as_mut().unwrap_or(&mut stdout_writer);
+
+        if include_welcome {
+            writer.write_all(
+                format!("{} v{} {}\n",
+                        SHELL_MSG_APP_TITLE,
+                        SHELL_MSG_APP_VERSION,
+                        SHELL_MSG_APP_HELP).as_bytes()).map_err(|err|
+                AppError::GenWithMsgAndErr("Error writing welcome msg".to_string(), Box::new(err)))?;
+        }
+
+        writer.write_all(SHELL_PROMPT.as_bytes()).map_err(|err|
+            AppError::GenWithMsgAndErr("Error writing prompt".to_string(), Box::new(err)))?;
+        writer.flush().map_err(|err|
+            AppError::GenWithMsgAndErr("Error flushing STDOUT".to_string(), Box::new(err)))
+    }
 }
 
-/// Spawn thread to handle STDIN input
-pub struct ThreadedStdin {
+impl Write for ShellOutputWriter {
+
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let mut stdout_writer: Box<dyn Write + Send> = Box::new(io::stdout());
+        let writer = self.writer.as_mut().unwrap_or(&mut stdout_writer);
+        writer.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        let mut stdout_writer: Box<dyn Write + Send> = Box::new(io::stdout());
+        let writer = self.writer.as_mut().unwrap_or(&mut stdout_writer);
+        writer.flush()
+    }
+}
+
+/// Handles REPL shell's input
+pub struct ShellInputReader {
     channel_send: Sender<io::Result<String>>,
     channel_recv: Receiver<io::Result<String>>,
 }
 
-impl ThreadedStdin {
+impl ShellInputReader {
 
     /// ThreadedStdin constructor
     pub fn new() -> Self {
 
         let (send, recv) = mpsc::channel();
 
-        ThreadedStdin {
+        ShellInputReader {
             channel_send: send,
             channel_recv: recv
-        }
-    }
-
-    /// Clone message channel sender
-    pub fn clone_channel_sender(&self) -> Sender<io::Result<String>> {
-        self.channel_send.clone()
-    }
-
-    /// Non-blocking call to retrieve next queued input line
-    ///
-    /// Returns `Ok(None)` if no lines queued
-    pub fn next_line(&mut self) -> Result<Option<String>, AppError> {
-
-        match self.channel_recv.try_recv() {
-
-            Ok(result) => match result {
-                Ok(line) => Ok(Some(format!("{line}\n"))),
-                Err(err) => Err(AppError::GenWithMsgAndErr("Error processing input".to_string(), Box::new(err)))
-            },
-            Err(TryRecvError::Disconnected) => Err(AppError::General("Input channel sender disconnected".to_string())),
-            Err(TryRecvError::Empty) => Ok(None)
         }
     }
 
@@ -90,15 +104,66 @@ impl ThreadedStdin {
     }
 }
 
+/// Connect an IO source to a channel sink for textual content transfer
+impl InputTextStreamConnector for ShellInputReader {
+
+    /// Clone message channel sender
+    fn clone_channel_sender(&self) -> Sender<io::Result<String>> {
+        self.channel_send.clone()
+    }
+
+    /// Non-blocking call to retrieve next queued input line
+    ///
+    /// Returns `Ok(None)` if no lines queued
+    fn next_line(&mut self) -> Result<Option<String>, AppError> {
+
+        match self.channel_recv.try_recv() {
+            Ok(result) => match result {
+                Ok(line) => Ok(Some(format!("{line}\n"))),
+                Err(err) => Err(AppError::GenWithMsgAndErr("Error processing input".to_string(), Box::new(err)))
+            },
+            Err(TryRecvError::Disconnected) => Err(AppError::General("Input channel sender disconnected".to_string())),
+            Err(TryRecvError::Empty) => Ok(None)
+        }
+    }
+}
+
+pub trait InputTextStreamConnector {
+
+    /// Clone message channel sender
+    fn clone_channel_sender(&self) -> Sender<io::Result<String>>;
+
+    /// Non-blocking call to retrieve next queued input line
+    ///
+    /// Returns `Ok(None)` if no lines queued
+    fn next_line(&mut self) -> Result<Option<String>, AppError>;
+}
+
 /// Unit tests
 #[cfg(test)]
-mod tests {
+pub mod tests {
 
     use std::io::Cursor;
+    use mockall::mock;
+    use trust0_common::testutils::ChannelWriter;
     use super::*;
 
+    // mocks
+    // =====
+
+    mock! {
+        pub InpTxtStreamConnector {}
+        impl InputTextStreamConnector for InpTxtStreamConnector {
+            fn clone_channel_sender(&self) -> Sender<io::Result<String>>;
+            fn next_line(&mut self) -> Result<Option<String>, AppError>;
+        }
+    }
+
+    // tests
+    // =====
+
     #[test]
-    fn console_write_shell_prompt_with_welcome() {
+    fn shellout_write_shell_prompt_with_welcome() {
 
         let expected_output = format!("{} v{} {}\n{}",
                                       SHELL_MSG_APP_TITLE,
@@ -107,37 +172,58 @@ mod tests {
                                       SHELL_PROMPT).into_bytes();
 
 
-        let mut cursor = Cursor::new(vec![0; expected_output.len()]);
+        let output_channel = mpsc::channel();
+        let channel_writer = ChannelWriter { channel_sender: output_channel.0 };
 
-        if let Err(err) = write_shell_prompt_impl(&mut cursor, true) {
-            panic!("Unexpected result: err={:?}", &err);
+        let mut shell_output = ShellOutputWriter { writer: Some(Box::new(channel_writer)) };
+
+        if let Err(err) = shell_output.write_shell_prompt(true) {
+            panic!("Unexpected function result: err={:?}", &err);
         }
 
-        assert_eq!(*cursor.get_ref(), expected_output);
+        let mut output_data: Vec<u8> = vec![];
+
+        for _ in [1,2] {
+            let output_result = output_channel.1.try_recv();
+            if let Err(err) = output_result {
+                panic!("Unexpected output result: err={:?}", &err);
+            }
+            output_data.append(&mut output_result.unwrap());
+        }
+
+        assert_eq!(output_data, expected_output);
     }
 
     #[test]
-    fn console_write_shell_prompt_without_welcome() {
+    fn shellout_write_shell_prompt_without_welcome() {
 
         let expected_output = format!("{}", SHELL_PROMPT).into_bytes();
 
+        let output_channel = mpsc::channel();
+        let channel_writer = ChannelWriter { channel_sender: output_channel.0 };
 
-        let mut cursor = Cursor::new(vec![0; expected_output.len()]);
+        let mut shell_output = ShellOutputWriter { writer: Some(Box::new(channel_writer)) };
 
-        if let Err(err) = write_shell_prompt_impl(&mut cursor, false) {
-            panic!("Unexpected result: err={:?}", &err);
+        if let Err(err) = shell_output.write_shell_prompt(false) {
+            panic!("Unexpected function result: err={:?}", &err);
         }
 
-        assert_eq!(*cursor.get_ref(), expected_output);
+        let output_result = output_channel.1.try_recv();
+
+        if let Err(err) = output_result {
+            panic!("Unexpected output result: err={:?}", &err);
+        }
+
+        assert_eq!(output_result.unwrap(), expected_output);
     }
 
     #[test]
-    fn thdstdin_lines_connector_processor_when_no_lines() {
+    fn shellinp_lines_connector_processor_when_no_lines() {
 
         let cursor = Cursor::new(vec![]);
         let lines_channel = mpsc::channel();
 
-        ThreadedStdin::lines_connector_processor(cursor, &lines_channel.0);
+        ShellInputReader::lines_connector_processor(cursor, &lines_channel.0);
 
         let mut actual_lines = vec![];
         loop {
@@ -158,12 +244,12 @@ mod tests {
     }
 
     #[test]
-    fn thdstdin_lines_connector_processor_when_2_lines() {
+    fn shellinp_lines_connector_processor_when_2_lines() {
 
         let cursor = Cursor::new("line1\nline2\n".as_bytes().to_vec());
         let lines_channel = mpsc::channel();
 
-        ThreadedStdin::lines_connector_processor(cursor, &lines_channel.0);
+        ShellInputReader::lines_connector_processor(cursor, &lines_channel.0);
 
         let mut actual_lines = vec![];
         loop {
@@ -185,9 +271,9 @@ mod tests {
     }
 
     #[test]
-    fn thdstdin_next_line_when_no_lines() {
+    fn shellinp_next_line_when_no_lines() {
 
-        let mut threaded_stdin = ThreadedStdin::new();
+        let mut threaded_stdin = ShellInputReader::new();
 
         loop {
             match threaded_stdin.next_line() {
@@ -201,9 +287,9 @@ mod tests {
     }
 
     #[test]
-    fn thdstdin_next_line_when_2_lines() {
+    fn shellinp_next_line_when_2_lines() {
 
-        let mut threaded_stdin = ThreadedStdin::new();
+        let mut threaded_stdin = ShellInputReader::new();
 
         let line_channel_sender = threaded_stdin.clone_channel_sender();
 

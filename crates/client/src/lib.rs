@@ -5,6 +5,7 @@ pub(crate) mod gateway;
 pub(crate) mod service;
 
 pub mod api {
+
     use std::sync;
     use std::sync::{Arc, Mutex};
 
