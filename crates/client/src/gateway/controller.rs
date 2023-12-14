@@ -1,25 +1,28 @@
 use std::borrow::Borrow;
-use std::io;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 use anyhow::Result;
 
 use trust0_common::control::{request, response};
 use trust0_common::error::AppError;
+use crate::config::AppConfig;
+use crate::console::ShellOutputWriter;
 use crate::service::manager::{self, ServiceMgr};
 
 /// Process control plane commands (validate requests, parse gateway control plane responses).
 pub struct ControlPlane {
     processor: request::RequestProcessor,
+    console_shell_output: Arc<Mutex<ShellOutputWriter>>
 }
 
 impl ControlPlane {
 
     /// ControlPlane constructor
-    pub fn new() -> Self {
+    pub fn new(app_config: Arc<AppConfig>) -> Self {
 
         Self {
             processor: request::RequestProcessor::new(),
+            console_shell_output: app_config.console_shell_output.clone()
         }
     }
 
@@ -113,7 +116,7 @@ impl RequestProcessor for ControlPlane {
                                           serde_json::to_string_pretty(&gateway_response).map_err(|err|
                                               AppError::GenWithMsgAndErr("Error serializing response".to_ascii_lowercase(), Box::new(err)))?);
 
-        io::stdout().write_all(&repl_shell_response.as_bytes()).map_err(|err|
+        self.console_shell_output.lock().unwrap().write_all(&repl_shell_response.as_bytes()).map_err(|err|
             AppError::GenWithMsgAndErr("Error writing response to STDOUT".to_string(), Box::new(err)))?;
 
         Ok(gateway_response)
@@ -132,7 +135,7 @@ pub trait RequestProcessor {
 
 /// Unit tests
 #[cfg(test)]
-mod tests {
+pub mod tests {
 
     use mockall::mock;
     use super::*;
@@ -141,7 +144,7 @@ mod tests {
     // =====
 
     mock! {
-    pub GwReqProcessor {}
+        pub GwReqProcessor {}
         impl RequestProcessor for GwReqProcessor {
             fn validate_request(&mut self, command_line: &str)
                             -> Result<request::Request, AppError>;

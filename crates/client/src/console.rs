@@ -183,9 +183,12 @@ pub mod tests {
 
         let mut output_data: Vec<u8> = vec![];
 
-        for _ in [1,2] {
+        loop {
             let output_result = output_channel.1.try_recv();
             if let Err(err) = output_result {
+                if let TryRecvError::Empty = err {
+                    break;
+                }
                 panic!("Unexpected output result: err={:?}", &err);
             }
             output_data.append(&mut output_result.unwrap());

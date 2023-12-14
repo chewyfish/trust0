@@ -255,8 +255,8 @@ pub mod tests {
         pub SvcMgr {}
         impl ServiceMgr for SvcMgr {
             fn get_proxy_service_for_proxy_key(&self, proxy_key: &str) -> Option<u64>;
-            fn get_proxy_addrs_for_service(&self, service_id: u64) -> Option<&ProxyAddrs>;
-            fn get_proxy_visitor_for_service(&self, service_id: u64) -> Option<&Arc<Mutex<dyn ClientServiceProxyVisitor>>>;
+            fn get_proxy_addrs_for_service(&self, service_id: u64) -> Option<&'static ProxyAddrs>;
+            fn get_proxy_visitor_for_service(&self, service_id: u64) -> Option<&'static Arc<Mutex<dyn ClientServiceProxyVisitor>>>;
             fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent>;
             fn startup(&mut self, service: &Service, proxy_addrs: &ProxyAddrs) -> Result<ProxyAddrs, AppError>;
             fn shutdown(&mut self) -> Result<(), AppError>;
