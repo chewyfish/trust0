@@ -21,7 +21,7 @@ use super::proxy::proxy::ClientServiceProxy;
 use super::proxy::tcp_proxy::TcpClientProxy;
 
 /// Simple tuple to hold proxy address information for connected session
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, PartialEq, Debug, Default)]
 pub struct ProxyAddrs(pub u16, pub String, pub u16);
 
 impl ProxyAddrs {
@@ -100,8 +100,8 @@ impl ServiceMgr for ClientServiceMgr {
         self.services_by_proxy_key.lock().unwrap().get(proxy_key).cloned()
     }
 
-    fn get_proxy_addrs_for_service(&self, service_id: u64) -> Option<&ProxyAddrs> {
-        self.service_addrs.get(&service_id)
+    fn get_proxy_addrs_for_service(&self, service_id: u64) -> Option<ProxyAddrs> {
+        self.service_addrs.get(&service_id).cloned()
     }
 
     fn get_proxy_visitor_for_service(&self, service_id: u64) -> Option<&Arc<Mutex<dyn ClientServiceProxyVisitor>>> {
@@ -223,7 +223,7 @@ pub trait ServiceMgr : Send {
     fn get_proxy_service_for_proxy_key(&self, proxy_key: &str) -> Option<u64>;
 
     /// Proxy addresses for active service proxy
-    fn get_proxy_addrs_for_service(&self, service_id: u64) -> Option<&ProxyAddrs>;
+    fn get_proxy_addrs_for_service(&self, service_id: u64) -> Option<ProxyAddrs>;
 
     /// Active proxy visitor for given service
     fn get_proxy_visitor_for_service(&self, service_id: u64) -> Option<&Arc<Mutex<dyn ClientServiceProxyVisitor>>>;
@@ -255,7 +255,7 @@ pub mod tests {
         pub SvcMgr {}
         impl ServiceMgr for SvcMgr {
             fn get_proxy_service_for_proxy_key(&self, proxy_key: &str) -> Option<u64>;
-            fn get_proxy_addrs_for_service(&self, service_id: u64) -> Option<&'static ProxyAddrs>;
+            fn get_proxy_addrs_for_service(&self, service_id: u64) -> Option<ProxyAddrs>;
             fn get_proxy_visitor_for_service(&self, service_id: u64) -> Option<&'static Arc<Mutex<dyn ClientServiceProxyVisitor>>>;
             fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent>;
             fn startup(&mut self, service: &Service, proxy_addrs: &ProxyAddrs) -> Result<ProxyAddrs, AppError>;

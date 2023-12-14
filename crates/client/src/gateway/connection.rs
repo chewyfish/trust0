@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn srvconnvis_on_connection_read_when_simple_ping_response() {
 
-        let app_config = config::tests::create_app_config().unwrap();
+        let app_config = config::tests::create_app_config(None).unwrap();
         let service_mgr = service::manager::tests::MockSvcMgr::new();
         let event_channel = mpsc::channel();
 
@@ -168,7 +168,7 @@ mod tests {
     #[test]
     fn srvconnvis_on_polling_cycle_when_no_pending_line() {
 
-        let app_config = config::tests::create_app_config().unwrap();
+        let app_config = config::tests::create_app_config(None).unwrap();
         let service_mgr = service::manager::tests::MockSvcMgr::new();
         let event_channel = mpsc::channel();
 
@@ -197,7 +197,7 @@ mod tests {
     #[test]
     fn srvconnvis_on_polling_cycle_when_void_request() {
 
-        let app_config = config::tests::create_app_config().unwrap();
+        let app_config = config::tests::create_app_config(None).unwrap();
         let service_mgr = service::manager::tests::MockSvcMgr::new();
         let event_channel = mpsc::channel();
 
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn srvconnvis_on_polling_cycle_when_invalid_request() {
 
-        let app_config = config::tests::create_app_config().unwrap();
+        let app_config = config::tests::create_app_config(None).unwrap();
         let service_mgr = service::manager::tests::MockSvcMgr::new();
         let event_channel = mpsc::channel();
 
@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn srvconnvis_on_polling_cycle_when_valid_ping_request() {
 
-        let app_config = config::tests::create_app_config().unwrap();
+        let app_config = config::tests::create_app_config(None).unwrap();
         let service_mgr = service::manager::tests::MockSvcMgr::new();
         let event_channel = mpsc::channel();
 

@@ -47,7 +47,7 @@ impl Response {
 }
 
 /// Represents the contextual mTLS client connection
-#[derive(Serialize, Deserialize, Clone, Default, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Default, Debug)]
 pub struct User {
     user_id: u64,
     name: String,
@@ -92,7 +92,7 @@ impl TryInto<Value> for &User {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Default, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Default, Debug)]
 pub struct About {
     cert_subject: Option<String>,
     cert_alt_subj: Option<String>,
@@ -141,7 +141,7 @@ impl TryInto<Value> for &About {
 }
 
 /// Represents an active service proxy, available for use by client
-#[derive(Serialize, Deserialize, Clone, Default, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Default, Debug)]
 pub struct Proxy {
     pub service: Service,
     pub gateway_host: Option<String>,
@@ -206,7 +206,7 @@ impl TryInto<Value> for &Proxy {
 }
 
 /// Represents an authorized service for connected mTLS device user
-#[derive(Serialize, Deserialize, Clone, Default, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Default, Debug)]
 pub struct Service {
     pub id: u64,
     pub name: String,
@@ -303,7 +303,7 @@ impl TryInto<Value> for &Service {
 }
 
 /// Represents active service proxy connections for connected mTLS device user
-#[derive(Serialize, Deserialize, Clone, Default, Debug)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Default, Debug)]
 pub struct Connection {
     pub service_name: String,
     pub binds: Vec<Vec<String>>,

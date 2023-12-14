@@ -101,7 +101,7 @@ impl AppConfig {
 
         let auth_key = load_private_key(config_args.auth_key_file.clone()).unwrap();
 
-        let cipher_suites: Vec<rustls::SupportedCipherSuite> = config_args.cipher_suite.unwrap_or(rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec());
+        let cipher_suites: Vec<SupportedCipherSuite> = config_args.cipher_suite.unwrap_or(rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec());
 
         let mut tls_client_config = rustls::ClientConfig::builder_with_provider(
             CryptoProvider {
@@ -216,7 +216,7 @@ pub mod tests {
     const CERTFILE_CLIENT_UID100_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "client-uid100.crt.pem"];
     const KEYFILE_CLIENT_UID100_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "client-uid100.key.pem"];
 
-    pub fn create_app_config() -> Result<AppConfig, AppError> {
+    pub fn create_app_config(shell_output_writer: Option<ShellOutputWriter>) -> Result<AppConfig, AppError> {
 
         let client_pki_files: (PathBuf, PathBuf) =
             (CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect(),
@@ -224,7 +224,7 @@ pub mod tests {
         let client_cert = load_certificates(client_pki_files.0.to_str().unwrap().to_string())?;
         let client_key = load_private_key(client_pki_files.1.to_str().unwrap().to_string())?;
         let auth_root_certs = RootCertStore::empty();
-        let cipher_suites: Vec<rustls::SupportedCipherSuite> = rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
+        let cipher_suites: Vec<SupportedCipherSuite> = rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
         let protocol_versions: Vec<&'static rustls::SupportedProtocolVersion> = rustls::ALL_VERSIONS.to_vec();
 
         let tls_client_config = rustls::ClientConfig::builder_with_provider(
@@ -238,12 +238,14 @@ pub mod tests {
             .with_client_auth_cert(client_cert, client_key)
             .expect("Invalid client auth certs/key");
 
+        let shell_output_writer = shell_output_writer.unwrap_or(ShellOutputWriter::new(None));
+
         Ok(AppConfig {
             gateway_host: "gwhost1".to_string(),
             gateway_port: 2000,
             tls_client_config,
             verbose_logging: false,
-            console_shell_output: Arc::new(Mutex::new(ShellOutputWriter::new(None)))
+            console_shell_output: Arc::new(Mutex::new(shell_output_writer))
         })
     }
 }
