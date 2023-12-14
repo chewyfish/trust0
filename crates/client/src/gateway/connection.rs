@@ -119,47 +119,14 @@ unsafe impl Send for ServerConnVisitor {}
 mod tests {
 
     use std::sync::mpsc;
-    use std::sync::mpsc::TryRecvError;
     use serde_json::Value;
     use trust0_common::control::request::Request;
     use trust0_common::control::response::Response;
     use trust0_common::net::tls_client::conn_std::{ConnectionEvent, ConnectionVisitor};
-    use trust0_common::testutils::ChannelWriter;
+    use trust0_common::testutils::{self, ChannelWriter};
     use crate::{config, console, service};
     use crate::gateway::controller;
     use super::*;
-
-    fn gather_rcvd_bytearr_channel_data(channel_receiver: &mpsc::Receiver<Vec<u8>>) -> Vec<u8> {
-
-        let mut rcvd_data: Vec<u8> = vec![];
-        loop {
-            let rcvd_result = channel_receiver.try_recv();
-            if let Err(err) = rcvd_result {
-                if let TryRecvError::Empty = err {
-                    break;
-                }
-                panic!("Unexpected received bytearray result: err={:?}", &err);
-            }
-            rcvd_data.append(&mut rcvd_result.unwrap());
-        }
-        rcvd_data
-    }
-
-    fn gather_rcvd_connection_channel_data(channel_receiver: &mpsc::Receiver<ConnectionEvent>) -> Vec<ConnectionEvent> {
-
-        let mut rcvd_data: Vec<ConnectionEvent> = vec![];
-        loop {
-            let rcvd_result = channel_receiver.try_recv();
-            if let Err(err) = rcvd_result {
-                if let TryRecvError::Empty = err {
-                    break;
-                }
-                panic!("Unexpected received connevt result: err={:?}", &err);
-            }
-            rcvd_data.push(rcvd_result.unwrap());
-        }
-        rcvd_data
-    }
 
     #[test]
     fn srvconnvis_on_connection_read_when_simple_ping_response() {
@@ -266,7 +233,7 @@ mod tests {
         }
 
         let expected_data = "> ".to_string();
-        let output_data = gather_rcvd_bytearr_channel_data(&output_channel.1);
+        let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
 
         assert_eq!(output_data.len(), expected_data.len());
         assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
@@ -311,7 +278,7 @@ mod tests {
         }
 
         let expected_data = "Expected validate error\n> ".to_string();
-        let output_data = gather_rcvd_bytearr_channel_data(&output_channel.1);
+        let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
 
         assert_eq!(output_data.len(), expected_data.len());
         assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
@@ -355,7 +322,7 @@ mod tests {
             panic!("Unexpected result: err={:?}", &err);
         }
 
-        let connevt_data = gather_rcvd_connection_channel_data(&event_channel.1);
+        let connevt_data = testutils::gather_rcvd_connection_channel_data(&event_channel.1);
         assert_eq!(connevt_data.len(), 1);
 
         match connevt_data.get(0).unwrap() {
