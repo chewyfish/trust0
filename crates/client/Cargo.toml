@@ -29,3 +29,6 @@ tokio = { version = "*", features = ["full"] }
 tokio-test = "*"
 trust0-common = { version = "0.2.0-alpha", path = "../common" }
 webpki-roots = "0.25"
+
+[dev-dependencies]
+mockall = { version = "0.12.0" }

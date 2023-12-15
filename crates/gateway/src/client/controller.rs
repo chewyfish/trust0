@@ -61,101 +61,6 @@ impl ControlPlane {
         })
     }
 
-    /// Process given command request
-    pub fn process_request(&mut self, service_mgr: &Arc<Mutex<dyn ServiceMgr>>, command_line: &str)
-        -> Result<request::Request, AppError> {
-
-        let client_request: request::Request;
-        let client_response: Result<String, AppError>;
-
-        match self.processor.parse(command_line) {
-
-            Ok(request::Request::About) => {
-                client_request = request::Request::About;
-                client_response = self.process_cmd_about();
-            },
-            Ok(request::Request::Connections) => {
-                client_request = request::Request::Connections;
-                client_response = self.process_cmd_connections(&service_mgr);
-            },
-            Ok(request::Request::Ping) => {
-                client_request = request::Request::Ping;
-                client_response = Self::prepare_response(response::CODE_OK,&Some("pong".to_string()), &client_request, &None);
-            },
-            Ok(request::Request::Proxies) => {
-                client_request = request::Request::Proxies;
-                client_response = self.process_cmd_proxies(&service_mgr);
-            },
-            Ok(request::Request::Services) => {
-                client_request = request::Request::Services;
-                client_response = self.process_cmd_services();
-            },
-            Ok(request::Request::Start { service_name, local_port}) => {
-                client_request = request::Request::Start { service_name: service_name.clone(), local_port };
-                client_response = self.process_cmd_start(&service_mgr, &service_name, local_port);
-            },
-            Ok(request::Request::Stop { service_name }) => {
-                client_request = request::Request::Stop { service_name: service_name.clone() };
-                client_response = self.process_cmd_stop(&service_mgr, &service_name );
-            },
-            Ok(request::Request::Quit) => {
-                client_request = request::Request::Quit;
-                client_response = self.process_cmd_quit();
-            },
-            Ok(request::Request::None) => {
-                client_request = request::Request::None;
-                client_response = Self::prepare_response(response::CODE_OK, &Some("".to_string()), &client_request, &None);
-            }
-            Err(err) => {
-                client_request = request::Request::None;
-                client_response = Err(err);
-            }
-        }
-
-        let client_response_str = match client_response {
-
-            Ok(response) => response,
-
-            Err(err) => {
-                let err_response: Result<String, AppError>;
-                match err.get_code() {
-                    Some(code) if code == response::CODE_BAD_REQUEST => {
-                        err_response = Self::prepare_response(code, &None, &client_request, &None);
-                    }
-                    Some(code) => {
-                        err_response = Self::prepare_response(code, &Some(err.to_string()), &client_request, &None);
-                    }
-                    _ => {
-                        err_response = Self::prepare_response(
-                            response::CODE_INTERNAL_SERVER_ERROR,
-                            &Some(err.to_string()),
-                            &client_request,
-                            &None);
-                    }
-                }
-                match err_response {
-                    Ok(response) => response,
-                    Err(err) => format!("Error serializing error response: err={:?}", err)
-                }
-            }
-        };
-
-        if !client_response_str.is_empty() {
-
-            let client_response_str = format!("{client_response_str}\n");
-
-            if let Err(err) = self.event_channel_sender.send(ConnectionEvent::Write(client_response_str.into_bytes())).map_err(|err|
-                AppError::GenWithMsgAndErr("Error sending client stream write channel event".to_string(), Box::new(err))) {
-
-                let _ = self.event_channel_sender.send(ConnectionEvent::Closing);
-
-                return Err(err);
-            }
-        }
-
-        return Ok(client_request);
-    }
-
     /// Prepare response stringified JSON
     fn prepare_response(code: u16, message: &Option<String>, request: &request::Request, data: &Option<Value>)
         -> Result<String, AppError> {
@@ -394,6 +299,98 @@ impl ControlPlane {
     }
 }
 
+impl RequestProcessor for ControlPlane {
+
+    /// Process given command request
+    fn process_request(&mut self, service_mgr: &Arc<Mutex<dyn ServiceMgr>>, command_line: &str)
+                       -> Result<request::Request, AppError> {
+        let client_request: request::Request;
+        let client_response: Result<String, AppError>;
+
+        match self.processor.parse(command_line) {
+            Ok(request::Request::About) => {
+                client_request = request::Request::About;
+                client_response = self.process_cmd_about();
+            },
+            Ok(request::Request::Connections) => {
+                client_request = request::Request::Connections;
+                client_response = self.process_cmd_connections(&service_mgr);
+            },
+            Ok(request::Request::Ping) => {
+                client_request = request::Request::Ping;
+                client_response = Self::prepare_response(response::CODE_OK, &Some("pong".to_string()), &client_request, &None);
+            },
+            Ok(request::Request::Proxies) => {
+                client_request = request::Request::Proxies;
+                client_response = self.process_cmd_proxies(&service_mgr);
+            },
+            Ok(request::Request::Services) => {
+                client_request = request::Request::Services;
+                client_response = self.process_cmd_services();
+            },
+            Ok(request::Request::Start { service_name, local_port }) => {
+                client_request = request::Request::Start { service_name: service_name.clone(), local_port };
+                client_response = self.process_cmd_start(&service_mgr, &service_name, local_port);
+            },
+            Ok(request::Request::Stop { service_name }) => {
+                client_request = request::Request::Stop { service_name: service_name.clone() };
+                client_response = self.process_cmd_stop(&service_mgr, &service_name);
+            },
+            Ok(request::Request::Quit) => {
+                client_request = request::Request::Quit;
+                client_response = self.process_cmd_quit();
+            },
+            Ok(request::Request::None) => {
+                client_request = request::Request::None;
+                client_response = Self::prepare_response(response::CODE_OK, &Some("".to_string()), &client_request, &None);
+            }
+            Err(err) => {
+                client_request = request::Request::None;
+                client_response = Err(err);
+            }
+        }
+
+        let client_response_str = client_response.unwrap_or_else(|err| {
+            let err_response: Result<String, AppError>;
+            match err.get_code() {
+                Some(code) if code == response::CODE_BAD_REQUEST => {
+                    err_response = Self::prepare_response(code, &None, &client_request, &None);
+                }
+                Some(code) => {
+                    err_response = Self::prepare_response(code, &Some(err.to_string()), &client_request, &None);
+                }
+                _ => {
+                    err_response = Self::prepare_response(
+                        response::CODE_INTERNAL_SERVER_ERROR,
+                        &Some(err.to_string()),
+                        &client_request,
+                        &None);
+                }
+            }
+            err_response.unwrap_or_else(|err| format!("Error serializing error response: err={:?}", err))
+        });
+
+        if !client_response_str.is_empty() {
+            let client_response_str = format!("{client_response_str}\n");
+
+            if let Err(err) = self.event_channel_sender.send(ConnectionEvent::Write(client_response_str.into_bytes())).map_err(|err|
+                AppError::GenWithMsgAndErr("Error sending client stream write channel event".to_string(), Box::new(err))) {
+                let _ = self.event_channel_sender.send(ConnectionEvent::Closing);
+
+                return Err(err);
+            }
+        }
+
+        return Ok(client_request);
+    }
+}
+
+pub trait RequestProcessor {
+    /// Process given command request
+    fn process_request(&mut self, service_mgr: &Arc<Mutex<dyn ServiceMgr>>, command_line: &str)
+                       -> Result<request::Request, AppError>;
+}
+
 /// tls_server::server_std::Server strategy visitor pattern implementation
 pub struct ControlPlaneServerVisitor {
     app_config: Arc<AppConfig>,
@@ -450,6 +447,7 @@ mod tests {
     use mockall::predicate;
     use trust0_common::crypto::file::load_certificates;
     use trust0_common::model::access::ServiceAccess;
+    use crate::client::controller::RequestProcessor;
     use crate::config;
     use crate::repository::access_repo::tests::MockAccessRepo;
     use crate::repository::service_repo::tests::MockServiceRepo;

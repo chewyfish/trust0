@@ -14,7 +14,7 @@ async fn async_main() -> Result<(), AppError> {
 
     LOG.lock().unwrap().configure(
         if app_config.verbose_logging { LogLevel::DEBUG } else { LogLevel::ERROR },
-        Some(|_,_| { let _ = write_shell_prompt(false); })
+        Some(|_, _| { let _ = write_shell_prompt(false); })
     );
 
     let mut processor = MainProcessor::new(app_config);

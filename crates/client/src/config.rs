@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use clap::Parser;
 use rustls::{RootCertStore, SupportedCipherSuite};
@@ -6,6 +6,7 @@ use rustls::crypto::CryptoProvider;
 
 use trust0_common::crypto::file::{load_certificates, load_private_key};
 use trust0_common::error::AppError;
+use crate::console::ShellOutputWriter;
 
 /// Connects to the TLS server at HOSTNAME:PORT.  The default PORT
 /// is 443.  By default, this reads a request from stdin (to EOF)
@@ -71,7 +72,8 @@ pub struct AppConfig {
     pub gateway_host: String,
     pub gateway_port: u16,
     pub tls_client_config: rustls::ClientConfig,
-    pub verbose_logging: bool
+    pub verbose_logging: bool,
+    pub console_shell_output: Arc<Mutex<ShellOutputWriter>>
 }
 
 impl AppConfig {
@@ -99,7 +101,7 @@ impl AppConfig {
 
         let auth_key = load_private_key(config_args.auth_key_file.clone()).unwrap();
 
-        let cipher_suites: Vec<rustls::SupportedCipherSuite> = config_args.cipher_suite.unwrap_or(rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec());
+        let cipher_suites: Vec<SupportedCipherSuite> = config_args.cipher_suite.unwrap_or(rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec());
 
         let mut tls_client_config = rustls::ClientConfig::builder_with_provider(
             CryptoProvider {
@@ -139,7 +141,8 @@ impl AppConfig {
             gateway_host: config_args.gateway_host.clone(),
             gateway_port: config_args.gateway_port,
             tls_client_config,
-            verbose_logging: config_args.verbose
+            verbose_logging: config_args.verbose,
+            console_shell_output: Arc::new(Mutex::new(ShellOutputWriter::new(None)))
         })
 
     }
@@ -199,5 +202,50 @@ mod danger {
                 .signature_verification_algorithms
                 .supported_schemes()
         }
+    }
+}
+
+/// Unit tests
+#[cfg(test)]
+pub mod tests {
+
+    use std::path::PathBuf;
+    use super::*;
+
+    const _CERTFILE_ROOT_CA_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "root-ca.crt.pem"];
+    const CERTFILE_CLIENT_UID100_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "client-uid100.crt.pem"];
+    const KEYFILE_CLIENT_UID100_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "client-uid100.key.pem"];
+
+    pub fn create_app_config(shell_output_writer: Option<ShellOutputWriter>) -> Result<AppConfig, AppError> {
+
+        let client_pki_files: (PathBuf, PathBuf) =
+            (CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect(),
+             KEYFILE_CLIENT_UID100_PATHPARTS.iter().collect());
+        let client_cert = load_certificates(client_pki_files.0.to_str().unwrap().to_string())?;
+        let client_key = load_private_key(client_pki_files.1.to_str().unwrap().to_string())?;
+        let auth_root_certs = RootCertStore::empty();
+        let cipher_suites: Vec<SupportedCipherSuite> = rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
+        let protocol_versions: Vec<&'static rustls::SupportedProtocolVersion> = rustls::ALL_VERSIONS.to_vec();
+
+        let tls_client_config = rustls::ClientConfig::builder_with_provider(
+            CryptoProvider {
+                cipher_suites,
+                ..rustls::crypto::ring::default_provider()
+            }.into())
+            .with_protocol_versions(&protocol_versions)
+            .expect("Inconsistent cipher-suite/versions selected")
+            .with_root_certificates(auth_root_certs)
+            .with_client_auth_cert(client_cert, client_key)
+            .expect("Invalid client auth certs/key");
+
+        let shell_output_writer = shell_output_writer.unwrap_or(ShellOutputWriter::new(None));
+
+        Ok(AppConfig {
+            gateway_host: "gwhost1".to_string(),
+            gateway_port: 2000,
+            tls_client_config,
+            verbose_logging: false,
+            console_shell_output: Arc::new(Mutex::new(shell_output_writer))
+        })
     }
 }

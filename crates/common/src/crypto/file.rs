@@ -219,7 +219,7 @@ mod crl_tests {
     use std::path::PathBuf;
     use super::*;
 
-    const CERTFILE_CLIENT0_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "client0.local.crt.pem"];
+    const _CERTFILE_CLIENT0_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "client0.local.crt.pem"];
     const CRLFILE_REVOKED_CERTS_0_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "revoked-crts-0.crl.pem"];
     const CRLFILE_REVOKED_CERTS_0_1_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "revoked-crts-0-1.crl.pem"];
     const CRLFILE_INVALID_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "invalid.crl.pem"];

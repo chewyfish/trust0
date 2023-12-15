@@ -19,7 +19,7 @@ impl Client {
 
     /// Client constructor
     pub fn new(app_config: Arc<AppConfig>,
-               service_mgr: Arc<Mutex<ServiceMgr>>)
+               service_mgr: Arc<Mutex<dyn ServiceMgr>>)
         -> Self {
 
         let mut tls_client_config = app_config.tls_client_config.clone();
@@ -51,14 +51,14 @@ unsafe impl Send for Client {}
 /// tls_client::std_client::Client strategy visitor pattern implementation
 pub struct ClientVisitor {
     app_config: Arc<AppConfig>,
-    service_mgr: Arc<Mutex<ServiceMgr>>
+    service_mgr: Arc<Mutex<dyn ServiceMgr>>
 }
 
 impl ClientVisitor {
 
     /// ClientVisitor constructor
     pub fn new(app_config: Arc<AppConfig>,
-               service_mgr: Arc<Mutex<ServiceMgr>>)
+               service_mgr: Arc<Mutex<dyn ServiceMgr>>)
         -> Self {
 
         Self {

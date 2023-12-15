@@ -220,8 +220,8 @@ impl ClientServiceProxyVisitor for UdpClientProxyServerVisitor {
         self.gateway_proxy_port
     }
 
-    fn set_shutdown_requested(&mut self, shutdown_requested: bool) {
-        self.shutdown_requested = shutdown_requested;
+    fn set_shutdown_requested(&mut self) {
+        self.shutdown_requested = true;
     }
 
     fn shutdown_connections(&mut self, proxy_tasks_sender: Sender<ProxyExecutorEvent>) -> Result<(), AppError> {
