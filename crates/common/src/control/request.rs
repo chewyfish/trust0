@@ -8,11 +8,13 @@ use crate::error::AppError;
 // Protocol text
 pub const PROTOCOL_REQUEST_ABOUT: &str = "about";
 pub const PROTOCOL_REQUEST_CONNECTIONS: &str = "connections";
+pub const PROTOCOL_REQUEST_HELP: &str = "help";
 pub const PROTOCOL_REQUEST_PING: &str = "ping";
 pub const PROTOCOL_REQUEST_PROXIES: &str = "proxies";
 pub const PROTOCOL_REQUEST_SERVICES: &str = "services";
 pub const PROTOCOL_REQUEST_START: &str = "start";
 pub const PROTOCOL_REQUEST_STOP: &str = "stop";
+pub const PROTOCOL_REQUEST_VERSION: &str = "version";
 pub const PROTOCOL_REQUEST_QUIT: &str = "quit";
 pub const PROTOCOL_REQUEST_EXIT: &str = "exit";
 
@@ -185,4 +187,185 @@ impl RequestProcessor {
                     .help_template(COMMAND_TEMPLATE),
             )
     }
+}
+
+/// Unit tests
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn reqproc_parse_when_invalid_request() {
+
+        let request_processor = RequestProcessor::new();
+
+        match request_processor.parse("INVALID") {
+            Ok(request) => panic!("Unexpected successful result: req={:?}", request),
+            Err(err) => {
+                assert!(err.get_code().is_some());
+                assert_eq!(err.get_code().unwrap(), response::CODE_BAD_REQUEST);
+            }
+        }
+    }
+
+    #[test]
+    fn reqproc_parse_when_help_request() {
+
+        let request_processor = RequestProcessor::new();
+
+        let result = request_processor.parse(PROTOCOL_REQUEST_HELP);
+
+        if let Ok(request) = result {
+            panic!("Unexpected successful result: req={:?}", request);
+        }
+
+        let parse_error = result.err().unwrap();
+
+        assert!(parse_error.get_code().is_some());
+        assert_eq!(response::CODE_OK, parse_error.get_code().unwrap());
+
+        let expected_msg = "Response: code=200, msg=COMMANDS:\n  about        Display context information for connected mTLS device user\n  connections  List current service proxy connections\n  ping         Simple gateway heartbeat request\n  proxies      List active service proxies, ready for new connections\n  services     List authorized services for connected mTLS device user\n  start        Startup proxy to authorized service via secure client-gateway proxy\n  stop         Shutdown active service proxy (previously started)\n  quit         Quit the control plane (and corresponding service connections)\n  help         Print this message or the help of the given subcommand(s)\n".to_string();
+
+        assert_eq!(parse_error.to_string(), expected_msg);
+    }
+
+    #[test]
+    fn reqproc_parse_when_connections_request() {
+
+        let request_processor = RequestProcessor::new();
+
+        let result = request_processor.parse(PROTOCOL_REQUEST_CONNECTIONS);
+
+        match result {
+            Ok(request) => {
+                match request {
+                    Request::Connections => {}
+                    _ => panic!("Unexpected successful result: req={:?}", request)
+                }
+            }
+            Err(err) => panic!("Unexpected result: err={:?}", err)
+        }
+    }
+
+    #[test]
+    fn reqproc_parse_when_ping_request() {
+
+        let request_processor = RequestProcessor::new();
+
+        let result = request_processor.parse(PROTOCOL_REQUEST_PING);
+
+        match result {
+            Ok(request) => {
+                match request {
+                    Request::Ping => {}
+                    _ => panic!("Unexpected successful result: req={:?}", request)
+                }
+            }
+            Err(err) => panic!("Unexpected result: err={:?}", err)
+        }
+    }
+
+    #[test]
+    fn reqproc_parse_when_proxies_request() {
+
+        let request_processor = RequestProcessor::new();
+
+        let result = request_processor.parse(PROTOCOL_REQUEST_PROXIES);
+
+        match result {
+            Ok(request) => {
+                match request {
+                    Request::Proxies => {}
+                    _ => panic!("Unexpected successful result: req={:?}", request)
+                }
+            }
+            Err(err) => panic!("Unexpected result: err={:?}", err)
+        }
+    }
+
+    #[test]
+    fn reqproc_parse_when_services_request() {
+
+        let request_processor = RequestProcessor::new();
+
+        let result = request_processor.parse(PROTOCOL_REQUEST_SERVICES);
+
+        match result {
+            Ok(request) => {
+                match request {
+                    Request::Services => {}
+                    _ => panic!("Unexpected successful result: req={:?}", request)
+                }
+            }
+            Err(err) => panic!("Unexpected result: err={:?}", err)
+        }
+    }
+
+    #[test]
+    fn reqproc_parse_when_start_request() {
+
+        let request_processor = RequestProcessor::new();
+
+        let req_service_name = "svc1";
+        let req_local_port = 3000;
+        let request_str = format!("{} -s {} -p {}", PROTOCOL_REQUEST_START, req_service_name, req_local_port);
+
+        let result = request_processor.parse(&request_str);
+
+        match result {
+            Ok(request) => {
+                match request {
+                    Request::Start { service_name, local_port } => {
+                        assert_eq!(service_name, req_service_name);
+                        assert_eq!(local_port, req_local_port);
+                    }
+                    _ => panic!("Unexpected successful result: req={:?}", request)
+                }
+            }
+            Err(err) => panic!("Unexpected result: err={:?}", err)
+        }
+    }
+
+    #[test]
+    fn reqproc_parse_when_stop_request() {
+
+        let request_processor = RequestProcessor::new();
+
+        let req_service_name = "svc1";
+        let request_str = format!("{} -s {}", PROTOCOL_REQUEST_STOP, req_service_name);
+
+        let result = request_processor.parse(&request_str);
+
+        match result {
+            Ok(request) => {
+                match request {
+                    Request::Stop { service_name } => {
+                        assert_eq!(service_name, req_service_name);
+                    }
+                    _ => panic!("Unexpected successful result: req={:?}", request)
+                }
+            }
+            Err(err) => panic!("Unexpected result: err={:?}", err)
+        }
+    }
+
+    #[test]
+    fn reqproc_parse_when_quit_request() {
+
+        let request_processor = RequestProcessor::new();
+
+        let result = request_processor.parse(PROTOCOL_REQUEST_QUIT);
+
+        match result {
+            Ok(request) => {
+                match request {
+                    Request::Quit => {}
+                    _ => panic!("Unexpected successful result: req={:?}", request)
+                }
+            }
+            Err(err) => panic!("Unexpected result: err={:?}", err)
+        }
+    }
+
 }

@@ -2154,7 +2154,7 @@ dependencies = [
  "log",
  "log4rs",
  "mio",
- "mockall 0.11.4",
+ "mockall 0.12.0",
  "oid-registry",
  "once_cell",
  "rcgen",

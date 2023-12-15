@@ -31,4 +31,4 @@ webpki-roots = "0.26.0"
 x509-parser = "0.15.1"
 
 [dev-dependencies]
-mockall = "0.11.4"
+mockall = "0.12.0"
