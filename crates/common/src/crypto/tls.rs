@@ -68,3 +68,96 @@ pub fn parse_alpn_protocol(alpn_protocol: &str) -> Result<Vec<u8>, AppError> {
 
     Ok(alpn_protocol.as_bytes().into())
 }
+
+/// Unit tests
+#[cfg(test)]
+mod crl_tests {
+    use rustls::{SupportedCipherSuite, SupportedProtocolVersion};
+    use super::*;
+
+    #[test]
+    fn tls_lookup_suites_when_no_match() {
+
+        let all_suites = rustls::crypto::ring::ALL_CIPHER_SUITES;
+        assert!(all_suites.len() >= 2);
+
+        let query_suite_strs = vec!["INVALID1".to_string(), "INVALID2".to_string()];
+
+        let result = lookup_suites(query_suite_strs.as_slice());
+
+        if let Ok(suites) = result {
+            panic!("Unexpected successful result: suites={:?}", &suites);
+        }
+    }
+
+    #[test]
+    fn tls_lookup_suites_when_all_match() {
+
+        let all_suites = rustls::crypto::ring::ALL_CIPHER_SUITES;
+        assert!(all_suites.len() >= 2);
+
+        let query_suites: Vec<&SupportedCipherSuite> = all_suites.iter().take(2).collect();
+        let query_suite_strs: Vec<String> = query_suites.iter()
+            .map(|s| format!("{:?}", s.suite()).to_lowercase()).collect();
+
+        let result = lookup_suites(query_suite_strs.as_slice());
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        let suites = result.unwrap();
+        assert_eq!(suites.len(), 2);
+
+        assert!(suites.contains(query_suites.get(0).unwrap()));
+        assert!(suites.contains(query_suites.get(1).unwrap()));
+    }
+    #[test]
+    fn tls_lookup_versions_when_no_match() {
+
+        let query_version_strs = vec!["INVALID1".to_string(), "INVALID2".to_string()];
+
+        let result = lookup_versions(query_version_strs.as_slice());
+
+        if let Ok(versions) = result {
+            panic!("Unexpected successful result: versions={:?}", &versions);
+        }
+    }
+
+    #[test]
+    fn tls_lookup_versions_when_all_match() {
+
+        let query_versions: Vec<&SupportedProtocolVersion> = vec![&rustls::version::TLS12,&rustls::version::TLS13];
+        let query_version_strs: Vec<String> = vec!["1.2".to_string(), "1.3".to_string()];
+
+        let result = lookup_versions(query_version_strs.as_slice());
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        let versions = result.unwrap();
+        assert_eq!(versions.len(), 2);
+
+        assert!(versions.contains(query_versions.get(0).unwrap()));
+        assert!(versions.contains(query_versions.get(1).unwrap()));
+    }
+
+    #[test]
+    fn tls_parse_alpn_protocols() {
+
+        let unparsed_protocols = vec!["PROTOCOL1".to_string(), "PROTOCOL2".to_string()];
+
+        let result = parse_alpn_protocols(unparsed_protocols.as_slice());
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        let parsed_protocols = result.unwrap();
+        assert_eq!(parsed_protocols.len(), 2);
+
+        assert!(parsed_protocols.contains(&unparsed_protocols.get(0).unwrap().as_bytes().to_vec()));
+        assert!(parsed_protocols.contains(&unparsed_protocols.get(1).unwrap().as_bytes().to_vec()));
+    }
+}

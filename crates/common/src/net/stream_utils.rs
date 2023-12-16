@@ -104,3 +104,30 @@ pub fn clone_std_udp_socket(udp_socket: &std::net::UdpSocket)
     udp_socket.try_clone().map_err(|err|
         AppError::GenWithMsgAndErr(format!("Error trying to clone udp socket: socket={:?}", &udp_socket), Box::new(err)))
 }
+
+/// Unit tests
+#[cfg(test)]
+pub mod tests {
+
+    use mockall::mock;
+    use super::*;
+
+    // mocks
+    // =====
+
+    mock! {
+        pub StreamReader {}
+        impl io::Read for StreamReader {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize>;
+        }
+    }
+
+    mock! {
+        pub StreamWriter {}
+        impl io::Write for StreamWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize>;
+            fn flush(&mut self) -> io::Result<()>;
+            fn write_all(&mut self, buf: &[u8]) -> io::Result<()>;
+        }
+    }
+}

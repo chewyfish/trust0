@@ -8,11 +8,13 @@ use anyhow::Result;
 
 use crate::error::AppError;
 use crate::logging::error;
+use crate::net::stream_utils;
 use crate::target;
 
 const READ_BLOCK_SIZE: usize = 1024;
 
 /// Connection event message channel
+#[derive(Debug)]
 pub enum ConnectionEvent {
     Closing,
     Closed,
@@ -30,7 +32,9 @@ impl ConnectionEvent {
 /// This is a TCP client connection which has been accepted by the server, and is currently being served.
 pub struct Connection {
     visitor: Box<dyn ConnectionVisitor>,
-    tcp_stream: TcpStream,
+    tcp_stream: Option<TcpStream>,
+    stream_reader: Box<dyn Read + Send>,
+    stream_writer: Box<dyn Write + Send>,
     event_channel: (Sender<ConnectionEvent>, Receiver<ConnectionEvent>),
     closed: bool
 }
@@ -47,9 +51,14 @@ impl Connection {
         visitor.set_event_channel_sender(event_channel.0.clone())?;
         visitor.on_connected()?;
 
+        let stream_reader = Box::new(stream_utils::clone_std_tcp_stream(&tcp_stream)?);
+        let stream_writer = Box::new(stream_utils::clone_std_tcp_stream(&tcp_stream)?);
+
         Ok(Self {
             visitor,
-            tcp_stream,
+            tcp_stream: Some(tcp_stream),
+            stream_reader,
+            stream_writer,
             event_channel,
             closed: false
         })
@@ -67,12 +76,12 @@ impl Connection {
 
     /// Connection 'tcp_stream' (immutable) accessor
     pub fn get_tcp_stream_as_ref(&self) -> &TcpStream {
-        &self.tcp_stream
+        self.tcp_stream.as_ref().unwrap()
     }
 
     /// Connection 'tcp_stream' (mutable) accessor
     pub fn get_tcp_stream_as_mut(&mut self) -> &mut TcpStream {
-        &mut self.tcp_stream
+        self.tcp_stream.as_mut().unwrap()
     }
 
     /// Get copy of event channel sender
@@ -194,7 +203,7 @@ impl Connection {
             return Ok(())
         }
 
-        self.tcp_stream.shutdown(Shutdown::Both).map_err(|err|
+        self.tcp_stream.as_ref().unwrap().shutdown(Shutdown::Both).map_err(|err|
             AppError::GenWithMsgAndErr("Error shutting down TCP connection".to_string(), Box::new(err)))?;
 
         self.closed = true;
@@ -213,7 +222,7 @@ impl Connection {
         let mut buffer = Vec::new();
         let mut buff_chunk = [0; READ_BLOCK_SIZE];
         loop {
-            let bytes_read = match self.tcp_stream.read(&mut buff_chunk) {
+            let bytes_read = match self.stream_reader.read(&mut buff_chunk) {
 
                 Ok(bytes_read) => bytes_read,
 
@@ -240,7 +249,7 @@ impl Connection {
     /// Write content to client connection
     fn write_tcp_stream(&mut self, buffer: &[u8]) -> Result<(), AppError> {
 
-        match self.tcp_stream.write_all(buffer) {
+        match self.stream_writer.write_all(buffer) {
 
             Ok(()) => {}
 
@@ -263,7 +272,7 @@ unsafe impl Send for Connection {}
 
 impl Into<TcpStream> for Connection {
     fn into(self) -> TcpStream {
-        self.tcp_stream
+        self.tcp_stream.unwrap()
     }
 }
 
@@ -297,4 +306,373 @@ pub trait ConnectionVisitor : Send {
 
     /// Send error response message to client
     fn send_error_response(&mut self, err: &AppError);
+}
+
+/// Unit tests
+#[cfg(test)]
+pub mod tests {
+    use std::io::ErrorKind;
+    use mockall::{mock, predicate};
+    use super::*;
+
+    // mocks
+    // =====
+
+    mock! {
+        pub ConnVisit {}
+        impl ConnectionVisitor for ConnVisit {
+            fn on_connected(&mut self) -> Result<(), AppError>;
+            fn set_event_channel_sender(&mut self, event_channel_sender: Sender<ConnectionEvent>) -> Result<(), AppError>;
+            fn on_connection_read(&mut self, data: &Vec<u8>) -> Result<(), AppError>;
+            fn on_polling_cycle(&mut self) -> Result<(), AppError>;
+            fn on_shutdown(&mut self) -> Result<(), AppError>;
+            fn send_error_response(&mut self, err: &AppError);
+        }
+    }
+
+    // tests
+    // =====
+
+    #[test]
+    fn conn_read_when_no_data_to_read() {
+
+        let conn_visitor = MockConnVisit::new();
+        let stream_writer = stream_utils::tests::MockStreamWriter::new();
+        let event_channel = mpsc::channel();
+
+        let mut stream_reader = stream_utils::tests::MockStreamReader::new();
+        let buffer = [0; READ_BLOCK_SIZE];
+        stream_reader.expect_read()
+            .with(predicate::eq(buffer))
+            .times(1)
+            .return_once(|_| { Err(io::Error::new(ErrorKind::WouldBlock, AppError::General("not readable".to_string()))) });
+
+        let mut conn = Connection {
+            visitor: Box::new(conn_visitor),
+            tcp_stream: None,
+            stream_reader: Box::new(stream_reader),
+            stream_writer: Box::new(stream_writer),
+            event_channel,
+            closed: false
+        };
+
+        let result = conn.read();
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        assert!(result.unwrap().is_empty());
+
+        match conn.event_channel.1.try_recv() {
+            Ok(event) => panic!("Unexpected conn event recvd: evt={:?}", event),
+            Err(err) => {
+                if let TryRecvError::Empty = err {}
+                else {
+                    panic!("Unexpected conn event channel result: err={:?}", &err);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn conn_read_when_data_to_read() {
+
+        let stream_writer = stream_utils::tests::MockStreamWriter::new();
+        let event_channel = mpsc::channel();
+
+        let readable_bytes = "hello".as_bytes().to_vec();
+
+        let mut stream_reader = stream_utils::tests::MockStreamReader::new();
+        let readable_bytes_copy = readable_bytes.clone();
+        let buffer = [0; READ_BLOCK_SIZE];
+        stream_reader.expect_read()
+            .with(predicate::eq(buffer))
+            .times(1)
+            .return_once(move |b| {
+                for i in 0..readable_bytes_copy.len() {
+                    b[i] = *readable_bytes_copy.get(i).unwrap();
+                }
+                Ok(readable_bytes_copy.len()) });
+
+        let readable_bytes_copy = readable_bytes.clone();
+        let mut conn_visitor = MockConnVisit::new();
+        conn_visitor.expect_on_connection_read().with(predicate::eq(readable_bytes_copy)).times(1)
+            .return_once(|_| { Ok(()) });
+
+        let mut conn = Connection {
+            visitor: Box::new(conn_visitor),
+            tcp_stream: None,
+            stream_reader: Box::new(stream_reader),
+            stream_writer: Box::new(stream_writer),
+            event_channel,
+            closed: false
+        };
+
+        let result = conn.read();
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        let recvd_bytes = result.unwrap();
+        assert_eq!(recvd_bytes.len(), readable_bytes.len());
+        assert_eq!(String::from_utf8(recvd_bytes.clone()).unwrap(), String::from_utf8(readable_bytes.clone()).unwrap());
+
+        match conn.event_channel.1.try_recv() {
+            Ok(event) => panic!("Unexpected conn event recvd: evt={:?}", event),
+            Err(err) => {
+                if let TryRecvError::Empty = err {}
+                else {
+                    panic!("Unexpected conn event channel result: err={:?}", &err);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn conn_read_when_peer_connection_closed() {
+
+        let stream_writer = stream_utils::tests::MockStreamWriter::new();
+        let event_channel = mpsc::channel();
+
+        let mut stream_reader = stream_utils::tests::MockStreamReader::new();
+        let buffer = [0; READ_BLOCK_SIZE];
+        stream_reader.expect_read()
+            .with(predicate::eq(buffer))
+            .times(1)
+            .return_once(|_| { Err(io::Error::new(ErrorKind::UnexpectedEof, AppError::General("connection closed".to_string()))) });
+
+        let mut conn_visitor = MockConnVisit::new();
+        conn_visitor.expect_on_connection_read().never();
+
+        let mut conn = Connection {
+            visitor: Box::new(conn_visitor),
+            tcp_stream: None,
+            stream_reader: Box::new(stream_reader),
+            stream_writer: Box::new(stream_writer),
+            event_channel,
+            closed: false
+        };
+
+        let result = conn.read();
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        let recvd_bytes = result.unwrap();
+        assert_eq!(recvd_bytes.len(), 0);
+
+        match conn.event_channel.1.try_recv() {
+            Ok(event) => {
+                if let ConnectionEvent::Closing = event {} else {
+                    panic!("Unexpected conn event recvd: evt={:?}", event)
+                }
+            },
+            Err(err) => {
+                panic!("Unexpected conn event channel result: err={:?}", &err);
+            }
+        }
+    }
+
+    #[test]
+    fn conn_read_when_error_while_reading() {
+
+        let stream_writer = stream_utils::tests::MockStreamWriter::new();
+        let event_channel = mpsc::channel();
+
+        let mut stream_reader = stream_utils::tests::MockStreamReader::new();
+        let buffer = [0; READ_BLOCK_SIZE];
+        stream_reader.expect_read()
+            .with(predicate::eq(buffer))
+            .times(1)
+            .return_once(|_| { Err(io::Error::new(ErrorKind::Other, AppError::General("error1".to_string()))) });
+
+        let mut conn_visitor = MockConnVisit::new();
+        conn_visitor.expect_on_connection_read().never();
+
+        let mut conn = Connection {
+            visitor: Box::new(conn_visitor),
+            tcp_stream: None,
+            stream_reader: Box::new(stream_reader),
+            stream_writer: Box::new(stream_writer),
+            event_channel,
+            closed: false
+        };
+
+        let result = conn.read();
+
+        if let Ok(recvd_bytes) = result {
+            panic!("Unexpected successful result: buffer={:?}", &recvd_bytes);
+        }
+
+        match conn.event_channel.1.try_recv() {
+            Ok(event) => {
+                if let ConnectionEvent::Closing = event {} else {
+                    panic!("Unexpected conn event recvd: evt={:?}", event)
+                }
+            },
+            Err(err) => {
+                panic!("Unexpected conn event channel result: err={:?}", &err);
+            }
+        }
+    }
+
+
+
+
+
+    #[test]
+    fn conn_write_when_stream_not_writable() {
+
+        let event_channel = mpsc::channel();
+
+        let mut stream_writer = stream_utils::tests::MockStreamWriter::new();
+        let buffer = "hello".as_bytes();
+        stream_writer.expect_write_all()
+            .with(predicate::eq(buffer))
+            .times(1)
+            .return_once(|_| { Err(io::Error::new(ErrorKind::WouldBlock, AppError::General("not writable".to_string()))) });
+
+        let mut conn = Connection {
+            visitor: Box::new(MockConnVisit::new()),
+            tcp_stream: None,
+            stream_reader: Box::new(stream_utils::tests::MockStreamReader::new()),
+            stream_writer: Box::new(stream_writer),
+            event_channel,
+            closed: false
+        };
+
+        let result = conn.write(buffer);
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        match conn.event_channel.1.try_recv() {
+            Ok(event) => {
+                if let ConnectionEvent::Write (_) = event {} else {
+                    panic!("Unexpected conn event recvd: evt={:?}", event)
+                }
+            },
+            Err(err) => panic!("Unexpected conn event channel result: err={:?}", &err)
+        }
+    }
+
+    #[test]
+    fn conn_write_when_successfully_written() {
+
+        let event_channel = mpsc::channel();
+
+        let mut stream_writer = stream_utils::tests::MockStreamWriter::new();
+        let buffer = "hello".as_bytes();
+        stream_writer.expect_write_all()
+            .with(predicate::eq(buffer))
+            .times(1)
+            .return_once(|_| { Ok(()) });
+
+        let mut conn = Connection {
+            visitor: Box::new(MockConnVisit::new()),
+            tcp_stream: None,
+            stream_reader: Box::new(stream_utils::tests::MockStreamReader::new()),
+            stream_writer: Box::new(stream_writer),
+            event_channel,
+            closed: false
+        };
+
+        let result = conn.write(buffer);
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        match conn.event_channel.1.try_recv() {
+            Ok(event) => panic!("Unexpected conn event recvd: evt={:?}", event),
+            Err(err) => {
+                if let TryRecvError::Empty = err {}
+                else {
+                    panic!("Unexpected conn event channel result: err={:?}", &err);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn conn_write_when_peer_connection_closed() {
+
+        let event_channel = mpsc::channel();
+
+        let mut stream_writer = stream_utils::tests::MockStreamWriter::new();
+        let buffer = "hello".as_bytes();
+        stream_writer.expect_write_all()
+            .with(predicate::eq(buffer))
+            .times(1)
+            .return_once(|_| { Err(io::Error::new(ErrorKind::UnexpectedEof, AppError::General("connection closed".to_string()))) });
+
+        let mut conn = Connection {
+            visitor: Box::new(MockConnVisit::new()),
+            tcp_stream: None,
+            stream_reader: Box::new(stream_utils::tests::MockStreamReader::new()),
+            stream_writer: Box::new(stream_writer),
+            event_channel,
+            closed: false
+        };
+
+        let result = conn.write(buffer);
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        match conn.event_channel.1.try_recv() {
+            Ok(event) => {
+                if let ConnectionEvent::Closing = event {} else {
+                    panic!("Unexpected conn event recvd: evt={:?}", event)
+                }
+            },
+            Err(err) => {
+                panic!("Unexpected conn event channel result: err={:?}", &err);
+            }
+        }
+    }
+
+    #[test]
+    fn conn_write_when_error_while_reading() {
+
+        let event_channel = mpsc::channel();
+
+        let mut stream_writer = stream_utils::tests::MockStreamWriter::new();
+        let buffer = "hello".as_bytes();
+        stream_writer.expect_write_all()
+            .with(predicate::eq(buffer))
+            .times(1)
+            .return_once(|_| { Err(io::Error::new(ErrorKind::Other, AppError::General("error1".to_string()))) });
+
+        let mut conn = Connection {
+            visitor: Box::new(MockConnVisit::new()),
+            tcp_stream: None,
+            stream_reader: Box::new(stream_utils::tests::MockStreamReader::new()),
+            stream_writer: Box::new(stream_writer),
+            event_channel,
+            closed: false
+        };
+
+        let result = conn.write(buffer);
+
+        if let Ok(()) = result {
+            panic!("Unexpected successful result");
+        }
+
+        match conn.event_channel.1.try_recv() {
+            Ok(event) => {
+                if let ConnectionEvent::Closing = event {} else {
+                    panic!("Unexpected conn event recvd: evt={:?}", event)
+                }
+            },
+            Err(err) => {
+                panic!("Unexpected conn event channel result: err={:?}", &err);
+            }
+        }
+    }
 }
