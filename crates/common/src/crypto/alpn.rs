@@ -41,3 +41,42 @@ impl Protocol {
         }
     }
 }
+
+/// Unit tests
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+
+    #[test]
+    fn protocol_parse_when_valid_control_plane() {
+
+        let protocol = Protocol::parse(PROTOCOL_CONTROL_PLANE);
+
+        assert!(protocol.is_some());
+        assert_eq!(protocol.unwrap(), Protocol::ControlPlane);
+    }
+
+    #[test]
+    fn protocol_parse_when_valid_service() {
+
+        let protocol = Protocol::parse(&format!("{}{}", PROTOCOL_SERVICE, 200));
+
+        assert!(protocol.is_some());
+        assert_eq!(protocol.unwrap(), Protocol::Service(200));
+    }
+
+    #[test]
+    fn protocol_parse_when_invalid_service() {
+
+        let protocol = Protocol::parse(&format!("{}{}", PROTOCOL_SERVICE, "NaN"));
+
+        assert!(protocol.is_none());
+    }
+
+    #[test]
+    fn protocol_create_service_protocol() {
+
+        assert_eq!(Protocol::create_service_protocol(200), format!("{}{}", PROTOCOL_SERVICE, 200));
+    }
+}

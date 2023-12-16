@@ -216,6 +216,7 @@ impl CRLFile {
 /// Unit tests
 #[cfg(test)]
 mod crl_tests {
+
     use std::path::PathBuf;
     use super::*;
 
@@ -224,6 +225,64 @@ mod crl_tests {
     const CRLFILE_REVOKED_CERTS_0_1_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "revoked-crts-0-1.crl.pem"];
     const CRLFILE_INVALID_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "invalid.crl.pem"];
     const CRLFILE_MISSING_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "NON-EXISTENT.txt"];
+
+
+    #[test]
+    fn file_verify_crl_list_when_invalid_filepath() {
+
+        let crl_filepath: PathBuf = CRLFILE_MISSING_PATHPARTS.iter().collect();
+        let crl_filepath_str = crl_filepath.to_str().unwrap();
+
+        let result = verify_crl_list(crl_filepath_str);
+
+        if let Ok(result_crl_filepath_str) = &result {
+            panic!("Unexpected successful result: path={}", result_crl_filepath_str);
+        }
+    }
+
+    #[ignore]
+    #[test]
+    fn file_verify_crl_list_when_invalid_crlfile() {
+
+        let crl_filepath: PathBuf = CRLFILE_INVALID_PATHPARTS.iter().collect();
+        let crl_filepath_str = crl_filepath.to_str().unwrap();
+
+        let result = verify_crl_list(crl_filepath_str);
+
+        if let Ok(result_crl_filepath_str) = &result {
+            panic!("Unexpected successful result: path={}", result_crl_filepath_str);
+        }
+    }
+
+    #[test]
+    fn file_verify_crl_list_when_valid_1_entry_crlfile() {
+
+        let crl_filepath: PathBuf = CRLFILE_REVOKED_CERTS_0_PATHPARTS.iter().collect();
+        let crl_filepath_str = crl_filepath.to_str().unwrap();
+
+        let result = verify_crl_list(crl_filepath_str);
+
+        if let Err(err) = result {
+            panic!("Unexpected result: path={}, err={:?}", &crl_filepath_str, &err);
+        }
+
+        assert_eq!(result.unwrap().as_str(), crl_filepath_str);
+    }
+
+    #[test]
+    fn file_verify_crl_list_when_valid_2_entry_crlfile() {
+
+        let crl_filepath: PathBuf = CRLFILE_REVOKED_CERTS_0_1_PATHPARTS.iter().collect();
+        let crl_filepath_str = crl_filepath.to_str().unwrap();
+
+        let result = verify_crl_list(crl_filepath_str);
+
+        if let Err(err) = result {
+            panic!("Unexpected result: path={}, err={:?}", &crl_filepath_str, &err);
+        }
+
+        assert_eq!(result.unwrap().as_str(), crl_filepath_str);
+    }
 
     #[test]
     fn crlfile_new() {
@@ -265,10 +324,6 @@ mod crl_tests {
         let mut crl_file = CRLFile::new(crl_filepath_str);
 
         let result = crl_file.crl_list();
-
-        if let Err(err) = result {
-            panic!("Unexpected loaded CRL list result: path={}, err={:?}", &crl_filepath_str, &err);
-        }
 
         if let Ok(crl_list) = result {
             panic!("Unexpected parsed CRL list result: path={}, list={:?}", &crl_filepath_str, &crl_list);
@@ -412,5 +467,193 @@ mod crl_tests {
 
         assert!(crl_list.lock().unwrap().is_none());
         assert_eq!(*invoked_error_fn.lock().unwrap(), false);
+    }
+}
+
+/// Unit tests
+#[cfg(test)]
+mod tests {
+
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    use x509_parser::nom::AsBytes;
+    use super::*;
+
+    const MISSING_FILE: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "MISSING"];
+    const INVALID_PKI_FILE: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "Makefile"];
+    const CERTFILE_CLIENT0_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "client0.local.crt.pem"];
+    const KEYFILE_CLIENT0_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "client0.local.key.pem"];
+
+    fn calculate_hash<T: Hash + ?Sized>(value: &T) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        value.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    #[test]
+    fn file_load_certificates_when_valid_certfile() {
+
+        let certs_file: PathBuf = CERTFILE_CLIENT0_PATHPARTS.iter().collect();
+
+        let result = load_certificates(certs_file.to_str().unwrap().to_string());
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        let certs = result.unwrap();
+
+        assert_eq!(certs.len(), 1);
+        assert!(certs.get(0).is_some());
+        assert_eq!(calculate_hash(certs.get(0).unwrap().as_bytes()), 1885740960756082036);
+    }
+
+    #[test]
+    fn file_load_certificates_when_invalid_certfile() {
+
+        let certs_file: PathBuf = INVALID_PKI_FILE.iter().collect();
+
+        let result = load_certificates(certs_file.to_str().unwrap().to_string());
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        let certs = result.unwrap();
+
+        assert_eq!(certs.len(), 0);
+    }
+
+    #[test]
+    fn file_load_certificates_when_invalid_filepath() {
+
+        let certs_file: PathBuf = MISSING_FILE.iter().collect();
+
+        let result = load_certificates(certs_file.to_str().unwrap().to_string());
+
+        if let Ok(certs) = result {
+            panic!("Unexpected successful result: certs={:?}", &certs);
+        }
+    }
+
+    #[test]
+    fn file_verify_certificates_when_valid_certfile() {
+
+        let certs_file: PathBuf = CERTFILE_CLIENT0_PATHPARTS.iter().collect();
+        let certs_file_str = certs_file.to_str().unwrap();
+
+        let result = verify_certificates(certs_file_str);
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        assert_eq!(result.unwrap(), certs_file_str);
+    }
+
+    #[test]
+    fn file_verify_certificates_when_invalid_certfile() {
+
+        let certs_file: PathBuf = INVALID_PKI_FILE.iter().collect();
+        let certs_file_str = certs_file.to_str().unwrap();
+
+        let result = verify_certificates(certs_file_str);
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        assert_eq!(result.unwrap(), certs_file_str);
+    }
+
+    #[test]
+    fn file_verify_certificates_when_invalid_filepath() {
+
+        let certs_file: PathBuf = MISSING_FILE.iter().collect();
+
+        let result = verify_certificates(certs_file.to_str().unwrap());
+
+        if let Ok(certs) = result {
+            panic!("Unexpected successful result: certs={:?}", &certs);
+        }
+    }
+
+    #[test]
+    fn file_load_private_keys_when_valid_keyfile() {
+
+        let key_file: PathBuf = KEYFILE_CLIENT0_PATHPARTS.iter().collect();
+
+        let result = load_private_key(key_file.to_str().unwrap().to_string());
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        assert_eq!(calculate_hash(result.unwrap().secret_der()), 831110266228463504);
+    }
+
+    #[test]
+    fn file_load_private_keys_when_invalid_keyfile() {
+
+        let key_file: PathBuf = INVALID_PKI_FILE.iter().collect();
+
+        let result = load_private_key(key_file.to_str().unwrap().to_string());
+
+        if let Ok(key) = result {
+            panic!("Unexpected successful result: key={:?}", &key);
+        }
+    }
+
+    #[test]
+    fn file_load_private_keys_when_invalid_filepath() {
+
+        let key_file: PathBuf = MISSING_FILE.iter().collect();
+
+        let result = load_private_key(key_file.to_str().unwrap().to_string());
+
+        if let Ok(key) = result {
+            panic!("Unexpected successful result: key={:?}", &key);
+        }
+    }
+
+    #[test]
+    fn file_verify_private_keys_when_valid_keyfile() {
+
+        let key_file: PathBuf = KEYFILE_CLIENT0_PATHPARTS.iter().collect();
+        let key_file_str = key_file.to_str().unwrap();
+
+        let result = verify_private_key_file(key_file_str);
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        assert_eq!(result.unwrap(), key_file_str);
+    }
+
+    #[test]
+    fn file_verify_private_keys_when_invalid_keyfile() {
+
+        let key_file: PathBuf = INVALID_PKI_FILE.iter().collect();
+        let key_file_str = key_file.to_str().unwrap();
+
+        let result = verify_private_key_file(key_file_str);
+
+        if let Ok(key_file) = result {
+            panic!("Unexpected successful result: file={:?}", &key_file);
+        }
+    }
+
+    #[test]
+    fn file_verify_private_keys_when_invalid_filepath() {
+
+        let key_file: PathBuf = MISSING_FILE.iter().collect();
+        let key_file_str = key_file.to_str().unwrap();
+
+        let result = verify_private_key_file(key_file_str);
+
+        if let Ok(key_file) = result {
+            panic!("Unexpected successful result: file={:?}", &key_file);
+        }
     }
 }

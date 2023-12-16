@@ -357,6 +357,7 @@ impl TryInto<Value> for &Connection {
 /// Unit tests
 #[cfg(test)]
 mod tests {
+
     use serde_json::json;
     use super::*;
 
