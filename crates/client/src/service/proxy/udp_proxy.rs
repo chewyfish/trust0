@@ -16,7 +16,7 @@ use trust0_common::net::tls_client::conn_std::TlsClientConnection;
 use trust0_common::net::udp_server::server_std::Server;
 use trust0_common::proxy::event::ProxyEvent;
 use trust0_common::proxy::executor::{ProxyExecutorEvent, ProxyKey};
-use trust0_common::proxy::proxy::ProxyType;
+use trust0_common::proxy::proxy_base::ProxyType;
 use trust0_common::target;
 use crate::config::AppConfig;
 use crate::service::proxy::proxy::{ClientServiceProxy, ClientServiceProxyVisitor};

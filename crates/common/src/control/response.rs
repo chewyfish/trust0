@@ -44,7 +44,7 @@ impl Response {
     /// Process command response text
     pub fn parse(data: &str) -> Result<Response, AppError> {
 
-        serde_json::from_str(&data).map_err(|err|
+        serde_json::from_str(data).map_err(|err|
             AppError::GenWithMsgAndErr(format!("Failed to parse response JSON: val={}", data), Box::new(err)))
     }
 }
@@ -161,7 +161,7 @@ impl Proxy {
             service: service.clone(),
             gateway_host: gateway_host.clone(),
             gateway_port,
-            client_port: client_port.clone()
+            client_port: *client_port
         }
     }
 
@@ -264,19 +264,18 @@ impl From<&model::service::Service> for Service {
     }
 }
 
-impl Into<model::service::Service> for Service {
-    fn into(self) -> model::service::Service {
+impl From<Service> for model::service::Service {
+    fn from(value: Service) -> Self {
         let mut host = "";
         let mut port = 0;
-        if let Some(address) = &self.address {
+        if let Some(address) = &value.address {
             let addr_parts: Vec<&str> = address.split(':').collect();
             if addr_parts.len() == 2 {
-                host = *addr_parts.get(0).unwrap();
+                host = *addr_parts.first().unwrap();
                 port = (*addr_parts.get(1).unwrap()).parse::<u16>().unwrap_or(0);
             }
         }
-        model::service::Service::new(self.id, &self.name, &self.transport, host, port)
-    }
+        Self::new(value.id, &value.name, &value.transport, host, port)    }
 }
 
 impl TryInto<Value> for Service {

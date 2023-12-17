@@ -13,7 +13,7 @@ use trust0_common::net::tls_server::conn_std::TlsServerConnection;
 use trust0_common::net::tls_server::{conn_std, server_std};
 use trust0_common::proxy::event::ProxyEvent;
 use trust0_common::proxy::executor::ProxyExecutorEvent;
-use trust0_common::proxy::proxy::ProxyType;
+use trust0_common::proxy::proxy_base::ProxyType;
 use crate::client::connection::ClientConnVisitor;
 use crate::config::AppConfig;
 use crate::service::manager::ServiceMgr;

@@ -48,7 +48,7 @@ impl Server {
 
         let server_addr: SocketAddr = self.listen_addr.parse()?;
 
-        let tcp_listener = TcpListener::bind(server_addr.clone()).map_err(|err|
+        let tcp_listener = TcpListener::bind(server_addr).map_err(|err|
             AppError::GenWithMsgAndErr(
                 format!("Error setting up listener: server_addr={:?}", &server_addr),
                 Box::new(err)))?;
@@ -233,8 +233,8 @@ impl Server {
     }
 
     fn assert_listening(&self) -> Result<(), AppError> {
-        if let None = &self.tcp_listener {
-            return Err(AppError::General("Gateway not listening".to_string()).into())
+        if self.tcp_listener.is_none() {
+            return Err(AppError::General("Gateway not listening".to_string()))
         }
         Ok(())
     }

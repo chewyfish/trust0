@@ -31,17 +31,11 @@ pub trait TlsConnection {
 impl TlsConnection for TlsServerConnection {
 
     fn peer_certificates(&self) -> Option<Vec<CertificateDer>> {
-        match self.conn.peer_certificates() {
-            Some(certs) => Some(certs.iter().cloned().collect()),
-            None => None
-        }
+        self.conn.peer_certificates().map(|certs| certs.to_vec())
     }
 
     fn alpn_protocol(&self) -> Option<Vec<u8>> {
-        match self.conn.alpn_protocol() {
-            Some(proto_bytes) => Some(proto_bytes.iter().cloned().collect()),
-            None => None
-        }
+        self.conn.alpn_protocol().map(|proto_bytes| proto_bytes.to_vec())
     }
 }
 
@@ -165,13 +159,13 @@ impl Connection {
                     Err(TryRecvError::Disconnected) => break 'EVENTS
                 }
 
-                let _ = thread::sleep(Duration::from_millis(10));
+                thread::sleep(Duration::from_millis(10));
             }
 
             if self.closed { break; }
 
             // End of poll cycle
-            let _ = thread::sleep(Duration::from_millis(50));
+            thread::sleep(Duration::from_millis(50));
         }
 
         Ok(())
@@ -304,9 +298,9 @@ impl Connection {
 
 unsafe impl Send for Connection {}
 
-impl Into<TlsServerConnection> for Connection {
-    fn into(self) -> TlsServerConnection {
-        self.tls_conn
+impl From<Connection> for TlsServerConnection {
+    fn from(value: Connection) -> Self {
+        value.tls_conn
     }
 }
 
@@ -324,7 +318,7 @@ pub trait ConnectionVisitor : Send {
     }
 
     /// Incoming connection content processing event handler
-    fn on_connection_read(&mut self, _data: &Vec<u8>) -> Result<(), AppError> {
+    fn on_connection_read(&mut self, _data: &[u8]) -> Result<(), AppError> {
         Ok(())
     }
 

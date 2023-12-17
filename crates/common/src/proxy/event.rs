@@ -1,5 +1,5 @@
 use std::net::SocketAddr;
-use crate::proxy::proxy::ProxyType;
+use crate::proxy::proxy_base::ProxyType;
 
 /// Proxy-related events (to be used as channel messages)
 pub enum ProxyEvent {

@@ -128,13 +128,13 @@ impl Connection {
                     Err(TryRecvError::Disconnected) => break 'EVENTS
                 }
 
-                let _ = thread::sleep(Duration::from_millis(10));
+                thread::sleep(Duration::from_millis(10));
             }
 
             if self.closed { break; }
 
             // End of poll cycle
-            let _ = thread::sleep(Duration::from_millis(50));
+            thread::sleep(Duration::from_millis(50));
         }
 
         Ok(())
@@ -267,9 +267,9 @@ impl Connection {
 
 unsafe impl Send for Connection {}
 
-impl Into<TlsClientConnection> for Connection {
-    fn into(self) -> TlsClientConnection {
-        self.tls_conn
+impl From<Connection> for TlsClientConnection {
+    fn from(val: Connection) -> Self {
+        val.tls_conn
     }
 }
 
@@ -285,7 +285,7 @@ pub trait ConnectionVisitor : Send {
     fn set_event_channel_sender(&mut self, _event_channel_sender: Sender<ConnectionEvent>) {}
 
     /// Incoming connection content processing event handler
-    fn on_connection_read(&mut self, _data: &Vec<u8>) -> Result<(), AppError> {
+    fn on_connection_read(&mut self, _data: &[u8]) -> Result<(), AppError> {
         Ok(())
     }
 

@@ -58,7 +58,7 @@ impl conn_std::ConnectionVisitor for ServerConnVisitor {
         self.event_channel_sender = Some(event_channel_sender);
     }
 
-    fn on_connection_read(&mut self, data: &Vec<u8>) -> Result<(), AppError> {
+    fn on_connection_read(&mut self, data: &[u8]) -> Result<(), AppError> {
 
         let text_data = String::from_utf8(data.to_vec()).map_err(|err|
             AppError::GenWithMsgAndErr("Error converting gateway response data as UTF8".to_string(), Box::new(err)))?;
@@ -159,7 +159,7 @@ mod tests {
             console_shell_output: Arc::new(Mutex::new(ShellOutputWriter::new(Some(Box::new(output_writer)))))
         };
 
-        match server_conn_visitor.on_connection_read(&response_str.as_bytes().to_vec()) {
+        match server_conn_visitor.on_connection_read(&response_str.as_bytes()) {
             Ok(()) => {}
             Err(err) => panic!("Unexpected result: err={:?}", &err)
         }

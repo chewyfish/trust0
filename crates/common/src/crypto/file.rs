@@ -25,8 +25,8 @@ pub fn verify_certificates(filepath: &str) -> Result<String, AppError> {
 /// Load certificates from the given PEM file
 pub fn load_certificates(filepath: String) -> Result<Vec<CertificateDer<'static>>, AppError> {
 
-    match fs::File::open(filepath.clone()).or_else(
-        |err| Err(AppError::GenWithMsgAndErr(format!("failed to open certificates file: file={}", &filepath), Box::new(err)))) {
+    match fs::File::open(filepath.clone()).map_err(
+        |err| AppError::GenWithMsgAndErr(format!("failed to open certificates file: file={}", &filepath), Box::new(err))) {
 
         Ok(cert_file) => {
             let mut reader = BufReader::new(cert_file);
@@ -37,7 +37,7 @@ pub fn load_certificates(filepath: String) -> Result<Vec<CertificateDer<'static>
                 Err(err) => Err(AppError::GenWithMsgAndErr(format!("Failed parsing certificates: file={}", &filepath), Box::new(err)))
             }
         }
-        Err(err) => Err(err.into())
+        Err(err) => Err(err)
     }
 }
 
@@ -52,14 +52,14 @@ pub fn verify_private_key_file(filepath: &str) -> Result<String, AppError> {
 /// Load the (PKCS8) key from the given PEM file
 pub fn load_private_key(filepath: String) -> Result<PrivateKeyDer<'static>, AppError> {
 
-    match fs::File::open(filepath.clone()).or_else(
-        |err| Err(AppError::IoWithMsg(format!("failed to open private key file: file={}", &filepath), err))) {
+    match fs::File::open(filepath.clone()).map_err(
+        |err| AppError::IoWithMsg(format!("failed to open private key file: file={}", &filepath), err)) {
 
         Ok(key_file) => {
             let mut reader = BufReader::new(key_file);
             let mut keys: Vec<Result<PrivatePkcs8KeyDer<'static>, io::Error>> = rustls_pemfile::pkcs8_private_keys(&mut reader).collect();
 
-            return match keys.len() {
+            match keys.len() {
                 0 => Err(AppError::General(format!("No PKCS8-encoded private key: file={}", &filepath))),
                 1 => {
                     match keys.remove(0) {
@@ -86,8 +86,8 @@ pub fn verify_crl_list(filepath: &str) -> Result<String, AppError> {
 /// Load the certificate revocation list (CRL) entries from the given file
 pub fn load_crl_list(filepath: &str) -> Result<Vec<u8>, AppError> {
 
-    match fs::File::open(filepath).or_else(
-        |err| Err(AppError::IoWithMsg(format!("failed to open CRL file: file={}", filepath), err))) {
+    match fs::File::open(filepath).map_err(
+        |err| AppError::IoWithMsg(format!("failed to open CRL file: file={}", filepath), err)) {
         Ok(mut crl_file) => {
             let mut crl = Vec::new();
             if let Err(crl_err) = crl_file.read_to_end(&mut crl) {

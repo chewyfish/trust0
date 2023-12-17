@@ -173,7 +173,7 @@ impl conn_std::ConnectionVisitor for ClientConnVisitor {
         Ok(())
     }
 
-    fn on_connection_read(&mut self, data: &Vec<u8>) -> Result<(), AppError> {
+    fn on_connection_read(&mut self, data: &[u8]) -> Result<(), AppError> {
 
         match self.server_mode {
 

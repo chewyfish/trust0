@@ -77,7 +77,7 @@ pub fn read_mio_udp_socket(udp_socket: &mio::net::UdpSocket) -> Result<(std::net
 /// Write UDP socket content
 pub fn write_mio_udp_socket(udp_socket: &mio::net::UdpSocket, buffer: &[u8]) -> Result<(), AppError> {
 
-    match udp_socket.send(&buffer) {
+    match udp_socket.send(buffer) {
 
         Ok(_) => Ok(()),
 

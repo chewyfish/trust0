@@ -54,7 +54,7 @@ impl Server {
     /// Bind/listen on port
     pub fn bind_listener(&mut self) -> Result<(), AppError> {
 
-        let server_socket = UdpSocket::bind(self.server_addr.clone()).map_err(|err|
+        let server_socket = UdpSocket::bind(self.server_addr).map_err(|err|
             AppError::GenWithMsgAndErr(
                 format!("Error binding UDP socket: server_addr={:?}", &self.server_addr),
                 Box::new(err)))?;
@@ -129,7 +129,7 @@ impl Server {
         }
 
         // Setup MIO poller
-        let mut server_socket = mio::net::UdpSocket::from_std(stream_utils::clone_std_udp_socket(&self.server_socket.as_ref().unwrap())?);
+        let mut server_socket = mio::net::UdpSocket::from_std(stream_utils::clone_std_udp_socket(self.server_socket.as_ref().unwrap())?);
 
         // Setup MIO poller registry
         let mut poll: mio::Poll;
@@ -218,8 +218,8 @@ impl Server {
     }
 
     fn assert_listening(&self) -> Result<(), AppError> {
-        if let None = &self.server_socket {
-            return Err(AppError::General("Gateway not listening".to_string()).into())
+        if self.server_socket.is_none() {
+            return Err(AppError::General("Gateway not listening".to_string()))
         }
         Ok(())
     }

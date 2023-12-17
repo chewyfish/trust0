@@ -8,15 +8,12 @@ pub struct User {
     pub status: Status
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all(serialize = "snake_case", deserialize = "camelCase"))]
 pub enum Status {
+    #[default]
     Active,
     Inactive
-}
-
-impl Default for Status {
-    fn default() -> Self { Status::Active }
 }
 
 impl User {
