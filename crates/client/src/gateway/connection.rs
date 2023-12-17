@@ -64,7 +64,7 @@ impl conn_std::ConnectionVisitor for ServerConnVisitor {
             AppError::GenWithMsgAndErr("Error converting gateway response data as UTF8".to_string(), Box::new(err)))?;
 
         for line in text_data.lines() {
-            let _ = self.request_processor.process_response(&self.service_mgr, &line)?;
+            let _ = self.request_processor.process_response(&self.service_mgr, line)?;
         }
 
         self.console_shell_output.lock().unwrap().write_shell_prompt(false)
@@ -73,7 +73,7 @@ impl conn_std::ConnectionVisitor for ServerConnVisitor {
     fn on_polling_cycle(&mut self) -> Result<(), AppError> {
 
         let line = self.stdin_connector.as_mut().unwrap().next_line()?;
-        if line == None { return Ok(()); }
+        if line.is_none() { return Ok(()); }
         let line = line.unwrap();
 
         // validate command
@@ -86,7 +86,7 @@ impl conn_std::ConnectionVisitor for ServerConnVisitor {
                 return Ok(());
             }
             Err(err) => {
-                self.console_shell_output.lock().unwrap().write_all(format!("{}\n", err.to_string()).as_bytes()).map_err(|err|
+                self.console_shell_output.lock().unwrap().write_all(format!("{}\n", err).as_bytes()).map_err(|err|
                     AppError::GenWithMsgAndErr("Error writing invalid command response to STDOUT".to_string(), Box::new(err)))?;
                 self.console_shell_output.lock().unwrap().write_shell_prompt(false)?;
                 return Ok(());

@@ -14,10 +14,10 @@ use trust0_common::proxy::event::ProxyEvent;
 use trust0_common::proxy::executor::ProxyExecutorEvent;
 use trust0_common::target;
 use crate::config::AppConfig;
-use crate::service::proxy::proxy::ClientServiceProxyVisitor;
+use crate::service::proxy::proxy_base::ClientServiceProxyVisitor;
 use crate::service::proxy::tcp_proxy::TcpClientProxyServerVisitor;
 use crate::service::proxy::udp_proxy::{UdpClientProxy, UdpClientProxyServerVisitor};
-use super::proxy::proxy::ClientServiceProxy;
+use super::proxy::proxy_base::ClientServiceProxy;
 use super::proxy::tcp_proxy::TcpClientProxy;
 
 /// Simple tuple to hold proxy address information for connected session
@@ -263,7 +263,7 @@ pub mod tests {
     use std::str::FromStr;
     use mockall::{mock, predicate};
     use crate::config;
-    use crate::service::proxy::proxy::tests::MockCliSvcProxyVisitor;
+    use crate::service::proxy::proxy_base::tests::MockCliSvcProxyVisitor;
     use super::*;
 
     // mocks

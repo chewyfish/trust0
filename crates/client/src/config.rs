@@ -108,7 +108,7 @@ impl AppConfig {
                 cipher_suites,
                 ..rustls::crypto::ring::default_provider()
             }.into())
-            .with_protocol_versions(&*config_args.protocol_version.unwrap_or(rustls::ALL_VERSIONS.to_vec()))
+            .with_protocol_versions(&config_args.protocol_version.unwrap_or(rustls::ALL_VERSIONS.to_vec()))
             .expect("Inconsistent cipher-suite/versions selected")
             .with_root_certificates(ca_root_store)
             .with_client_auth_cert(auth_certs, auth_key)

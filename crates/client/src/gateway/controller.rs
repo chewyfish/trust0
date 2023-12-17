@@ -88,7 +88,7 @@ impl RequestProcessor for ControlPlane {
             _ => result = Ok(processed_request.unwrap().clone())
         }
 
-        return result;
+        result
     }
 
     /// Process gateway response data
@@ -96,17 +96,17 @@ impl RequestProcessor for ControlPlane {
                         -> Result<response::Response, AppError> {
 
         // Process response based on request context
-        let mut gateway_response = response::Response::parse(&response_line)?;
+        let mut gateway_response = response::Response::parse(response_line)?;
 
         if gateway_response.code == response::CODE_OK {
-            match &gateway_response.request.borrow() {
-                &request::Request::Proxies => {
+            match gateway_response.request.borrow() {
+                request::Request::Proxies => {
                     self.process_response_proxies(service_mgr, &mut gateway_response)?;
                 }
-                &request::Request::Start { service_name: _, local_port: _ } => {
+                request::Request::Start { service_name: _, local_port: _ } => {
                     self.process_response_start(service_mgr, &mut gateway_response)?;
                 }
-                &request::Request::Quit => {
+                request::Request::Quit => {
                     self.process_response_quit(service_mgr)?;
                 }
                 _ => {}
@@ -118,7 +118,7 @@ impl RequestProcessor for ControlPlane {
                                           serde_json::to_string_pretty(&gateway_response).map_err(|err|
                                               AppError::GenWithMsgAndErr("Error serializing response".to_ascii_lowercase(), Box::new(err)))?);
 
-        self.console_shell_output.lock().unwrap().write_all(&repl_shell_response.as_bytes()).map_err(|err|
+        self.console_shell_output.lock().unwrap().write_all(repl_shell_response.as_bytes()).map_err(|err|
             AppError::GenWithMsgAndErr("Error writing response to STDOUT".to_string(), Box::new(err)))?;
 
         Ok(gateway_response)
