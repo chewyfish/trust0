@@ -14,10 +14,10 @@ use trust0_common::proxy::event::ProxyEvent;
 use trust0_common::proxy::executor::ProxyExecutorEvent;
 use trust0_common::target;
 use crate::config::AppConfig;
-use crate::service::proxy::proxy::GatewayServiceProxyVisitor;
+use crate::service::proxy::proxy_base::GatewayServiceProxyVisitor;
 use crate::service::proxy::tcp_proxy::TcpGatewayProxyServerVisitor;
 use crate::service::proxy::udp_proxy::{UdpGatewayProxy, UdpGatewayProxyServerVisitor};
-use super::proxy::proxy::GatewayServiceProxy;
+use super::proxy::proxy_base::GatewayServiceProxy;
 use super::proxy::tcp_proxy::TcpGatewayProxy;
 
 const DEFAULT_SERVICE_PORT_START: u16 = 8200;
@@ -133,7 +133,7 @@ impl ServiceMgr for GatewayServiceMgr {
     }
 
     fn get_service_proxies(&self) -> Vec<Arc<Mutex<dyn GatewayServiceProxyVisitor>>> {
-        self.service_proxy_visitors.values().map(|proxy_visitor| proxy_visitor.clone()).collect()
+        self.service_proxy_visitors.values().cloned().collect()
     }
     fn get_service_proxy(&self, service_id: u64) -> Option<&Arc<Mutex<dyn GatewayServiceProxyVisitor>>> {
         self.service_proxy_visitors.get(&service_id)
@@ -234,8 +234,8 @@ impl ServiceMgr for GatewayServiceMgr {
         self.service_proxies.insert(service.service_id, service_proxy);
         self.service_proxy_visitors.insert(service.service_id, service_proxy_visitor);
 
-        if service_proxy_thread.is_some() {
-            self.service_proxy_threads.insert(service.service_id, service_proxy_thread.unwrap());
+        if let Some(thread) = service_proxy_thread {
+            self.service_proxy_threads.insert(service.service_id, thread);
         }
 
         Ok((self.app_config.gateway_service_host.clone(), service_port))
@@ -244,7 +244,7 @@ impl ServiceMgr for GatewayServiceMgr {
         match self.service_proxy_visitors.get(&service_id) {
             Some(proxy_visitor) => {
                 let proxy_visitor = proxy_visitor.lock().unwrap();
-                proxy_visitor.get_proxy_addrs_for_user(user_id).len() > 0
+                ! proxy_visitor.get_proxy_addrs_for_user(user_id).is_empty()
             }
 
             None => false
@@ -275,9 +275,9 @@ impl ServiceMgr for GatewayServiceMgr {
 
     fn on_closed_proxy(&mut self, proxy_key: &str) {
 
-        let service_id = self.get_service_id_by_proxy_key(&proxy_key).unwrap_or(u64::MAX);
+        let service_id = self.get_service_id_by_proxy_key(proxy_key).unwrap_or(u64::MAX);
         if let Some(proxy_visitor) = self.get_service_proxy(service_id) {
-            proxy_visitor.lock().unwrap().remove_proxy_for_key(&proxy_key);
+            proxy_visitor.lock().unwrap().remove_proxy_for_key(proxy_key);
         }
     }
 }
@@ -291,7 +291,7 @@ pub mod tests {
     use crate::repository::access_repo::tests::MockAccessRepo;
     use crate::repository::service_repo::tests::MockServiceRepo;
     use crate::repository::user_repo::tests::MockUserRepo;
-    use crate::service::proxy::proxy::tests::MockGwSvcProxyVisitor;
+    use crate::service::proxy::proxy_base::tests::MockGwSvcProxyVisitor;
     use super::*;
 
     // mocks

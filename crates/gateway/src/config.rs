@@ -82,6 +82,7 @@ pub enum DataSource {
 
 impl DataSource {
 
+    #[allow(clippy::type_complexity)]
     /// Return tuple of repository factory closures (respectively for access, service and user repositories)
     pub fn repository_factories(&self) -> (
         Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
@@ -350,6 +351,7 @@ impl AppConfig {
         })
     }
 
+    #[allow(clippy::type_complexity)]
     /// Instantiate main repositories based on datasource config. Returns tuple of access, service and user repositories.
     fn create_datasource_repositories(datasource: &DataSource,
                                       repo_factories: &(

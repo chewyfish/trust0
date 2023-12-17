@@ -55,12 +55,10 @@ impl Device {
             .map_err(|err| AppError::GenWithMsgAndErr("Failed to parse subject alternative name".to_string(), Box::new(err)))? {
 
             cert_alt_subj = cert_alt_subj_ext.value.general_names.iter()
-                .map(|gn| match gn {
+                .filter_map(|gn| match gn {
                     GeneralName::URI(val) => Some(("URI".to_string(), val.to_string())),
                     _ => None
                 })
-                .filter(|v| v.is_some())
-                .map(|v| v.unwrap())
                 .group::<HashMap<_, Vec<_>>>();
 
             if let Some(uri_value) = cert_alt_subj.get("URI") {
@@ -92,13 +90,13 @@ impl Device {
     }
 
     /// Retrieve the end-entity (aka device) certificate, must be the first one.
-    fn device_cert<'a>(cert_chain: &'a Vec<CertificateDer<'a>>) -> Result<X509Certificate<'a>, AppError> {
+    fn device_cert<'a>(cert_chain: &'a [CertificateDer<'a>]) -> Result<X509Certificate<'a>, AppError> {
 
         match cert_chain.get(0) {
             Some(cert) => Ok(parse_x509_certificate(cert.as_bytes())
                 .map_err(|err| AppError::GenWithMsgAndErr("Failed to parse client certificate".to_string(), Box::new(err)))?
                 .1),
-            None => Err(AppError::General("Empty client certificate chain (1)".to_string()).into())
+            None => Err(AppError::General("Empty client certificate chain (1)".to_string()))
         }
     }
 }

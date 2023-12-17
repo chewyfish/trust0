@@ -12,7 +12,7 @@ use crate::client::connection::ClientConnVisitor;
 use crate::client::controller::ControlPlaneServerVisitor;
 use crate::config::{self, AppConfig};
 use crate::service::manager::ServiceMgr;
-use crate::service::proxy::proxy::GatewayServiceProxyVisitor;
+use crate::service::proxy::proxy_base::GatewayServiceProxyVisitor;
 
 /// The Trust0 Gateway TLS Server
 pub struct Gateway {
@@ -31,7 +31,7 @@ impl Gateway {
 
         Self {
             _app_config: Arc::clone(&app_config),
-            _server_mode: app_config.server_mode.clone(),
+            _server_mode: app_config.server_mode,
             tls_server: server_std::Server::new(
                 visitor.clone(),
                 app_config.server_port
