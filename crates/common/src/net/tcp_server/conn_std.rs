@@ -131,13 +131,13 @@ impl Connection {
                     Err(TryRecvError::Disconnected) => break 'EVENTS
                 }
 
-                let _ = thread::sleep(Duration::from_millis(10));
+                thread::sleep(Duration::from_millis(10));
             }
 
             if self.closed { break; }
 
             // End of poll cycle
-            let _ = thread::sleep(Duration::from_millis(50));
+            thread::sleep(Duration::from_millis(50));
         }
 
         Ok(())
@@ -270,9 +270,9 @@ impl Connection {
 
 unsafe impl Send for Connection {}
 
-impl Into<TcpStream> for Connection {
-    fn into(self) -> TcpStream {
-        self.tcp_stream.unwrap()
+impl From<Connection> for TcpStream {
+    fn from(value: Connection) -> Self {
+        value.tcp_stream.unwrap()
     }
 }
 
@@ -290,7 +290,7 @@ pub trait ConnectionVisitor : Send {
     }
 
     /// Incoming connection content processing event handler
-    fn on_connection_read(&mut self, _data: &Vec<u8>) -> Result<(), AppError> {
+    fn on_connection_read(&mut self, _data: &[u8]) -> Result<(), AppError> {
         Ok(())
     }
 
@@ -323,7 +323,7 @@ pub mod tests {
         impl ConnectionVisitor for ConnVisit {
             fn on_connected(&mut self) -> Result<(), AppError>;
             fn set_event_channel_sender(&mut self, event_channel_sender: Sender<ConnectionEvent>) -> Result<(), AppError>;
-            fn on_connection_read(&mut self, data: &Vec<u8>) -> Result<(), AppError>;
+            fn on_connection_read(&mut self, data: &[u8]) -> Result<(), AppError>;
             fn on_polling_cycle(&mut self) -> Result<(), AppError>;
             fn on_shutdown(&mut self) -> Result<(), AppError>;
             fn send_error_response(&mut self, err: &AppError);

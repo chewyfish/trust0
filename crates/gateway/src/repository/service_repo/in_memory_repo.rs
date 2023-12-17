@@ -53,7 +53,7 @@ impl ServiceRepository for InMemServiceRepo {
 
     fn get(&self, service_id: u64) -> Result<Option<Service>, AppError> {
         let data = self.access_data_for_read()?;
-        Ok(data.get(&service_id).map(|service| service.clone()))
+        Ok(data.get(&service_id).cloned())
     }
 
     fn get_all(&self) -> Result<Vec<Service>, AppError> {

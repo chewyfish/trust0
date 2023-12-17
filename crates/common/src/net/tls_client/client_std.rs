@@ -58,7 +58,7 @@ impl Client {
         let mut tls_cli_conn = rustls::ClientConnection::new(self.tls_client_config.clone(), server_host.clone()).map_err(|err|
             AppError::GenWithMsgAndErr(format!("Error setting up TLS client connection: server={:?}", &server_host), Box::new(err)))?;
 
-        let mut tcp_stream = TcpStream::connect(&server_addr).map_err(|err|
+        let mut tcp_stream = TcpStream::connect(server_addr).map_err(|err|
             AppError::GenWithMsgAndErr(format!("Error establishing TCP connection: addr={:?}", &server_addr), Box::new(err)))?;
 
         let _ = tls_cli_conn.complete_io(&mut tcp_stream).map_err(|err|
@@ -88,8 +88,8 @@ impl Client {
     }
 
     fn assert_connected(&self) -> Result<(), AppError> {
-        if let None = &self.connection {
-            return Err(AppError::General("Client not connected".to_string()).into())
+        if self.connection.is_none() {
+            return Err(AppError::General("Client not connected".to_string()))
         }
         Ok(())
     }
@@ -97,9 +97,9 @@ impl Client {
 
 unsafe impl Send for Client {}
 
-impl Into<TlsClientConnection> for Client {
-    fn into(self) -> TlsClientConnection {
-        self.connection.unwrap().into()
+impl From<Client> for TlsClientConnection {
+    fn from(value: Client) -> Self {
+        value.connection.unwrap().into()
     }
 }
 

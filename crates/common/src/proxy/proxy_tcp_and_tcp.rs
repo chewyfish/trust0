@@ -10,7 +10,7 @@ use crate::logging::{error, info, warn};
 use crate::net::stream_utils;
 use crate::net::stream_utils::StreamReaderWriter;
 use crate::proxy::event::ProxyEvent;
-use crate::proxy::proxy::ProxyStream;
+use crate::proxy::proxy_base::ProxyStream;
 use crate::target;
 
 const STREAM1_TOKEN: mio::Token = mio::Token(0);

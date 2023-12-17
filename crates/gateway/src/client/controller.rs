@@ -113,12 +113,10 @@ impl ControlPlane {
                         }})
                     .collect();
 
-                Some(response::Connection::new(
+                response::Connection::new(
                             &service_proxy.get_service().name,
-                            binds))
+                            binds).try_into()
             })
-            .filter_map(|connection| connection)
-            .map(|connection| connection.try_into())
             .collect::<Result<Vec<Value>, AppError>>()?;
 
         Self::prepare_response(
@@ -140,7 +138,7 @@ impl ControlPlane {
         let service_proxies = service_mgr.lock().unwrap().get_service_proxies();
 
         let proxies: Vec<Value> = service_proxies.iter()
-            .map(|service_proxy| {
+            .filter_map(|service_proxy| {
 
                 let service_proxy = service_proxy.lock().unwrap();
                 let service = service_proxy.get_service();
@@ -154,7 +152,6 @@ impl ControlPlane {
                     None
                 }
             })
-            .filter_map(|proxy| proxy)
             .collect::<Result<Vec<Value>, AppError>>()?;
 
         Self::prepare_response(
@@ -172,8 +169,7 @@ impl ControlPlane {
         let mask_addrs  = self.app_config.mask_addresses;
 
         let user_services: Vec<Value> = self.access_repo.lock().unwrap().get_all_for_user(self.user.user_id)?.iter()
-            .map(|access| self.services_by_id.get(&access.service_id))
-            .flatten()
+            .filter_map(|access| self.services_by_id.get(&access.service_id))
             .map(|service| {
                 let service = Self::prepare_response_service(service, mask_addrs);
                 service.try_into()
@@ -285,6 +281,7 @@ impl ControlPlane {
             AppError::GenWithMsgAndErr("Error serializing response".to_string(), Box::new(err)))
     }
 
+    #[allow(clippy::complexity)]
     /// Setup services maps
     fn setup_services_maps(service_repo: &Arc<Mutex<dyn ServiceRepository>>)
         -> Result<(HashMap<u64, model::service::Service>, HashMap<String, model::service::Service>), AppError> {
@@ -314,7 +311,7 @@ impl RequestProcessor for ControlPlane {
             },
             Ok(request::Request::Connections) => {
                 client_request = request::Request::Connections;
-                client_response = self.process_cmd_connections(&service_mgr);
+                client_response = self.process_cmd_connections(service_mgr);
             },
             Ok(request::Request::Ping) => {
                 client_request = request::Request::Ping;
@@ -322,7 +319,7 @@ impl RequestProcessor for ControlPlane {
             },
             Ok(request::Request::Proxies) => {
                 client_request = request::Request::Proxies;
-                client_response = self.process_cmd_proxies(&service_mgr);
+                client_response = self.process_cmd_proxies(service_mgr);
             },
             Ok(request::Request::Services) => {
                 client_request = request::Request::Services;
@@ -330,11 +327,11 @@ impl RequestProcessor for ControlPlane {
             },
             Ok(request::Request::Start { service_name, local_port }) => {
                 client_request = request::Request::Start { service_name: service_name.clone(), local_port };
-                client_response = self.process_cmd_start(&service_mgr, &service_name, local_port);
+                client_response = self.process_cmd_start(service_mgr, &service_name, local_port);
             },
             Ok(request::Request::Stop { service_name }) => {
                 client_request = request::Request::Stop { service_name: service_name.clone() };
-                client_response = self.process_cmd_stop(&service_mgr, &service_name);
+                client_response = self.process_cmd_stop(service_mgr, &service_name);
             },
             Ok(request::Request::Quit) => {
                 client_request = request::Request::Quit;
@@ -351,22 +348,21 @@ impl RequestProcessor for ControlPlane {
         }
 
         let client_response_str = client_response.unwrap_or_else(|err| {
-            let err_response: Result<String, AppError>;
-            match err.get_code() {
+            let err_response: Result<String, AppError> = match err.get_code() {
                 Some(code) if code == response::CODE_BAD_REQUEST => {
-                    err_response = Self::prepare_response(code, &None, &client_request, &None);
+                    Self::prepare_response(code, &None, &client_request, &None)
                 }
                 Some(code) => {
-                    err_response = Self::prepare_response(code, &Some(err.to_string()), &client_request, &None);
+                    Self::prepare_response(code, &Some(err.to_string()), &client_request, &None)
                 }
                 _ => {
-                    err_response = Self::prepare_response(
+                    Self::prepare_response(
                         response::CODE_INTERNAL_SERVER_ERROR,
                         &Some(err.to_string()),
                         &client_request,
-                        &None);
+                        &None)
                 }
-            }
+            };
             err_response.unwrap_or_else(|err| format!("Error serializing error response: err={:?}", err))
         });
 
@@ -381,7 +377,7 @@ impl RequestProcessor for ControlPlane {
             }
         }
 
-        return Ok(client_request);
+        Ok(client_request)
     }
 }
 
@@ -453,7 +449,7 @@ mod tests {
     use crate::repository::service_repo::tests::MockServiceRepo;
     use crate::repository::user_repo::tests::MockUserRepo;
     use crate::service::manager::tests::MockSvcMgr;
-    use crate::service::proxy::proxy::tests::MockGwSvcProxyVisitor;
+    use crate::service::proxy::proxy_base::tests::MockGwSvcProxyVisitor;
     use super::*;
 
     const CERTFILE_CLIENT_UID100_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "client-uid100.crt.pem"];

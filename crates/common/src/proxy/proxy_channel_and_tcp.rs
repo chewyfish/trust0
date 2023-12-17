@@ -10,7 +10,7 @@ use crate::logging::{error, info, warn};
 use crate::net::stream_utils;
 use crate::net::stream_utils::StreamReaderWriter;
 use crate::proxy::event::ProxyEvent;
-use crate::proxy::proxy::ProxyStream;
+use crate::proxy::proxy_base::ProxyStream;
 use crate::target;
 
 const TCP_STREAM_TOKEN: mio::Token = mio::Token(0);
@@ -88,16 +88,14 @@ impl ChannelAndTcpStreamProxy {
                 while !*closing.lock().unwrap() {
 
                     // Get next received socket channel event
-                    let socket_event: ProxyEvent;
-
-                    match socket_channel_receiver.lock().unwrap().recv() {
-                        Ok(_socket_event) => socket_event = _socket_event,
+                    let socket_event: ProxyEvent = match socket_channel_receiver.lock().unwrap().recv() {
+                        Ok(_socket_event) => _socket_event,
                         Err(err) => {
                             proxy_error = Some(AppError::GenWithMsgAndErr("Error receiving proxy socket channel event".to_string(), Box::new(err)));
                             *closing.lock().unwrap() = true;
                             continue 'EVENTS;
                         }
-                    }
+                    };
 
                     // Process event
                     if let ProxyEvent::Message(_, _, data) = socket_event {
@@ -132,7 +130,7 @@ impl ChannelAndTcpStreamProxy {
 
             let closing = self.closing.clone();
             let closed = self.closed.clone();
-            let socket_channel_addr = self.socket_channel_addr.clone();
+            let socket_channel_addr = self.socket_channel_addr;
             let server_socket_channel_sender = self.server_socket_channel_sender.clone();
             let mut tcp_stream = mio::net::TcpStream::from_std(stream_utils::clone_std_tcp_stream(&self.tcp_stream)?);
             let mut tcp_stream_reader_writer = self.tcp_stream_reader_writer.clone();
@@ -176,39 +174,35 @@ impl ChannelAndTcpStreamProxy {
                     }
 
                     for event in events.iter() {
-                        match event.token() {
-                            TCP_STREAM_TOKEN => {
-                                match stream_utils::read_tcp_stream(&mut tcp_stream_reader_writer) {
-                                    Ok(data) => {
-                                        if data.len() > 0 {
-                                            match server_socket_channel_sender.send(ProxyEvent::Message(proxy_key.clone(), socket_channel_addr.clone(), data)) {
-                                                Ok(()) => {}
-                                                Err(err) => {
-                                                    proxy_error = Some(AppError::GenWithMsgAndErr(
-                                                        format!("Error sending socket message to channel: proxy_stream={}", &proxy_key),
-                                                        Box::new(err)));
-                                                    *closing.lock().unwrap() = true;
-                                                    continue 'EVENTS;
-                                                }
+                        if event.token() == TCP_STREAM_TOKEN {
+                            match stream_utils::read_tcp_stream(&mut tcp_stream_reader_writer) {
+                                Ok(data) => {
+                                    if ! data.is_empty() {
+                                        match server_socket_channel_sender.send(ProxyEvent::Message(proxy_key.clone(), socket_channel_addr, data)) {
+                                            Ok(()) => {}
+                                            Err(err) => {
+                                                proxy_error = Some(AppError::GenWithMsgAndErr(
+                                                    format!("Error sending socket message to channel: proxy_stream={}", &proxy_key),
+                                                    Box::new(err)));
+                                                *closing.lock().unwrap() = true;
+                                                continue 'EVENTS;
                                             }
                                         }
                                     }
-                                    Err(err) => {
-                                        proxy_error = Some(err);
-                                        *closing.lock().unwrap() = true;
-                                        continue 'EVENTS;
-                                    }
                                 }
-
-                                if let Err(err) = poll.registry().reregister(&mut tcp_stream,
-                                                                             TCP_STREAM_TOKEN, mio::Interest::READABLE) {
-                                    proxy_error = Some(AppError::GenWithMsgAndErr("Error registering tcp stream in MIO registry".to_string(), Box::new(err)));
+                                Err(err) => {
+                                    proxy_error = Some(err);
                                     *closing.lock().unwrap() = true;
                                     continue 'EVENTS;
                                 }
                             }
 
-                            _ => {}
+                            if let Err(err) = poll.registry().reregister(&mut tcp_stream,
+                                                                         TCP_STREAM_TOKEN, mio::Interest::READABLE) {
+                                proxy_error = Some(AppError::GenWithMsgAndErr("Error registering tcp stream in MIO registry".to_string(), Box::new(err)));
+                                *closing.lock().unwrap() = true;
+                                continue 'EVENTS;
+                            }
                         }
                     }
                 }

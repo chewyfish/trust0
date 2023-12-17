@@ -58,13 +58,13 @@ impl conn_std::ConnectionVisitor for ServerConnVisitor {
         self.event_channel_sender = Some(event_channel_sender);
     }
 
-    fn on_connection_read(&mut self, data: &Vec<u8>) -> Result<(), AppError> {
+    fn on_connection_read(&mut self, data: &[u8]) -> Result<(), AppError> {
 
         let text_data = String::from_utf8(data.to_vec()).map_err(|err|
             AppError::GenWithMsgAndErr("Error converting gateway response data as UTF8".to_string(), Box::new(err)))?;
 
         for line in text_data.lines() {
-            let _ = self.request_processor.process_response(&self.service_mgr, &line)?;
+            let _ = self.request_processor.process_response(&self.service_mgr, line)?;
         }
 
         self.console_shell_output.lock().unwrap().write_shell_prompt(false)
@@ -73,7 +73,7 @@ impl conn_std::ConnectionVisitor for ServerConnVisitor {
     fn on_polling_cycle(&mut self) -> Result<(), AppError> {
 
         let line = self.stdin_connector.as_mut().unwrap().next_line()?;
-        if line == None { return Ok(()); }
+        if line.is_none() { return Ok(()); }
         let line = line.unwrap();
 
         // validate command
@@ -86,7 +86,7 @@ impl conn_std::ConnectionVisitor for ServerConnVisitor {
                 return Ok(());
             }
             Err(err) => {
-                self.console_shell_output.lock().unwrap().write_all(format!("{}\n", err.to_string()).as_bytes()).map_err(|err|
+                self.console_shell_output.lock().unwrap().write_all(format!("{}\n", err).as_bytes()).map_err(|err|
                     AppError::GenWithMsgAndErr("Error writing invalid command response to STDOUT".to_string(), Box::new(err)))?;
                 self.console_shell_output.lock().unwrap().write_shell_prompt(false)?;
                 return Ok(());
@@ -159,7 +159,7 @@ mod tests {
             console_shell_output: Arc::new(Mutex::new(ShellOutputWriter::new(Some(Box::new(output_writer)))))
         };
 
-        match server_conn_visitor.on_connection_read(&response_str.as_bytes().to_vec()) {
+        match server_conn_visitor.on_connection_read(&response_str.as_bytes()) {
             Ok(()) => {}
             Err(err) => panic!("Unexpected result: err={:?}", &err)
         }

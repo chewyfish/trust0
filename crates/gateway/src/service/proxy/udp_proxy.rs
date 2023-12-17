@@ -13,11 +13,11 @@ use trust0_common::net::tls_server::conn_std::TlsServerConnection;
 use trust0_common::net::tls_server::{conn_std, server_std};
 use trust0_common::proxy::event::ProxyEvent;
 use trust0_common::proxy::executor::ProxyExecutorEvent;
-use trust0_common::proxy::proxy::ProxyType;
+use trust0_common::proxy::proxy_base::ProxyType;
 use crate::client::connection::ClientConnVisitor;
 use crate::config::AppConfig;
 use crate::service::manager::ServiceMgr;
-use crate::service::proxy::proxy::{GatewayServiceProxy, GatewayServiceProxyVisitor, ProxyAddrs};
+use crate::service::proxy::proxy_base::{GatewayServiceProxy, GatewayServiceProxyVisitor, ProxyAddrs};
 
 /// Gateway service proxy (TCP trust0 gateway <-> UDP service)
 pub struct UdpGatewayProxy {
@@ -75,6 +75,7 @@ pub struct UdpGatewayProxyServerVisitor {
 
 impl UdpGatewayProxyServerVisitor {
 
+    #[allow(clippy::too_many_arguments)]
     /// UdpGatewayProxyServerVisitor constructor
     pub fn new(app_config: Arc<AppConfig>,
                service_mgr: Arc<Mutex<dyn ServiceMgr>>,
@@ -159,7 +160,7 @@ impl server_std::ServerVisitor for UdpGatewayProxyServerVisitor {
 
             match udp_socket.connect(remote_addr) {
                 Ok(()) => {
-                    service_addr = Some(remote_addr.clone());
+                    service_addr = Some(remote_addr);
                     udp_socket.set_nonblocking(true).map_err(|err|
                         AppError::GenWithMsgAndErr(format!("Failed making socket non-blocking: socket={:?}", &udp_socket), Box::new(err)))?;
                     break;
@@ -180,7 +181,7 @@ impl server_std::ServerVisitor for UdpGatewayProxyServerVisitor {
         // Send request to proxy executor to startup new proxy
 
         let tls_conn = connection.get_tls_conn_as_ref();
-        let proxy_addrs = UdpGatewayProxyServerVisitor::create_proxy_addrs(&tls_conn);
+        let proxy_addrs = UdpGatewayProxyServerVisitor::create_proxy_addrs(tls_conn);
         let proxy_key = ProxyEvent::key_value(&ProxyType::TcpAndUdp, udp_socket.local_addr().ok(), Some(service_addr));
         let client_stream = tls_conn.sock.try_clone().map_err(|err|
             AppError::GenWithMsgAndErr(format!("Unable to clone client service proxy stream: client_stream={:?}", &tls_conn.sock), Box::new(err)))?;
@@ -234,9 +235,8 @@ impl GatewayServiceProxyVisitor for UdpGatewayProxyServerVisitor {
     fn get_proxy_addrs_for_user(&self, user_id: u64) -> Vec<ProxyAddrs> {
 
         self.users_by_proxy_addrs.iter()
-            .map(|(proxy_addrs, uid)| {
+            .filter_map(|(proxy_addrs, uid)| {
                 if user_id == *uid { Some(proxy_addrs.clone()) } else { None }})
-            .flatten()
             .collect()
     }
 
@@ -278,17 +278,16 @@ impl GatewayServiceProxyVisitor for UdpGatewayProxyServerVisitor {
             Some(proxy_addrs) => {
                 let proxy_addrs = proxy_addrs.clone();
                 let user_id = self.users_by_proxy_addrs.get(&proxy_addrs).unwrap();
-                match self.proxy_keys_by_user.get_mut(user_id) {
-                    Some(proxy_keys) => proxy_keys.retain(|key| !key.eq(proxy_key)),
-                    None => {}
+                if let Some(proxy_keys) = self.proxy_keys_by_user.get_mut(user_id) {
+                    proxy_keys.retain(|key| !key.eq(proxy_key))
                 }
                 self.proxy_addrs_by_proxy_key.remove(proxy_key);
                 self.users_by_proxy_addrs.remove(&proxy_addrs);
                 self.services_by_proxy_key.lock().unwrap().remove(&proxy_key.to_string());
-                return true;
+                true
             }
 
-            None => return false
+            None => false
         }
     }
 }

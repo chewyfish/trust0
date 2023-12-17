@@ -10,7 +10,7 @@ use crate::logging::{error, warn};
 use crate::net::stream_utils::StreamReaderWriter;
 use crate::proxy::proxy_tcp_and_tcp::TcpAndTcpStreamProxy;
 use crate::proxy::event::ProxyEvent;
-use crate::proxy::proxy::ProxyStream;
+use crate::proxy::proxy_base::ProxyStream;
 use crate::proxy::proxy_channel_and_tcp::ChannelAndTcpStreamProxy;
 use crate::proxy::proxy_tcp_and_udp::TcpAndUdpStreamProxy;
 use crate::target;
@@ -223,5 +223,11 @@ impl ProxyExecutor {
                 }
             }
         }
+    }
+}
+
+impl Default for ProxyExecutor {
+    fn default() -> Self {
+        Self::new()
     }
 }

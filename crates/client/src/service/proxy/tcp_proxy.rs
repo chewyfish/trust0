@@ -13,9 +13,9 @@ use trust0_common::net::tls_client::client_std;
 use trust0_common::net::tls_client::conn_std::TlsClientConnection;
 use trust0_common::proxy::event::ProxyEvent;
 use trust0_common::proxy::executor::{ProxyExecutorEvent, ProxyKey};
-use trust0_common::proxy::proxy::ProxyType;
+use trust0_common::proxy::proxy_base::ProxyType;
 use crate::config::AppConfig;
-use crate::service::proxy::proxy::{ClientServiceProxy, ClientServiceProxyVisitor};
+use crate::service::proxy::proxy_base::{ClientServiceProxy, ClientServiceProxyVisitor};
 use crate::service::proxy::proxy_client::ClientVisitor;
 
 /// Client service proxy (TCP service client <-> TCP trust0 client)
@@ -69,6 +69,7 @@ pub struct TcpClientProxyServerVisitor {
 
 impl TcpClientProxyServerVisitor {
 
+    #![allow(clippy::too_many_arguments)]
     /// TcpClientProxyServerVisitor constructor
     pub fn new(app_config: Arc<AppConfig>,
                service: Service,

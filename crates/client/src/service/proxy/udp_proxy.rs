@@ -16,10 +16,10 @@ use trust0_common::net::tls_client::conn_std::TlsClientConnection;
 use trust0_common::net::udp_server::server_std::Server;
 use trust0_common::proxy::event::ProxyEvent;
 use trust0_common::proxy::executor::{ProxyExecutorEvent, ProxyKey};
-use trust0_common::proxy::proxy::ProxyType;
+use trust0_common::proxy::proxy_base::ProxyType;
 use trust0_common::target;
 use crate::config::AppConfig;
-use crate::service::proxy::proxy::{ClientServiceProxy, ClientServiceProxyVisitor};
+use crate::service::proxy::proxy_base::{ClientServiceProxy, ClientServiceProxyVisitor};
 use crate::service::proxy::proxy_client::ClientVisitor;
 
 /// Client service proxy (UDP service client <-> TCP trust0 client)
@@ -104,6 +104,7 @@ pub struct UdpClientProxyServerVisitor {
 
 impl UdpClientProxyServerVisitor {
 
+    #![allow(clippy::too_many_arguments)]
     /// UdpClientProxyServerVisitor constructor
     pub fn new(app_config: Arc<AppConfig>,
                service: Service,
@@ -138,7 +139,7 @@ impl server_std::ServerVisitor for UdpClientProxyServerVisitor {
     fn on_message_received(&mut self, local_addr: &SocketAddr, peer_addr: &SocketAddr, data: Vec<u8>)
         -> Result<(), AppError> {
 
-        let proxy_key = ProxyEvent::key_value(&ProxyType::ChannelAndTcp, Some(peer_addr.clone()), Some(local_addr.clone()));
+        let proxy_key = ProxyEvent::key_value(&ProxyType::ChannelAndTcp, Some(*peer_addr), Some(*local_addr));
 
         // New client socket, setup service proxy
         // - - - - - - - - - - - - - - - - - - -
@@ -165,7 +166,7 @@ impl server_std::ServerVisitor for UdpClientProxyServerVisitor {
             let open_proxy_request = ProxyExecutorEvent::OpenChannelAndTcpProxy(
                 proxy_key.clone(),
                 (
-                    peer_addr.clone(),
+                    *peer_addr,
                     socket_channel_receiver,
                     self.server_socket_channel_sender.clone(),
                     gateway_stream,
@@ -187,7 +188,7 @@ impl server_std::ServerVisitor for UdpClientProxyServerVisitor {
         // Send service-bound message to appropriate channel
         // - - - - - - - - - - - - - - - - - - - - - - - - -
         if let Some(socket_channel_sender) = self.socket_channel_senders_by_proxy_key.get(&proxy_key) {
-            return match socket_channel_sender.send(ProxyEvent::Message(proxy_key.clone(), peer_addr.clone(), data)) {
+            return match socket_channel_sender.send(ProxyEvent::Message(proxy_key.clone(), *peer_addr, data)) {
                 Ok(()) => Ok(()),
                 Err(err) => Err(AppError::GenWithMsgAndErr(
                     format!("Error while sending message to socket channel: proxy_stream={}", &proxy_key),

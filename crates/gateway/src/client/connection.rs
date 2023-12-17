@@ -39,7 +39,7 @@ impl ClientConnVisitor {
         app_config: Arc<AppConfig>,
         service_mgr: Arc<Mutex<dyn ServiceMgr>>) -> Self {
 
-        let server_mode = app_config.server_mode.clone();
+        let server_mode = app_config.server_mode;
         let access_repo = Arc::clone(&app_config.access_repo);
         let service_repo = Arc::clone(&app_config.service_repo);
         let user_repo = Arc::clone(&app_config.user_repo);
@@ -144,7 +144,7 @@ impl ClientConnVisitor {
             Some(protocol_name_bytes) => {
                 let protocol_name = String::from_utf8_lossy(protocol_name_bytes);
                 match alpn::Protocol::parse(protocol_name.as_ref()) {
-                    None => return Err(AppError::GenWithCodeAndMsg(
+                    None => Err(AppError::GenWithCodeAndMsg(
                         config::RESPCODE_0424_INVALID_ALPN_PROTOCOL,
                         format!("Invalid ALPN protocol: proto={}", protocol_name.as_ref()))),
                     Some(alpn_protocol) => Ok(alpn_protocol)
@@ -173,7 +173,7 @@ impl conn_std::ConnectionVisitor for ClientConnVisitor {
         Ok(())
     }
 
-    fn on_connection_read(&mut self, data: &Vec<u8>) -> Result<(), AppError> {
+    fn on_connection_read(&mut self, data: &[u8]) -> Result<(), AppError> {
 
         match self.server_mode {
 

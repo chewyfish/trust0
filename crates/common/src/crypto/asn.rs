@@ -1,9 +1,11 @@
+use std::fmt::Write;
+
 use oid_registry::{format_oid, Oid as DerOid, OidRegistry};
 use x509_parser::der_parser::asn1_rs::{Any, Tag};
 
 use crate::error::AppError;
 
-pub fn stringify_asn_value<'a>(asn_attr: &Any<'a>) -> Result<String, AppError> {
+pub fn stringify_asn_value(asn_attr: &Any<'_>) -> Result<String, AppError> {
 
     let convert_err_fn = |err|
         Err(AppError::GenWithMsgAndErr("Failed ASN value conversion".to_string(), Box::new(err)));
@@ -28,15 +30,20 @@ pub fn stringify_asn_value<'a>(asn_attr: &Any<'a>) -> Result<String, AppError> {
             asn_attr.clone().integer().map(|v| v.as_i64()).map(|v| v.unwrap().to_string()).or_else(convert_err_fn)
         }
         Tag::OctetString => {
-            asn_attr.clone().octetstring()
-                .map(|v| v.as_ref().iter().map(|x| format!("{:02x}", x)).collect::<String>())
-                .or_else(convert_err_fn)
+            match asn_attr.clone().octetstring() {
+                Ok(octet_str) => Ok(octet_str.as_ref().iter()
+                    .fold(String::new(), |mut output, byteval| {
+                        let _ = write!(output, "{byteval:02X}");
+                        output
+                    })),
+                Err(err) => convert_err_fn(err)
+            }
         }
         Tag::Oid => {
             asn_attr.clone().oid()
                 .map(|v| {
                     let der_oid = DerOid::new(v.as_bytes().into());
-                    return format_oid(&der_oid, &OidRegistry::default());
+                    format_oid(&der_oid, &OidRegistry::default())
                 })
                 .or_else(convert_err_fn)
         }
@@ -47,7 +54,7 @@ pub fn stringify_asn_value<'a>(asn_attr: &Any<'a>) -> Result<String, AppError> {
             asn_attr.clone().oid()
                 .map(|v| {
                     let der_oid = DerOid::new(v.as_bytes().into());
-                    return format_oid(&der_oid, &OidRegistry::default());
+                    format_oid(&der_oid, &OidRegistry::default())
                 })
                 .or_else(convert_err_fn)
         }

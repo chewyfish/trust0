@@ -19,11 +19,13 @@ impl InMemAccessRepo {
         }
     }
 
+    #[allow(clippy::type_complexity)]
     fn access_data_for_write(&self) -> Result<RwLockWriteGuard<HashMap<(u64,u64), ServiceAccess>>, AppError> {
         self.accesses.write().map_err(|err|
             AppError::General(format!("Failed to access write lock to DB: err={}", err)))
     }
 
+    #[allow(clippy::type_complexity)]
     fn access_data_for_read(&self) -> Result<RwLockReadGuard<HashMap<(u64,u64), ServiceAccess>>, AppError> {
         self.accesses.read().map_err(|err|
             AppError::General(format!("Failed to access read lock to DB: err={}", err)))
@@ -53,7 +55,7 @@ impl AccessRepository for InMemAccessRepo {
 
     fn get(&self, user_id: u64, service_id: u64) -> Result<Option<ServiceAccess>, AppError> {
         let data = self.access_data_for_read()?;
-        Ok(data.get(&(user_id, service_id)).map(|access| access.clone()))
+        Ok(data.get(&(user_id, service_id)).cloned())
     }
 
     fn get_all_for_user(&self, user_id: u64) -> Result<Vec<ServiceAccess>, AppError> {

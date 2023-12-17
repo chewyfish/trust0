@@ -1,3 +1,5 @@
+use std::fmt;
+
 use regex::Regex;
 
 pub const PROTOCOL_CONTROL_PLANE: &str = "T0CP";
@@ -32,13 +34,15 @@ impl Protocol {
     pub fn create_service_protocol(service_id: u64) -> String {
         format!("{}{}", PROTOCOL_SERVICE, service_id)
     }
+}
 
-    /// Stringify protocol
-    pub fn to_string(&self) -> String {
-        match self {
+impl fmt::Display for  Protocol {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        let protocol_str = match self {
             Protocol::ControlPlane => PROTOCOL_CONTROL_PLANE.to_string(),
             Protocol::Service(service_id) => Self::create_service_protocol(*service_id)
-        }
+        };
+        write!(fmt, "{}", &protocol_str)
     }
 }
 

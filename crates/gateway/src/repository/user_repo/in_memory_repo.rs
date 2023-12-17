@@ -53,7 +53,7 @@ impl UserRepository for InMemUserRepo {
 
     fn get(&self, user_id: u64) -> Result<Option<User>, AppError> {
         let data = self.access_data_for_read()?;
-        Ok(data.get(&user_id).map(|user| user.clone()))
+        Ok(data.get(&user_id).cloned())
     }
 
     fn get_all(&self) -> Result<Vec<User>, AppError> {

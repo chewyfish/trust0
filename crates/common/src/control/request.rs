@@ -111,7 +111,7 @@ impl RequestProcessor {
 
         Ok(Request::Start {
             service_name: service_name.unwrap().clone(),
-            local_port: local_port.unwrap().clone() })
+            local_port: *local_port.unwrap() })
     }
 
     /// Parse "stop" request
@@ -186,6 +186,12 @@ impl RequestProcessor {
                     .about("Quit the control plane (and corresponding service connections)")
                     .help_template(COMMAND_TEMPLATE),
             )
+    }
+}
+
+impl Default for RequestProcessor {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
