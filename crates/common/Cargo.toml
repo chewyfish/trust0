@@ -1,13 +1,14 @@
 [package]
 name = "trust0-common"
 version = "0.2.0-alpha"
+description = "Trust0 SDP Shared Codebase"
+repository = "https://github.com/chewyfish/trust0"
 edition = "2021"
 license = "Apache-2.0"
 publish = false
 
 [dependencies]
 anyhow = "1.0.75"
-async-trait = "0.1.73"
 clap = "4.4.5"
 futures-util = "0.3.29"
 log = { version = "0.4.4" }
@@ -26,7 +27,6 @@ serde = { version = "*", features = ["derive"] }
 serde_derive = "*"
 serde_json = { version = "*", features = ["arbitrary_precision"] }
 shlex = "1.2.0"
-tokio = { version = "*", features = ["full"] }
 webpki-roots = "0.26.0"
 x509-parser = "0.15.1"
 

@@ -5,6 +5,6 @@ pub mod error;
 pub mod file;
 pub mod logging;
 pub mod model;
-pub mod proxy;
 pub mod net;
+pub mod proxy;
 pub mod testutils;

@@ -1,17 +1,17 @@
 use std::sync::Mutex;
 
-use log::{debug, error, info, Level, LevelFilter, log_enabled, warn};
-use log4rs::Handle;
+use log::{debug, error, info, log_enabled, warn, Level, LevelFilter};
 use log4rs::append::console::ConsoleAppender;
-use log4rs::encode::json::JsonEncoder;
 use log4rs::config::{Appender, Root};
+use log4rs::encode::json::JsonEncoder;
+use log4rs::Handle;
 use once_cell::sync::Lazy;
 
 /// Logger singleton
 pub static LOG: Lazy<Mutex<Logger>> = Lazy::new(|| {
     Mutex::new(Logger {
         handle: None,
-        visitor: None
+        visitor: None,
     })
 });
 
@@ -38,9 +38,9 @@ pub fn error(target: &str, msg: &str) {
 /// Simplify code location macro usage for log target
 #[macro_export]
 macro_rules! target {
-    () => ({
+    () => {{
         format!("{}:{}:{}", file!(), line!(), column!())
-    });
+    }};
 }
 
 pub use target;
@@ -50,26 +50,22 @@ pub enum LogLevel {
     DEBUG,
     INFO,
     WARN,
-    ERROR
+    ERROR,
 }
 
 pub struct Logger {
     handle: Option<Handle>,
-    visitor: Option<fn (LogLevel, &str)>
+    visitor: Option<fn(LogLevel, &str)>,
 }
 
 impl Logger {
-
     /// configure logger
-    pub fn configure(&mut self,
-                     level_filter: LogLevel,
-                     visitor: Option<fn(LogLevel, &str)>) {
-
+    pub fn configure(&mut self, level_filter: LogLevel, visitor: Option<fn(LogLevel, &str)>) {
         let level_filter = match level_filter {
             LogLevel::DEBUG => LevelFilter::Debug,
             LogLevel::INFO => LevelFilter::Info,
             LogLevel::WARN => LevelFilter::Warn,
-            LogLevel::ERROR => LevelFilter::Error
+            LogLevel::ERROR => LevelFilter::Error,
         };
 
         let stdout: ConsoleAppender = ConsoleAppender::builder()

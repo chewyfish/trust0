@@ -5,7 +5,6 @@ use trust0_common::model::access::ServiceAccess;
 
 /// Access data repository trait
 pub trait AccessRepository: Sync + Send {
-
     /// Process given datasource connect string (meaning depends on implementation)
     fn connect_to_datasource(&mut self, connect_spec: &str) -> Result<(), AppError>;
 
@@ -34,8 +33,8 @@ pub trait AccessRepository: Sync + Send {
 #[cfg(test)]
 pub mod tests {
 
-    use mockall::mock;
     use super::*;
+    use mockall::mock;
 
     // mocks
     // =====
