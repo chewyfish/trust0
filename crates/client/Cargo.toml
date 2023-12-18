@@ -8,7 +8,6 @@ publish = false
 
 [dependencies]
 anyhow = "1.0.75"
-async-trait = "0.1.73"
 clap = { version = "4.4.5", features = [ "derive", "env" ] }
 ctrlc = "3.4.1"
 derive_builder = "0.12.0"
@@ -25,8 +24,6 @@ sct = "0.7"
 serde = { version = "*", features = ["derive"] }
 serde_derive = "*"
 serde_json = { version = "*", features = ["arbitrary_precision"] }
-tokio = { version = "*", features = ["full"] }
-tokio-test = "*"
 trust0-common = { version = "0.2.0-alpha", path = "../common" }
 webpki-roots = "0.25"
 

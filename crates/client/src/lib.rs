@@ -8,10 +8,9 @@ pub mod api {
 
     use std::sync;
     use std::sync::{Arc, Mutex};
+    use std::thread;
 
     use anyhow::Result;
-    use async_trait::async_trait;
-    use tokio::task::JoinHandle;
 
     use trust0_common::error::AppError;
     use trust0_common::logging::error;
@@ -22,21 +21,20 @@ pub mod api {
     pub use crate::console::write_shell_prompt;
 
     /// Component lifecycle methods
-    #[async_trait]
     pub trait ComponentLifecycle {
 
         /// Component start
-        async fn start(&mut self) -> Result<(), AppError>;
+        fn start(&mut self) -> Result<(), AppError>;
 
         /// Component stop
-        async fn stop(&mut self) -> Result<(), AppError>;
+        fn stop(&mut self) -> Result<(), AppError>;
     }
 
     pub struct MainProcessor {
         _app_config: Arc<AppConfig>,
         service_mgr: Arc<Mutex<dyn service::manager::ServiceMgr>>,
-        _proxy_executor_handle: JoinHandle<Result<(), AppError>>,
-        _proxy_events_processor_handle: JoinHandle<Result<(), AppError>>,
+        _proxy_executor_handle: thread::JoinHandle<Result<(), AppError>>,
+        _proxy_events_processor_handle: thread::JoinHandle<Result<(), AppError>>,
         client: client::Client,
     }
 
@@ -51,7 +49,7 @@ pub mod api {
             let mut proxy_executor = ProxyExecutor::new();
             let proxy_tasks_sender = proxy_executor.clone_proxy_tasks_sender();
 
-            let proxy_executor_handle = tokio::task::spawn_blocking(move || {
+            let proxy_executor_handle = thread::spawn(move || {
                 proxy_executor.poll_new_tasks()
             });
 
@@ -61,7 +59,7 @@ pub mod api {
                 service::manager::ClientServiceMgr::new(app_config.clone(), proxy_tasks_sender, proxy_events_sender)));
 
             let service_mgr_copy = service_mgr.clone();
-            let proxy_events_processor_handle = tokio::task::spawn_blocking(move || {
+            let proxy_events_processor_handle = thread::spawn(move || {
                 service::manager::ClientServiceMgr::poll_proxy_events(service_mgr_copy, proxy_events_receiver)
             });
 
@@ -87,19 +85,18 @@ pub mod api {
         }
     }
 
-    #[async_trait]
     impl ComponentLifecycle for MainProcessor {
 
         /// Component start: start trust client
-        async fn start(&mut self) -> Result<(), AppError> {
+        fn start(&mut self) -> Result<(), AppError> {
 
             self.client.connect()?;
             self.client.poll_connection()?;
-            self.stop().await
+            self.stop()
         }
 
         /// Component stop: stop trust client
-        async fn stop(&mut self) -> Result<(), AppError> {
+        fn stop(&mut self) -> Result<(), AppError> {
 
             self.service_mgr.lock().unwrap().shutdown()
         }

@@ -1,14 +1,14 @@
 use std::{process, thread};
 use std::time::Duration;
+
 use anyhow::Result;
-use futures::executor::block_on;
 
 use trust0_common::error::AppError;
 use trust0_common::logging::{error, LOG, LogLevel};
 use trust0_common::target;
 use trust0_gateway::api::{AppConfig, ComponentLifecycle, MainProcessor};
 
-async fn async_main() -> Result<(), AppError> {
+fn process_runner() -> Result<(), AppError> {
 
     let app_config = AppConfig::new()?;
 
@@ -27,13 +27,12 @@ async fn async_main() -> Result<(), AppError> {
         process::exit(0);
     }).map_err(|err| AppError::GenWithMsgAndErr("Error setting Ctrl-C handler".to_string(), Box::new(err)))?;
 
-    processor.start().await
+    processor.start()
 }
 
-#[tokio::main(flavor="multi_thread")]
-pub async fn main() -> Result<()> {
+pub fn main() -> Result<()> {
 
-    match block_on(async_main()) {
+    match process_runner() {
 
         Ok(()) => {
             process::exit(0);

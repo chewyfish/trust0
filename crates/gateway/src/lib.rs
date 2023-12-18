@@ -9,11 +9,10 @@ pub(crate) mod testutils;
 
 pub mod api {
     use std::sync::{self, Arc, Mutex};
+    use std::thread;
     use std::time::Duration;
 
     use anyhow::Result;
-    use async_trait::async_trait;
-    use tokio::task::JoinHandle;
 
     use super::*;
     use trust0_common::error::AppError;
@@ -22,21 +21,20 @@ pub mod api {
     use crate::service::manager::ServiceMgr;
 
     /// Component lifecycle methods
-    #[async_trait]
     pub trait ComponentLifecycle {
 
         /// Component start
-        async fn start(&mut self) -> Result<(), AppError>;
+        fn start(&mut self) -> Result<(), AppError>;
 
         /// Component stop
-        async fn stop(&mut self) -> Result<(), AppError>;
+        fn stop(&mut self) -> Result<(), AppError>;
     }
 
     pub struct MainProcessor {
         app_config: Arc<AppConfig>,
         service_mgr: Arc<Mutex<dyn ServiceMgr>>,
-        _proxy_executor_handle: JoinHandle<Result<(), AppError>>,
-        _proxy_events_processor_handle: JoinHandle<Result<(), AppError>>,
+        _proxy_executor_handle: thread::JoinHandle<Result<(), AppError>>,
+        _proxy_events_processor_handle: thread::JoinHandle<Result<(), AppError>>,
         gateway: Option<gateway::Gateway>,
         gateway_visitor: Arc<Mutex<gateway::ServerVisitor>>
     }
@@ -52,7 +50,7 @@ pub mod api {
             let mut proxy_executor = ProxyExecutor::new();
             let proxy_tasks_sender = proxy_executor.clone_proxy_tasks_sender();
 
-            let proxy_executor_handle = tokio::task::spawn_blocking(move || {
+            let proxy_executor_handle = thread::spawn(move || {
                 proxy_executor.poll_new_tasks()
             });
 
@@ -62,7 +60,7 @@ pub mod api {
                 service::manager::GatewayServiceMgr::new(app_config.clone(), proxy_tasks_sender, proxy_events_sender)));
 
             let service_mgr_copy = service_mgr.clone();
-            let proxy_events_processor_handle = tokio::task::spawn_blocking(move || {
+            let proxy_events_processor_handle = thread::spawn(move || {
                 service::manager::GatewayServiceMgr::poll_proxy_events(service_mgr_copy, proxy_events_receiver)
             });
 
@@ -84,21 +82,20 @@ pub mod api {
         }
     }
 
-    #[async_trait]
     impl ComponentLifecycle for MainProcessor {
 
         /// Component start: start trust gateway
-        async fn start(&mut self) -> Result<(), AppError> {
+        fn start(&mut self) -> Result<(), AppError> {
 
             let trust_gateway = gateway::Gateway::new(self.app_config.clone(), self.gateway_visitor.clone());
             self.gateway = Some(trust_gateway);
             self.gateway.as_mut().unwrap().bind_listener()?;
             self.gateway.as_mut().unwrap().poll_new_connections()?;
-            self.stop().await
+            self.stop()
         }
 
         /// Component stop: stop trust gateway
-        async fn stop(&mut self) -> Result<(), AppError> {
+        fn stop(&mut self) -> Result<(), AppError> {
 
             // Shutdown gateway listener (may already be shut down)
             self.gateway_visitor.lock().unwrap().set_shutdown_requested(true);
@@ -106,7 +103,7 @@ pub mod api {
             // Shutdown service proxies
             self.service_mgr.lock().unwrap().shutdown_connections(None, None)?;
 
-            tokio::time::sleep(Duration::from_millis(2000)).await;
+            thread::sleep(Duration::from_millis(2000));
 
             Ok(())
         }
