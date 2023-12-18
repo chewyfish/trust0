@@ -5,7 +5,7 @@ use serde_derive::{Deserialize, Serialize};
 pub struct User {
     pub user_id: u64,
     pub name: String,
-    pub status: Status
+    pub status: Status,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -13,21 +13,16 @@ pub struct User {
 pub enum Status {
     #[default]
     Active,
-    Inactive
+    Inactive,
 }
 
 impl User {
-
     /// User constructor
-    pub fn new(
-        user_id: u64,
-        name: &str,
-        status: Status) -> Self {
-
+    pub fn new(user_id: u64, name: &str, status: Status) -> Self {
         Self {
             user_id,
             name: name.to_string(),
-            status
+            status,
         }
     }
 }

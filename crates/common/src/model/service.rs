@@ -4,7 +4,7 @@ use serde_derive::{Deserialize, Serialize};
 pub enum Transport {
     #[default]
     TCP,
-    UDP
+    UDP,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug)]
@@ -14,25 +14,18 @@ pub struct Service {
     pub name: String,
     pub transport: Transport,
     pub host: String,
-    pub port: u16
+    pub port: u16,
 }
 
 impl Service {
-
     /// Service constructor
-    pub fn new(
-        service_id: u64,
-        name: &str,
-        transport: &Transport,
-        host: &str,
-        port: u16) -> Self {
-
+    pub fn new(service_id: u64, name: &str, transport: &Transport, host: &str, port: u16) -> Self {
         Self {
             service_id,
             name: name.to_string(),
             transport: transport.clone(),
             host: host.to_string(),
-            port
+            port,
         }
     }
 }

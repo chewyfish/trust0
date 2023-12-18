@@ -1,5 +1,5 @@
-use clap::Command;
 use clap::error::ErrorKind;
+use clap::Command;
 use log::error;
 
 /// invocation error: print usage and panic

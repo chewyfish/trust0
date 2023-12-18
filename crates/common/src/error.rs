@@ -16,20 +16,18 @@ pub enum AppError {
     IoWithMsg(String, io::Error),
     Tls(rustls::Error),
     WouldBlock,
-    StreamEOF
+    StreamEOF,
 }
 
 impl AppError {
-
     /// Return intrinsic error code (if avail)
     pub fn get_code(&self) -> Option<u16> {
-
         match self {
             AppError::GenWithCode(code) => Some(*code),
             AppError::GenWithCodeAndErr(code, _) => Some(*code),
             AppError::GenWithCodeAndMsg(code, _) => Some(*code),
             AppError::GenWithCodeAndMsgAndErr(code, _, _) => Some(*code),
-            _ => None
+            _ => None,
         }
     }
 }
@@ -40,16 +38,26 @@ impl Display for AppError {
             AppError::AddrParse(ref err) => err.fmt(f),
             AppError::General(ref msg) => msg.fmt(f),
             AppError::GenWithCode(code) => write!(f, "Response: code={}", code),
-            AppError::GenWithCodeAndErr(code, ref err) => write!(f, "Response: code={}, err={:?}", code, err),
-            AppError::GenWithCodeAndMsg(code, ref msg) => write!(f, "Response: code={}, msg={}", code, msg),
-            AppError::GenWithCodeAndMsgAndErr(code, ref msg, ref err) => write!(f, "Response: code={}, msg={}, err={:?}", code, msg, err),
+            AppError::GenWithCodeAndErr(code, ref err) => {
+                write!(f, "Response: code={}, err={:?}", code, err)
+            }
+            AppError::GenWithCodeAndMsg(code, ref msg) => {
+                write!(f, "Response: code={}, msg={}", code, msg)
+            }
+            AppError::GenWithCodeAndMsgAndErr(code, ref msg, ref err) => {
+                write!(f, "Response: code={}, msg={}, err={:?}", code, msg, err)
+            }
             AppError::GenWithErr(ref err) => err.fmt(f),
-            AppError::GenWithMsgAndErr(ref msg, ref err) => write!(f, "Error: msg={}, err={:?}", msg, err),
+            AppError::GenWithMsgAndErr(ref msg, ref err) => {
+                write!(f, "Error: msg={}, err={:?}", msg, err)
+            }
             AppError::Io(ref err) => err.fmt(f),
-            AppError::IoWithMsg(ref msg, ref err) => write!(f, "IO Error: msg={}, err={:?}", msg, err),
+            AppError::IoWithMsg(ref msg, ref err) => {
+                write!(f, "IO Error: msg={}, err={:?}", msg, err)
+            }
             AppError::Tls(ref err) => err.fmt(f),
             AppError::WouldBlock => write!(f, "WouldBlock Error"),
-            AppError::StreamEOF => write!(f, "StreamEOF Error")
+            AppError::StreamEOF => write!(f, "StreamEOF Error"),
         }
     }
 }

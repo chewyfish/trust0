@@ -10,21 +10,23 @@ pub const PROTOCOL_SERVICE_PARSE_REGEX: &str = r"^T0SRV(\d+)$";
 #[derive(Debug, PartialEq)]
 pub enum Protocol {
     ControlPlane,
-    Service(u64)
+    Service(u64),
 }
 
 impl Protocol {
-
     /// Parse ALPN string
     pub fn parse(alpn_str: &str) -> Option<Protocol> {
-
         if alpn_str.eq(PROTOCOL_CONTROL_PLANE) {
-           return Some(Protocol::ControlPlane);
+            return Some(Protocol::ControlPlane);
         }
 
         let service_regex = Regex::new(PROTOCOL_SERVICE_PARSE_REGEX).unwrap();
         if service_regex.is_match(alpn_str) {
-            return Some(Protocol::Service(service_regex.captures(alpn_str).unwrap()[1].parse().unwrap()));
+            return Some(Protocol::Service(
+                service_regex.captures(alpn_str).unwrap()[1]
+                    .parse()
+                    .unwrap(),
+            ));
         }
 
         None
@@ -36,11 +38,11 @@ impl Protocol {
     }
 }
 
-impl fmt::Display for  Protocol {
+impl fmt::Display for Protocol {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         let protocol_str = match self {
             Protocol::ControlPlane => PROTOCOL_CONTROL_PLANE.to_string(),
-            Protocol::Service(service_id) => Self::create_service_protocol(*service_id)
+            Protocol::Service(service_id) => Self::create_service_protocol(*service_id),
         };
         write!(fmt, "{}", &protocol_str)
     }
@@ -54,7 +56,6 @@ mod tests {
 
     #[test]
     fn protocol_parse_when_valid_control_plane() {
-
         let protocol = Protocol::parse(PROTOCOL_CONTROL_PLANE);
 
         assert!(protocol.is_some());
@@ -63,7 +64,6 @@ mod tests {
 
     #[test]
     fn protocol_parse_when_valid_service() {
-
         let protocol = Protocol::parse(&format!("{}{}", PROTOCOL_SERVICE, 200));
 
         assert!(protocol.is_some());
@@ -72,7 +72,6 @@ mod tests {
 
     #[test]
     fn protocol_parse_when_invalid_service() {
-
         let protocol = Protocol::parse(&format!("{}{}", PROTOCOL_SERVICE, "NaN"));
 
         assert!(protocol.is_none());
@@ -80,7 +79,9 @@ mod tests {
 
     #[test]
     fn protocol_create_service_protocol() {
-
-        assert_eq!(Protocol::create_service_protocol(200), format!("{}{}", PROTOCOL_SERVICE, 200));
+        assert_eq!(
+            Protocol::create_service_protocol(200),
+            format!("{}{}", PROTOCOL_SERVICE, 200)
+        );
     }
 }

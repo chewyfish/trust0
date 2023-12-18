@@ -4,11 +4,10 @@ use crate::error::AppError;
 pub enum ProxyType {
     ChannelAndTcp,
     TcpAndTcp,
-    TcpAndUdp
+    TcpAndUdp,
 }
 
 impl ProxyType {
-
     /// Short unique key for proxy type
     pub fn key_value(&self) -> String {
         match self {
@@ -21,7 +20,6 @@ impl ProxyType {
 
 /// Trait implemented by all proxy stream types
 pub trait ProxyStream: Send {
-
     // Disconnect active proxy
     fn disconnect(&mut self) -> Result<(), AppError>;
 }

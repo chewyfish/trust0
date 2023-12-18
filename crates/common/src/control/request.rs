@@ -1,5 +1,5 @@
-use clap::{ArgMatches, Command};
 use clap::error::ErrorKind;
+use clap::{ArgMatches, Command};
 use serde_derive::{Deserialize, Serialize};
 
 use crate::control::response;
@@ -39,41 +39,57 @@ pub enum Request {
     Ping,
     Proxies,
     Services,
-    Start { service_name: String, local_port: u16 },
-    Stop { service_name: String },
-    Quit
+    Start {
+        service_name: String,
+        local_port: u16,
+    },
+    Stop {
+        service_name: String,
+    },
+    Quit,
 }
 
 pub struct RequestProcessor {
-    command_processor: Command
+    command_processor: Command,
 }
 
 impl RequestProcessor {
-
     /// ReplProtocol constructor
     pub fn new() -> Self {
         Self {
-            command_processor: Self::create_command()
+            command_processor: Self::create_command(),
         }
     }
 
     /// Parse request command request text
     pub fn parse(&self, line: &str) -> Result<Request, AppError> {
-
         let line = line.trim();
-        let line_as_args = shlex::split(line).ok_or(
-            AppError::GenWithCodeAndMsg(response::CODE_BAD_REQUEST, format!("Invalid command line: line={}", line)))?;
+        let line_as_args = shlex::split(line).ok_or(AppError::GenWithCodeAndMsg(
+            response::CODE_BAD_REQUEST,
+            format!("Invalid command line: line={}", line),
+        ))?;
 
-        let parsed_command = self.command_processor.clone()
+        let parsed_command = self
+            .command_processor
+            .clone()
             .try_get_matches_from(line_as_args);
 
         if parsed_command.is_err() {
             let parse_error = parsed_command.err().unwrap();
             return match parse_error.kind() {
-                ErrorKind::DisplayHelp => Err(AppError::GenWithCodeAndMsg(response::CODE_OK, parse_error.to_string())),
-                ErrorKind::DisplayVersion => Err(AppError::GenWithCodeAndMsg(response::CODE_OK, parse_error.to_string())),
-                _ => Err(AppError::GenWithCodeAndMsg(response::CODE_BAD_REQUEST, parse_error.to_string()))
-            }
+                ErrorKind::DisplayHelp => Err(AppError::GenWithCodeAndMsg(
+                    response::CODE_OK,
+                    parse_error.to_string(),
+                )),
+                ErrorKind::DisplayVersion => Err(AppError::GenWithCodeAndMsg(
+                    response::CODE_OK,
+                    parse_error.to_string(),
+                )),
+                _ => Err(AppError::GenWithCodeAndMsg(
+                    response::CODE_BAD_REQUEST,
+                    parse_error.to_string(),
+                )),
+            };
         }
 
         match parsed_command.unwrap().subcommand() {
@@ -89,46 +105,58 @@ impl RequestProcessor {
                 if name.is_empty() {
                     Ok(Request::None)
                 } else {
-                    Err(AppError::GenWithCodeAndMsg(response::CODE_BAD_REQUEST, format!("Unknown command: cmd={}", name)))
+                    Err(AppError::GenWithCodeAndMsg(
+                        response::CODE_BAD_REQUEST,
+                        format!("Unknown command: cmd={}", name),
+                    ))
                 }
-            },
+            }
             None => unreachable!("subcommand required"),
         }
     }
 
     /// Parse "start" request
     fn parse_start_request(arg_matches: &ArgMatches) -> Result<Request, AppError> {
-
         let service_name = arg_matches.get_one::<String>("service");
         let local_port = arg_matches.get_one::<u16>("port");
 
         if service_name.is_none() {
-            return Err(AppError::General(format!("Service name is required for the \"{}\" command", PROTOCOL_REQUEST_START)));
+            return Err(AppError::General(format!(
+                "Service name is required for the \"{}\" command",
+                PROTOCOL_REQUEST_START
+            )));
         }
         if local_port.is_none() {
-            return Err(AppError::General(format!("Local port is required for the \"{}\" command", PROTOCOL_REQUEST_START)));
+            return Err(AppError::General(format!(
+                "Local port is required for the \"{}\" command",
+                PROTOCOL_REQUEST_START
+            )));
         }
 
         Ok(Request::Start {
             service_name: service_name.unwrap().clone(),
-            local_port: *local_port.unwrap() })
+            local_port: *local_port.unwrap(),
+        })
     }
 
     /// Parse "stop" request
     fn parse_stop_request(arg_matches: &ArgMatches) -> Result<Request, AppError> {
-
         let service_name = arg_matches.get_one::<String>("service");
 
         if service_name.is_none() {
-            return Err(AppError::General(format!("Service name is required for the \"{}\" command", PROTOCOL_REQUEST_STOP)));
+            return Err(AppError::General(format!(
+                "Service name is required for the \"{}\" command",
+                PROTOCOL_REQUEST_STOP
+            )));
         }
 
-        Ok(Request::Stop { service_name: service_name.unwrap().clone() })
+        Ok(Request::Stop {
+            service_name: service_name.unwrap().clone(),
+        })
     }
 
     /// Create command processor
     fn create_command() -> Command {
-
         Command::new("repl")
             .multicall(true)
             //.disable_colored_help(true)
@@ -203,7 +231,6 @@ mod tests {
 
     #[test]
     fn reqproc_parse_when_invalid_request() {
-
         let request_processor = RequestProcessor::new();
 
         match request_processor.parse("INVALID") {
@@ -217,7 +244,6 @@ mod tests {
 
     #[test]
     fn reqproc_parse_when_help_request() {
-
         let request_processor = RequestProcessor::new();
 
         let result = request_processor.parse(PROTOCOL_REQUEST_HELP);
@@ -238,104 +264,94 @@ mod tests {
 
     #[test]
     fn reqproc_parse_when_connections_request() {
-
         let request_processor = RequestProcessor::new();
 
         let result = request_processor.parse(PROTOCOL_REQUEST_CONNECTIONS);
 
         match result {
-            Ok(request) => {
-                match request {
-                    Request::Connections => {}
-                    _ => panic!("Unexpected successful result: req={:?}", request)
-                }
-            }
-            Err(err) => panic!("Unexpected result: err={:?}", err)
+            Ok(request) => match request {
+                Request::Connections => {}
+                _ => panic!("Unexpected successful result: req={:?}", request),
+            },
+            Err(err) => panic!("Unexpected result: err={:?}", err),
         }
     }
 
     #[test]
     fn reqproc_parse_when_ping_request() {
-
         let request_processor = RequestProcessor::new();
 
         let result = request_processor.parse(PROTOCOL_REQUEST_PING);
 
         match result {
-            Ok(request) => {
-                match request {
-                    Request::Ping => {}
-                    _ => panic!("Unexpected successful result: req={:?}", request)
-                }
-            }
-            Err(err) => panic!("Unexpected result: err={:?}", err)
+            Ok(request) => match request {
+                Request::Ping => {}
+                _ => panic!("Unexpected successful result: req={:?}", request),
+            },
+            Err(err) => panic!("Unexpected result: err={:?}", err),
         }
     }
 
     #[test]
     fn reqproc_parse_when_proxies_request() {
-
         let request_processor = RequestProcessor::new();
 
         let result = request_processor.parse(PROTOCOL_REQUEST_PROXIES);
 
         match result {
-            Ok(request) => {
-                match request {
-                    Request::Proxies => {}
-                    _ => panic!("Unexpected successful result: req={:?}", request)
-                }
-            }
-            Err(err) => panic!("Unexpected result: err={:?}", err)
+            Ok(request) => match request {
+                Request::Proxies => {}
+                _ => panic!("Unexpected successful result: req={:?}", request),
+            },
+            Err(err) => panic!("Unexpected result: err={:?}", err),
         }
     }
 
     #[test]
     fn reqproc_parse_when_services_request() {
-
         let request_processor = RequestProcessor::new();
 
         let result = request_processor.parse(PROTOCOL_REQUEST_SERVICES);
 
         match result {
-            Ok(request) => {
-                match request {
-                    Request::Services => {}
-                    _ => panic!("Unexpected successful result: req={:?}", request)
-                }
-            }
-            Err(err) => panic!("Unexpected result: err={:?}", err)
+            Ok(request) => match request {
+                Request::Services => {}
+                _ => panic!("Unexpected successful result: req={:?}", request),
+            },
+            Err(err) => panic!("Unexpected result: err={:?}", err),
         }
     }
 
     #[test]
     fn reqproc_parse_when_start_request() {
-
         let request_processor = RequestProcessor::new();
 
         let req_service_name = "svc1";
         let req_local_port = 3000;
-        let request_str = format!("{} -s {} -p {}", PROTOCOL_REQUEST_START, req_service_name, req_local_port);
+        let request_str = format!(
+            "{} -s {} -p {}",
+            PROTOCOL_REQUEST_START, req_service_name, req_local_port
+        );
 
         let result = request_processor.parse(&request_str);
 
         match result {
-            Ok(request) => {
-                match request {
-                    Request::Start { service_name, local_port } => {
-                        assert_eq!(service_name, req_service_name);
-                        assert_eq!(local_port, req_local_port);
-                    }
-                    _ => panic!("Unexpected successful result: req={:?}", request)
+            Ok(request) => match request {
+                Request::Start {
+                    service_name,
+                    local_port,
+                } => {
+                    assert_eq!(service_name, req_service_name);
+                    assert_eq!(local_port, req_local_port);
                 }
-            }
-            Err(err) => panic!("Unexpected result: err={:?}", err)
+                _ => panic!("Unexpected successful result: req={:?}", request),
+            },
+            Err(err) => panic!("Unexpected result: err={:?}", err),
         }
     }
 
     #[test]
     fn reqproc_parse_when_stop_request() {
-
         let request_processor = RequestProcessor::new();
 
         let req_service_name = "svc1";
@@ -344,34 +360,28 @@ mod tests {
         let result = request_processor.parse(&request_str);
 
         match result {
-            Ok(request) => {
-                match request {
-                    Request::Stop { service_name } => {
-                        assert_eq!(service_name, req_service_name);
-                    }
-                    _ => panic!("Unexpected successful result: req={:?}", request)
+            Ok(request) => match request {
+                Request::Stop { service_name } => {
+                    assert_eq!(service_name, req_service_name);
                 }
-            }
-            Err(err) => panic!("Unexpected result: err={:?}", err)
+                _ => panic!("Unexpected successful result: req={:?}", request),
+            },
+            Err(err) => panic!("Unexpected result: err={:?}", err),
         }
     }
 
     #[test]
     fn reqproc_parse_when_quit_request() {
-
         let request_processor = RequestProcessor::new();
 
         let result = request_processor.parse(PROTOCOL_REQUEST_QUIT);
 
         match result {
-            Ok(request) => {
-                match request {
-                    Request::Quit => {}
-                    _ => panic!("Unexpected successful result: req={:?}", request)
-                }
-            }
-            Err(err) => panic!("Unexpected result: err={:?}", err)
+            Ok(request) => match request {
+                Request::Quit => {}
+                _ => panic!("Unexpected successful result: req={:?}", request),
+            },
+            Err(err) => panic!("Unexpected result: err={:?}", err),
         }
     }
-
 }

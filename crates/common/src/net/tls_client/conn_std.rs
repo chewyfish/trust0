@@ -1,8 +1,8 @@
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::{io, thread};
 use std::time::Duration;
+use std::{io, thread};
 
 use anyhow::Result;
 use rustls::StreamOwned;
@@ -20,11 +20,10 @@ pub type TlsClientConnection = StreamOwned<rustls::ClientConnection, TcpStream>;
 pub enum ConnectionEvent {
     Closing,
     Closed,
-    Write(Vec<u8>)
+    Write(Vec<u8>),
 }
 
 impl ConnectionEvent {
-
     /// Create multiple producer, single consumer message channel
     pub fn create_channel() -> (Sender<ConnectionEvent>, Receiver<ConnectionEvent>) {
         mpsc::channel()
@@ -38,17 +37,15 @@ pub struct Connection {
     visitor: Box<dyn ConnectionVisitor>,
     tls_conn: TlsClientConnection,
     event_channel: (Sender<ConnectionEvent>, Receiver<ConnectionEvent>),
-    closed: bool
+    closed: bool,
 }
 
 impl Connection {
-
     /// Connection constructor
     pub fn new(
         mut visitor: Box<dyn ConnectionVisitor>,
         tls_conn: TlsClientConnection,
     ) -> Result<Self, AppError> {
-
         let event_channel = ConnectionEvent::create_channel();
         visitor.set_event_channel_sender(event_channel.0.clone());
         visitor.on_connected()?;
@@ -57,7 +54,7 @@ impl Connection {
             visitor,
             tls_conn,
             event_channel,
-            closed: false
+            closed: false,
         })
     }
 
@@ -88,7 +85,6 @@ impl Connection {
 
     /// Poll connection events loop
     pub fn poll_connection(&mut self) -> Result<(), AppError> {
-
         loop {
             // Read connection data (if avail)
             if let Err(err) = self.read() {
@@ -101,10 +97,8 @@ impl Connection {
             }
 
             // Poll connection event
-            'EVENTS:
-            loop {
+            'EVENTS: loop {
                 match self.event_channel.1.try_recv() {
-
                     // Handle write request
                     Ok(ConnectionEvent::Write(data)) => {
                         if let Err(err) = self.write(&data) {
@@ -125,13 +119,15 @@ impl Connection {
                     Err(TryRecvError::Empty) => break,
 
                     // Channel closed
-                    Err(TryRecvError::Disconnected) => break 'EVENTS
+                    Err(TryRecvError::Disconnected) => break 'EVENTS,
                 }
 
                 thread::sleep(Duration::from_millis(10));
             }
 
-            if self.closed { break; }
+            if self.closed {
+                break;
+            }
 
             // End of poll cycle
             thread::sleep(Duration::from_millis(50));
@@ -142,30 +138,35 @@ impl Connection {
 
     /// Read and process connection content
     pub fn read(&mut self) -> Result<Vec<u8>, AppError> {
-
         let mut return_buffer = vec![];
         let mut error: Option<AppError> = None;
 
         // Attempt connection read
         match self.read_tls_conn() {
-
             Ok(buffer) => {
                 if !buffer.is_empty() {
                     match self.visitor.on_connection_read(&buffer) {
                         Ok(()) => {}
-                        Err(err) => error = Some(err)
+                        Err(err) => error = Some(err),
                     }
                     return_buffer = buffer;
                 }
             }
 
-            Err(err) => error = Some(err)
+            Err(err) => error = Some(err),
         }
 
         // Handle connection error
         if error.is_some() {
-            self.event_channel.0.send(ConnectionEvent::Closing).map_err(|err|
-                AppError::GenWithMsgAndErr("Error sending closing event".to_string(), Box::new(err)))?;
+            self.event_channel
+                .0
+                .send(ConnectionEvent::Closing)
+                .map_err(|err| {
+                    AppError::GenWithMsgAndErr(
+                        "Error sending closing event".to_string(),
+                        Box::new(err),
+                    )
+                })?;
             return Err(error.unwrap());
         }
 
@@ -174,19 +175,25 @@ impl Connection {
 
     /// Write content to client connection
     pub fn write(&mut self, buffer: &[u8]) -> Result<(), AppError> {
-
         let mut error: Option<AppError> = None;
 
         // Attempt connection write
         match self.write_tls_conn(buffer) {
             Ok(()) => {}
-            Err(err) => error = Some(err)
+            Err(err) => error = Some(err),
         }
 
         // Handle connection error
         if error.is_some() {
-            self.event_channel.0.send(ConnectionEvent::Closing).map_err(|err|
-                AppError::GenWithMsgAndErr("Error sending closing event".to_string(), Box::new(err)))?;
+            self.event_channel
+                .0
+                .send(ConnectionEvent::Closing)
+                .map_err(|err| {
+                    AppError::GenWithMsgAndErr(
+                        "Error sending closing event".to_string(),
+                        Box::new(err),
+                    )
+                })?;
             return Err(error.unwrap());
         }
 
@@ -195,18 +202,27 @@ impl Connection {
 
     /// Shut down TLS connection
     pub fn shutdown(&mut self) -> Result<(), AppError> {
-
         if self.closed {
-            return Ok(())
+            return Ok(());
         }
 
-        self.tls_conn.sock.shutdown(Shutdown::Both).map_err(|err|
-            AppError::GenWithMsgAndErr("Error shutting down TLS connection".to_string(), Box::new(err)))?;
+        self.tls_conn.sock.shutdown(Shutdown::Both).map_err(|err| {
+            AppError::GenWithMsgAndErr(
+                "Error shutting down TLS connection".to_string(),
+                Box::new(err),
+            )
+        })?;
 
         self.closed = true;
 
-        if let Err(err) = self.event_channel.0.send(ConnectionEvent::Closed).map_err(|err|
-            AppError::GenWithMsgAndErr("Error sending closed event".to_string(), Box::new(err))) {
+        if let Err(err) = self
+            .event_channel
+            .0
+            .send(ConnectionEvent::Closed)
+            .map_err(|err| {
+                AppError::GenWithMsgAndErr("Error sending closed event".to_string(), Box::new(err))
+            })
+        {
             error(&target!(), &format!("{:?}", err));
         }
 
@@ -215,23 +231,33 @@ impl Connection {
 
     /// Read client connection content
     fn read_tls_conn(&mut self) -> Result<Vec<u8>, AppError> {
-
         let mut buffer = Vec::new();
         let mut buff_chunk = [0; READ_BLOCK_SIZE];
         loop {
             let bytes_read = match self.tls_conn.read(&mut buff_chunk) {
-
                 Ok(bytes_read) => bytes_read,
 
                 Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
-                    self.event_channel.0.send(ConnectionEvent::Closing).map_err(|err|
-                        AppError::GenWithMsgAndErr("Error sending closing event".to_string(), Box::new(err)))?;
-                    break
+                    self.event_channel
+                        .0
+                        .send(ConnectionEvent::Closing)
+                        .map_err(|err| {
+                            AppError::GenWithMsgAndErr(
+                                "Error sending closing event".to_string(),
+                                Box::new(err),
+                            )
+                        })?;
+                    break;
                 }
 
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => break,
 
-                Err(err) => return Err(AppError::GenWithMsgAndErr("Error reading from TLS connection".to_string(), Box::new(err)))
+                Err(err) => {
+                    return Err(AppError::GenWithMsgAndErr(
+                        "Error reading from TLS connection".to_string(),
+                        Box::new(err),
+                    ))
+                }
             };
             if bytes_read < READ_BLOCK_SIZE {
                 buffer.append(&mut buff_chunk[..bytes_read].to_vec());
@@ -245,20 +271,37 @@ impl Connection {
 
     /// Write content to client connection
     fn write_tls_conn(&mut self, buffer: &[u8]) -> Result<(), AppError> {
-
         match self.tls_conn.write_all(buffer) {
-
             Ok(()) => {}
 
-            Err(err) if err.kind() == io::ErrorKind::UnexpectedEof =>
-                self.event_channel.0.send(ConnectionEvent::Closing).map_err(|err|
-                    AppError::GenWithMsgAndErr("Error sending closing event".to_string(), Box::new(err)))?,
+            Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => self
+                .event_channel
+                .0
+                .send(ConnectionEvent::Closing)
+                .map_err(|err| {
+                    AppError::GenWithMsgAndErr(
+                        "Error sending closing event".to_string(),
+                        Box::new(err),
+                    )
+                })?,
 
-            Err(err) if err.kind() == io::ErrorKind::WouldBlock =>
-                self.event_channel.0.send(ConnectionEvent::Write(buffer.to_vec())).map_err(|err|
-                    AppError::GenWithMsgAndErr("Error sending write event".to_string(), Box::new(err)))?,
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => self
+                .event_channel
+                .0
+                .send(ConnectionEvent::Write(buffer.to_vec()))
+                .map_err(|err| {
+                    AppError::GenWithMsgAndErr(
+                        "Error sending write event".to_string(),
+                        Box::new(err),
+                    )
+                })?,
 
-            Err(err) => return Err(AppError::GenWithMsgAndErr("Error writing to TLS connection".to_string(), Box::new(err)))
+            Err(err) => {
+                return Err(AppError::GenWithMsgAndErr(
+                    "Error writing to TLS connection".to_string(),
+                    Box::new(err),
+                ))
+            }
         }
 
         Ok(())
@@ -274,8 +317,7 @@ impl From<Connection> for TlsClientConnection {
 }
 
 /// Visitor pattern used to customize connection implementation strategy.
-pub trait ConnectionVisitor : Send {
-
+pub trait ConnectionVisitor: Send {
     /// Session connected
     fn on_connected(&mut self) -> Result<(), AppError> {
         Ok(())
