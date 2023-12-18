@@ -131,7 +131,7 @@ function validate_invocation_client_pki_creator {
     [CA_KEY_FILEPATH]="Please supply '--ca-key-filepath <CA_KEY_FILEPATH>'"
     [SUBJ_COMMON_NAME]="Please supply '--subj-common-name <SUBJ_COMMON_NAME>'"
     [AUTH_USER_ID]="Please supply '--auth-user-id <AUTH_USER_ID>'"
-    [AUTH_PLATFORM]="Please supply '--auth-platform <AUTH_USER_ID>'"
+    [AUTH_PLATFORM]="Please supply '--auth-platform <AUTH_PLATFORM>'"
   )
   declare -a addtl_err_msgs=()
 

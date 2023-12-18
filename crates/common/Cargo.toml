@@ -1,6 +1,8 @@
 [package]
 name = "trust0-common"
 version = "0.2.0-alpha"
+description = "Trust0 SDP Shared Codebase"
+repository = "https://github.com/chewyfish/trust0"
 edition = "2021"
 license = "Apache-2.0"
 publish = false
