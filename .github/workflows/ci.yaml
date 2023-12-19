@@ -1,0 +1,24 @@
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+
+  call-build:
+    uses: ./.github/workflows/build.yaml
+
+  call-test:
+    needs: call-build
+    uses: ./.github/workflows/test.yaml
+
+  call-analyze:
+    needs: call-build
+    uses: ./.github/workflows/analyze.yaml

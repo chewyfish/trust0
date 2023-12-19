@@ -1,0 +1,23 @@
+on:
+  workflow_dispatch:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+
+  build:
+    name: Build Workspace
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - name: Setup Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Compile Crates (Debug)
+        run: cargo build --workspace
