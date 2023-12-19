@@ -1,0 +1,25 @@
+on:
+  workflow_dispatch:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+
+  test:
+    name: Test Automation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - name: Install Coverage Component
+        uses: taiki-e/install-action@cargo-llvm-cov
+      - name: Setup Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Run Tests w/Coverage
+        run: cargo llvm-cov --workspace --verbose

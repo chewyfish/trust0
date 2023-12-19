@@ -1,0 +1,28 @@
+on:
+  workflow_dispatch:
+  workflow_call:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+
+  analyze:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Setup Cache
+        uses: Swatinem/rust-cache@v2
+      - name: Run Cargo Check
+        run: cargo check --workspace
+      - name: Run Lint Analysis
+        run: cargo clippy -- -D warnings
+      - name: Run Format Check
+        run: cargo fmt --all -- --check
