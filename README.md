@@ -62,7 +62,7 @@ This is very early alpha, use with care.
  
 ### Change History
 
-Refer to [Change Log](CHANGES.md)
+Refer to [Trust0 Releases](https://github.com/chewyfish/trust0/releases)
 
 ### Contributions
 
