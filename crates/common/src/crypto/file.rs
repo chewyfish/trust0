@@ -47,7 +47,7 @@ pub fn load_certificates(filepath: String) -> Result<Vec<CertificateDer<'static>
     }
 }
 
-/// Verify the validity of the (PKCS8) key in the given PEM file
+/// Verify the validity of the private key in the given PEM file
 pub fn verify_private_key_file(filepath: &str) -> Result<String, AppError> {
     match load_private_key(filepath.to_string()) {
         Ok(_) => Ok(filepath.to_string()),
@@ -55,7 +55,7 @@ pub fn verify_private_key_file(filepath: &str) -> Result<String, AppError> {
     }
 }
 
-/// Load the (PKCS8) key from the given PEM file
+/// Load the private key from the given PEM file
 pub fn load_private_key(filepath: String) -> Result<PrivateKeyDer<'static>, AppError> {
     match fs::File::open(filepath.clone()).map_err(|err| {
         AppError::IoWithMsg(

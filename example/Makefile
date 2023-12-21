@@ -7,12 +7,14 @@ EXAMPLE_BUILD_DIR=${EXAMPLE_DIR}/target
 EXAMPLE_CONFIG_FILE=${EXAMPLE_BUILD_DIR}/example.conf
 PROJECT_DIR=${EXAMPLE_DIR}/..
 PROJECT_RESOURCES_DIR=${PROJECT_DIR}/resources
+
 CARGO_CMD=cargo
 OPENSSL_CMD=openssl
 M4_CMD=m4
 TMUX_CMD=tmux
 NCAT_CMD=ncat
 TRUST0_ADMIN_CMD=${PROJECT_RESOURCES_DIR}/trust0-admin.sh
+
 CARGOBUILD_EXTRA_ARGS=
 EXECBIN_EXTRA_ARGS=
 
@@ -81,6 +83,21 @@ DATASOURCE_INMEMDB_USER_FILE=${EXAMPLE_BUILD_DIR}/example-db-user.json
 CRLSUPPORT__PKI_GATEWAY_CONFIGURED_FILE=${EXAMPLE_BUILD_DIR}/revoked.crl.pem
 CRLSUPPORT__PKI_REVOKE_CLIENT_FILE=${EXAMPLE_BUILD_DIR}/revoked-${TRUST0_CLIENT__PKI_NAME}.crl.pem
 
+# Params - Key Algorithm
+
+KEYALG_RSA_TYPE=rsa
+KEYALG_RSA_PARAMS=4096
+KEYALG_EC_TYPE=ec
+KEYALG_EC_PARAMS=${EXAMPLE_BUILD_DIR}/ecparams.pem
+#KEYALG_EC_CURVE=secp384r1
+KEYALG_EC_CURVE=prime256v1
+KEYALG_ED_TYPE=ed
+KEYALG_ED_PARAMS=ed25519
+
+# Update these 2 values to switch key algorithm type and params
+KEYALG_TYPE=${KEYALG_RSA_TYPE}
+KEYALG_PARAMS=${KEYALG_RSA_PARAMS}
+
 # Targets
 
 .PHONY: default clean-all root-ca-pki generate-root-ca-pki-resources gateway-server-pki generate-gateway-pki-resources client-pki generate-client-pki-resources trust0-gateway trust0-client run-trust0-gateway run-trust0-client run-trust0-gateway-nodeps run-trust0-client-nodeps setup-crl-files check-prereqs-examples check-prereqs-example-chat-tcp check-prereqs-example-echo-udp check-prereqs-example-revoke-cert
@@ -112,7 +129,6 @@ check-prereqs-examples:
 	@(which ${OPENSSL_CMD} 2> /dev/null > /dev/null || echo "Command '${OPENSSL_CMD}' missing, please install")
 	@(which ${M4_CMD} 2> /dev/null > /dev/null || echo "Command '${M4_CMD}' missing, please install")
 	@(which ${TMUX_CMD} 2> /dev/null > /dev/null || echo "Command '${TMUX_CMD}' missing, please install")
-	@(which ${NCAT_CMD} 2> /dev/null > /dev/null || echo "Command '${NCAT_CMD}' missing, please install")
 
 check-prereqs-example-chat-tcp: check-prereqs-examples
 check-prereqs-example-echo-udp: check-prereqs-examples
@@ -122,12 +138,14 @@ check-prereqs-example-revoke-cert: check-prereqs-examples
 
 generate-root-ca-pki-resources: ${EXAMPLE_CONFIG_FILE}
 	@echo "Creating root CA PKI resources"
-	cd ${EXAMPLE_BUILD_DIR} && ${TRUST0_ADMIN_CMD} rootca-pki-creator --rootca-cert-filepath ${ROOT_CA__PKI_CERT_FILE} --rootca-key-filepath ${ROOT_CA__PKI_KEY_FILE} --key-algorithm rsa:4096 --subj-common-name ${ROOT_CA__PKI_SUBJ_COMMONNAME} --subj-country ${ROOT_CA__PKI_SUBJ_COUNTRY} --subj-state ${ROOT_CA__PKI_SUBJ_STATE} --subj-city ${ROOT_CA__PKI_SUBJ_CITY} --subj-company ${ROOT_CA__PKI_SUBJ_COMPANY} --subj-dept ${ROOT_CA__PKI_SUBJ_DEPT}
+	@([ '${KEYALG_TYPE}' != '${KEYALG_EC_TYPE}' ] || [ -f ${KEYALG_PARAMS} ] || ${OPENSSL_CMD} ecparam -name ${KEYALG_EC_CURVE} -out ${KEYALG_PARAMS})
+	cd ${EXAMPLE_BUILD_DIR} && ${TRUST0_ADMIN_CMD} rootca-pki-creator --rootca-cert-filepath ${ROOT_CA__PKI_CERT_FILE} --rootca-key-filepath ${ROOT_CA__PKI_KEY_FILE} --key-algorithm ${KEYALG_TYPE}:${KEYALG_PARAMS} --subj-common-name ${ROOT_CA__PKI_SUBJ_COMMONNAME} --subj-country ${ROOT_CA__PKI_SUBJ_COUNTRY} --subj-state ${ROOT_CA__PKI_SUBJ_STATE} --subj-city ${ROOT_CA__PKI_SUBJ_CITY} --subj-company ${ROOT_CA__PKI_SUBJ_COMPANY} --subj-dept ${ROOT_CA__PKI_SUBJ_DEPT}
 	@echo ""
 
+.ONESHELL:
 ${ROOT_CA__PKI_CRL_CONF_FILE}: ${EXAMPLE_CONFIG_FILE}
 	@echo "Creating $@"
-	cat <<- EOF > $@
+	@cat <<- EOF > $@
 		[ ca ]
 		default_ca = ca_default
 		[ ca_default ]
@@ -136,8 +154,8 @@ ${ROOT_CA__PKI_CRL_CONF_FILE}: ${EXAMPLE_CONFIG_FILE}
 		default_md = default
 		crl_extensions = crl_ext
 		[ crl_ext ]
-		authorityKeyIdentifier=keyid:always
-	EOF
+		authorityKeyIdentifier = keyid,issuer
+		EOF
 	@echo ""
 
 root-ca-pki: generate-root-ca-pki-resources ${ROOT_CA__PKI_CRL_CONF_FILE}
@@ -146,7 +164,8 @@ root-ca-pki: generate-root-ca-pki-resources ${ROOT_CA__PKI_CRL_CONF_FILE}
 
 generate-gateway-pki-resources: ${EXAMPLE_CONFIG_FILE}
 	@echo "Creating gateway PKI resources"
-	cd ${EXAMPLE_BUILD_DIR} && ${TRUST0_ADMIN_CMD} gateway-pki-creator --gateway-cert-filepath ${TRUST0_GATEWAY__PKI_CERT_FILE} --gateway-key-filepath ${TRUST0_GATEWAY__PKI_KEY_FILE} --ca-cert-filepath ${ROOT_CA__PKI_CERT_FILE} --ca-key-filepath ${ROOT_CA__PKI_KEY_FILE} --key-algorithm rsa:4096 --subj-common-name ${TRUST0_GATEWAY__PKI_SUBJ_COMMONNAME} --subj-country ${TRUST0_GATEWAY__PKI_SUBJ_COUNTRY} --subj-state ${TRUST0_GATEWAY__PKI_SUBJ_STATE} --subj-city ${TRUST0_GATEWAY__PKI_SUBJ_CITY} --subj-company ${TRUST0_GATEWAY__PKI_SUBJ_COMPANY} --subj-dept ${TRUST0_GATEWAY__PKI_SUBJ_DEPT} --san-dns1 ${TRUST0_GATEWAY__PKI_HOST_DNS1} --san-dns2 ${TRUST0_GATEWAY__PKI_HOST_DNS2}
+	@([ '${KEYALG_TYPE}' != '${KEYALG_EC_TYPE}' ] || [ -f ${KEYALG_PARAMS} ] || ${OPENSSL_CMD} ecparam -name ${KEYALG_EC_CURVE} -out ${KEYALG_PARAMS})
+	cd ${EXAMPLE_BUILD_DIR} && ${TRUST0_ADMIN_CMD} gateway-pki-creator --gateway-cert-filepath ${TRUST0_GATEWAY__PKI_CERT_FILE} --gateway-key-filepath ${TRUST0_GATEWAY__PKI_KEY_FILE} --ca-cert-filepath ${ROOT_CA__PKI_CERT_FILE} --ca-key-filepath ${ROOT_CA__PKI_KEY_FILE} --key-algorithm ${KEYALG_TYPE}:${KEYALG_PARAMS} --subj-common-name ${TRUST0_GATEWAY__PKI_SUBJ_COMMONNAME} --subj-country ${TRUST0_GATEWAY__PKI_SUBJ_COUNTRY} --subj-state ${TRUST0_GATEWAY__PKI_SUBJ_STATE} --subj-city ${TRUST0_GATEWAY__PKI_SUBJ_CITY} --subj-company ${TRUST0_GATEWAY__PKI_SUBJ_COMPANY} --subj-dept ${TRUST0_GATEWAY__PKI_SUBJ_DEPT} --san-dns1 ${TRUST0_GATEWAY__PKI_HOST_DNS1} --san-dns2 ${TRUST0_GATEWAY__PKI_HOST_DNS2}
 	@echo ""
 
 gateway-server-pki: generate-root-ca-pki-resources generate-gateway-pki-resources
@@ -164,7 +183,8 @@ run-trust0-gateway-nodeps:
 
 generate-client-pki-resources: ${EXAMPLE_CONFIG_FILE}
 	@echo "Creating client PKI resources"
-	cd ${EXAMPLE_BUILD_DIR} && ${TRUST0_ADMIN_CMD} client-pki-creator --client-cert-filepath ${TRUST0_CLIENT__PKI_CERT_FILE} --client-key-filepath ${TRUST0_CLIENT__PKI_KEY_FILE} --ca-cert-filepath ${ROOT_CA__PKI_CERT_FILE} --ca-key-filepath ${ROOT_CA__PKI_KEY_FILE} --key-algorithm rsa:4096 --auth-user-id ${TRUST0_CLIENT__PKI_SUBJ_USERID} --auth-platform ${TRUST0_CLIENT__PKI_SUBJ_PLATFORM} --subj-common-name ${TRUST0_CLIENT__PKI_SUBJ_COMMONNAME} --subj-country ${TRUST0_CLIENT__PKI_SUBJ_COUNTRY} --subj-state ${TRUST0_CLIENT__PKI_SUBJ_STATE} --subj-city ${TRUST0_CLIENT__PKI_SUBJ_CITY} --subj-company ${TRUST0_CLIENT__PKI_SUBJ_COMPANY} --subj-dept ${TRUST0_CLIENT__PKI_SUBJ_DEPT}
+	@([ '${KEYALG_TYPE}' != '${KEYALG_EC_TYPE}' ] || [ -f ${KEYALG_PARAMS} ] || ${OPENSSL_CMD} ecparam -name ${KEYALG_EC_CURVE} -out ${KEYALG_PARAMS})
+	cd ${EXAMPLE_BUILD_DIR} && ${TRUST0_ADMIN_CMD} client-pki-creator --client-cert-filepath ${TRUST0_CLIENT__PKI_CERT_FILE} --client-key-filepath ${TRUST0_CLIENT__PKI_KEY_FILE} --ca-cert-filepath ${ROOT_CA__PKI_CERT_FILE} --ca-key-filepath ${ROOT_CA__PKI_KEY_FILE} --key-algorithm ${KEYALG_TYPE}:${KEYALG_PARAMS} --auth-user-id ${TRUST0_CLIENT__PKI_SUBJ_USERID} --auth-platform ${TRUST0_CLIENT__PKI_SUBJ_PLATFORM} --subj-common-name ${TRUST0_CLIENT__PKI_SUBJ_COMMONNAME} --subj-country ${TRUST0_CLIENT__PKI_SUBJ_COUNTRY} --subj-state ${TRUST0_CLIENT__PKI_SUBJ_STATE} --subj-city ${TRUST0_CLIENT__PKI_SUBJ_CITY} --subj-company ${TRUST0_CLIENT__PKI_SUBJ_COMPANY} --subj-dept ${TRUST0_CLIENT__PKI_SUBJ_DEPT}
 	@echo ""
 
 client-pki: generate-root-ca-pki-resources generate-client-pki-resources

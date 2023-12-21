@@ -25,15 +25,16 @@ declare -r COMMAND_TOOL__GATEWAY_PKI_CREATOR="gateway-pki-creator"
 declare -r COMMAND_TOOL__CLIENT_PKI_CREATOR="client-pki-creator"
 declare command_tool=""
 
-declare -r DEFAULT__KEY_KEY_ALGORITHM=rsa:4096
+declare -r DEFAULT__KEY_ALGORITHM=rsa:4096
 declare -r DEFAULT__CERT_EXPIRY_DAYS=365
+declare -r DEFAULT__MD_ALGORITHM=sha256
 
 declare -r KEY_TYPE_RSA=rsa
 declare -r KEY_TYPE_EC=ec
 declare -r KEY_TYPE_ED=ed
 declare -r KEY_ALGORITHM_PATTERN="^(${KEY_TYPE_RSA}|${KEY_TYPE_EC}|${KEY_TYPE_ED}):(.+)$"
 declare -r KEY_ALGORITHM_RSA_PARAMS_PATTERN='^[0-9]+$';
-declare -r KEY_ALGORITHM_ED_PARAMS_PATTERN='^(ed25519|ed448)$';
+declare -r KEY_ALGORITHM_ED_PARAMS_PATTERN='^(ed25519)$';
 
 declare result_key_type=""
 declare result_key_params=""
@@ -123,7 +124,7 @@ EOF
 # ---------------------------
 function cmn__parse_key_algorithm_arg {
 
-  local key_alg_arg=${1,,}
+  local key_alg_arg="$1"
   local key_type_var="${2:-result_key_type}"
   local key_params_var="${3:-result_key_params}"
 
@@ -230,7 +231,7 @@ function cmn__create_non_ca_cert_file {
 declare -r USAGE_ROOTCA_PKI_CREATOR="\
 Create root CA certificate and key files usable in a Trust0 environment.
 
-Usage: $0 rootca-pki-creator --rootca-cert-filepath <ROOTCA_CERT_FILEPATH> --rootca-key-filepath <ROOTCA_KEY_FILEPATH> [--key-algorithm <KEY_ALGORITHM>] [--cert-expiry-days <CERT_EXPIRY_DAYS>] --subj-common-name <SUBJ_COMMON_NAME> [--subj-country <SUBJ_COUNTRY>] [--subj-state <SUBJ_STATE>] [--subj-city <SUBJ_CITY>] [--subj-company <SUBJ_COMPANY>] [--subj-dept <SUBJ_DEPT>]
+Usage: $0 rootca-pki-creator --rootca-cert-filepath <ROOTCA_CERT_FILEPATH> --rootca-key-filepath <ROOTCA_KEY_FILEPATH> [--key-algorithm <KEY_ALGORITHM>] [--md-algorithm <MD_ALGORITHM>] [--cert-expiry-days <CERT_EXPIRY_DAYS>] --subj-common-name <SUBJ_COMMON_NAME> [--subj-country <SUBJ_COUNTRY>] [--subj-state <SUBJ_STATE>] [--subj-city <SUBJ_CITY>] [--subj-company <SUBJ_COMPANY>] [--subj-dept <SUBJ_DEPT>]
 
        $0 rootca-pki-creator --help
 
@@ -244,9 +245,13 @@ Options:
   --key-algorithm <KEY_ALGORITHM>
           Private key algorithm (values: 'rsa:<RSA_SIZE>', 'ec:<EC_PARAMS_FILEPATH>', ed:<ED_SCHEME>)
           RSA_SIZE: valid key bit length for RSA key
-          EC_PARAMS_FILEPATH: File path to an openssl EC params file
-          ED_SCHEME: ED scheme to use. Ex) ed25519, ed448
-          [default: ${DEFAULT__KEY_KEY_ALGORITHM}]
+          EC_PARAMS_FILEPATH: File path to an openssl EC params file (curves 'prime256v1' and 'secp384r1' tested)
+          ED_SCHEME: ED scheme to use. (currently only 'ed25519' supported)
+          [default: ${DEFAULT__KEY_ALGORITHM}]
+
+  --md-algorithm <MD_ALGORITHM>
+          Valid openssl message digest hash algorithm to use where necessary in PKI resource creation
+          [default: '${DEFAULT__MD_ALGORITHM}']
 
   --cert-expiry-days <CERT_EXPIRY_DAYS>
           Number of days certificate is valid
@@ -280,8 +285,9 @@ Options:
 "
 
 declare -A rootca_pki_creator_args=(
-  [KEY_ALGORITHM]="${DEFAULT__KEY_KEY_ALGORITHM}"
+  [KEY_ALGORITHM]="${DEFAULT__KEY_ALGORITHM}"
   [CERT_EXPIRY_DAYS]="${DEFAULT__CERT_EXPIRY_DAYS}"
+  [MD_ALGORITHM]="${DEFAULT__MD_ALGORITHM}"
   [SUBJ_COUNTRY]="NA"
   [SUBJ_STATE]="NA"
   [SUBJ_CITY]="NA"
@@ -314,6 +320,10 @@ function rootca__validate_invocation {
         ;;
       --key-algorithm)
         rootca_pki_creator_args[KEY_ALGORITHM]="$2"
+        shift; shift
+        ;;
+      --md-algorithm)
+        client_pki_creator_args[MD_ALGORITHM]="$2"
         shift; shift
         ;;
       --cert-expiry-days)
@@ -382,8 +392,9 @@ function rootca__create_cert_openssl_conf {
 	echo "Creating root CA certificate openssl config file: path=${cert_conf_file}"
 	cat <<- EOF > "${cert_conf_file}"
 [ req ]
-authorityKeyIdentifier=keyid,issuer
-default_md = sha256
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
+default_md = ${rootca_pki_creator_args[MD_ALGORITHM]}
 basicConstraints = CA:true
 keyUsage = cRLSign, keyCertSign, digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment, keyAgreement, keyCertSign, cRLSign
 extendedKeyUsage = critical, serverAuth, clientAuth
@@ -408,6 +419,7 @@ function rootca__create_cert_file {
   local key_file="$1"
   local cert_file="$2"
   local cert_expiry_days="$3"
+  local cert_md_alg="$4"
   local cert_conf_file="${cert_file}.conf"
 
   if [ -f "${cert_file}" ]; then
@@ -416,7 +428,7 @@ function rootca__create_cert_file {
   fi
 
 	echo "Creating root CA certificate file: path=${cert_file}"
-	${OPENSSL_CMD} req -x509 -new -nodes -key "${key_file}" -sha256 -days "${cert_expiry_days}" -out "${cert_file}" -config "${cert_conf_file}"
+	${OPENSSL_CMD} req -x509 -new -nodes -key "${key_file}" -"${cert_md_alg}" -days "${cert_expiry_days}" -out "${cert_file}" -config "${cert_conf_file}"
 
 	return 0
 }
@@ -427,7 +439,7 @@ function rootca__create_cert_file {
 declare -r USAGE_GATEWAY_PKI_CREATOR="\
 Create gateway certificate and key files usable in a Trust0 environment.
 
-Usage: $0 gateway-pki-creator --gateway-cert-filepath <GATEWAY_CERT_FILEPATH> --gateway-key-filepath <GATEWAY_KEY_FILEPATH> [--key-algorithm <KEY_ALGORITHM>] [--cert-expiry-days <CERT_EXPIRY_DAYS>] --ca-cert-filepath <CA_CERT_FILEPATH> --ca-key-filepath <CA_KEY_FILEPATH> --subj-common-name <SUBJ_COMMON_NAME> [--subj-country <SUBJ_COUNTRY>] [--subj-state <SUBJ_STATE>] [--subj-city <SUBJ_CITY>] [--subj-company <SUBJ_COMPANY>] [--subj-dept <SUBJ_DEPT>] [--san-dns1 <SAN_DNS1>] [--san-dns2 <SAN_DNS2>]
+Usage: $0 gateway-pki-creator --gateway-cert-filepath <GATEWAY_CERT_FILEPATH> --gateway-key-filepath <GATEWAY_KEY_FILEPATH> [--key-algorithm <KEY_ALGORITHM>] [--md-algorithm <MD_ALGORITHM>] [--cert-expiry-days <CERT_EXPIRY_DAYS>] --ca-cert-filepath <CA_CERT_FILEPATH> --ca-key-filepath <CA_KEY_FILEPATH> --subj-common-name <SUBJ_COMMON_NAME> [--subj-country <SUBJ_COUNTRY>] [--subj-state <SUBJ_STATE>] [--subj-city <SUBJ_CITY>] [--subj-company <SUBJ_COMPANY>] [--subj-dept <SUBJ_DEPT>] [--san-dns1 <SAN_DNS1>] [--san-dns2 <SAN_DNS2>]
 
        $0 gateway-pki-creator --help
 
@@ -447,9 +459,13 @@ Options:
   --key-algorithm <KEY_ALGORITHM>
           Private key algorithm (values: 'rsa:<RSA_SIZE>', 'ec:<EC_PARAMS_FILEPATH>', ed:<ED_SCHEME>)
           RSA_SIZE: valid key bit length for RSA key
-          EC_PARAMS_FILEPATH: File path to an openssl EC params file
-          ED_SCHEME: ED scheme to use. Ex) ed25519, ed448
-          [default: ${DEFAULT__KEY_KEY_ALGORITHM}]
+          EC_PARAMS_FILEPATH: File path to an openssl EC params file (curves 'prime256v1' and 'secp384r1' tested)
+          ED_SCHEME: ED scheme to use. (currently only 'ed25519' supported)
+          [default: ${DEFAULT__KEY_ALGORITHM}]
+
+  --md-algorithm <MD_ALGORITHM>
+          Valid openssl message digest hash algorithm to use where necessary in PKI resource creation
+          [default: '${DEFAULT__MD_ALGORITHM}']
 
   --cert-expiry-days <CERT_EXPIRY_DAYS>
           Number of days certificate is valid
@@ -490,8 +506,9 @@ Options:
 "
 
 declare -A gateway_pki_creator_args=(
-  [KEY_ALGORITHM]="${DEFAULT__KEY_KEY_ALGORITHM}"
+  [KEY_ALGORITHM]="${DEFAULT__KEY_ALGORITHM}"
   [CERT_EXPIRY_DAYS]="${DEFAULT__CERT_EXPIRY_DAYS}"
+  [MD_ALGORITHM]="${DEFAULT__MD_ALGORITHM}"
   [SUBJ_COUNTRY]="NA"
   [SUBJ_STATE]="NA"
   [SUBJ_CITY]="NA"
@@ -538,6 +555,10 @@ function gateway__validate_invocation {
         ;;
       --key-algorithm)
         gateway_pki_creator_args[KEY_ALGORITHM]="$2"
+        shift; shift
+        ;;
+      --md-algorithm)
+        client_pki_creator_args[MD_ALGORITHM]="$2"
         shift; shift
         ;;
       --cert-expiry-days)
@@ -614,8 +635,9 @@ function gateway__create_cert_openssl_conf {
 	echo "Creating gateway certificate openssl config file: path=${cert_conf_file}"
 	cat <<- EOF > "${cert_conf_file}"
 [ req ]
-authorityKeyIdentifier=keyid,issuer
-default_md = sha256
+subjectKeyIdentifier   = hash
+authorityKeyIdentifier = keyid,issuer
+default_md = ${gateway_pki_creator_args[MD_ALGORITHM]}
 basicConstraints = CA:false
 keyUsage = cRLSign, keyCertSign, digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment, keyAgreement, keyCertSign, cRLSign
 extendedKeyUsage = critical, serverAuth, clientAuth
@@ -645,7 +667,7 @@ EOF
 declare -r USAGE_CLIENT_PKI_CREATOR="\
 Create client certificate and key files usable in a Trust0 environment.
 
-Usage: $0 client-pki-creator --client-cert-filepath <CLIENT_CERT_FILEPATH> --client-key-filepath <CLIENT_KEY_FILEPATH> [--key-algorithm <KEY_ALGORITHM>] [--cert-expiry-days <CERT_EXPIRY_DAYS>] --ca-cert-filepath <CA_CERT_FILEPATH> --ca-key-filepath <CA_KEY_FILEPATH> --subj-common-name <SUBJ_COMMON_NAME> --auth-user-id <AUTH_USER_ID> --auth-platform <AUTH_PLATFORM> [--subj-country <SUBJ_COUNTRY>] [--subj-state <SUBJ_STATE>] [--subj-city <SUBJ_CITY>] [--subj-company <SUBJ_COMPANY>] [--subj-dept <SUBJ_DEPT>]
+Usage: $0 client-pki-creator --client-cert-filepath <CLIENT_CERT_FILEPATH> --client-key-filepath <CLIENT_KEY_FILEPATH> [--key-algorithm <KEY_ALGORITHM>] [--md-algorithm <MD_ALGORITHM>] [--cert-expiry-days <CERT_EXPIRY_DAYS>] --ca-cert-filepath <CA_CERT_FILEPATH> --ca-key-filepath <CA_KEY_FILEPATH> --subj-common-name <SUBJ_COMMON_NAME> --auth-user-id <AUTH_USER_ID> --auth-platform <AUTH_PLATFORM> [--subj-country <SUBJ_COUNTRY>] [--subj-state <SUBJ_STATE>] [--subj-city <SUBJ_CITY>] [--subj-company <SUBJ_COMPANY>] [--subj-dept <SUBJ_DEPT>]
 
        $0 client-pki-creator --help
 
@@ -665,9 +687,13 @@ Options:
   --key-algorithm <KEY_ALGORITHM>
           Private key algorithm (values: 'rsa:<RSA_SIZE>', 'ec:<EC_PARAMS_FILEPATH>', ed:<ED_SCHEME>)
           RSA_SIZE: valid key bit length for RSA key
-          EC_PARAMS_FILEPATH: File path to an openssl EC params file
-          ED_SCHEME: ED scheme to use. Ex) ed25519, ed448
-          [default: '${DEFAULT__KEY_KEY_ALGORITHM}']
+          EC_PARAMS_FILEPATH: File path to an openssl EC params file (curves 'prime256v1' and 'secp384r1' tested)
+          ED_SCHEME: ED scheme to use. (currently only 'ed25519' supported)
+          [default: '${DEFAULT__KEY_ALGORITHM}']
+
+  --md-algorithm <MD_ALGORITHM>
+          Valid openssl message digest hash algorithm to use where necessary in PKI resource creation
+          [default: '${DEFAULT__MD_ALGORITHM}']
 
   --cert-expiry-days <CERT_EXPIRY_DAYS>
           Number of days certificate is valid
@@ -707,8 +733,9 @@ Options:
 "
 
 declare -A client_pki_creator_args=(
-  [KEY_ALGORITHM]="${DEFAULT__KEY_KEY_ALGORITHM}"
+  [KEY_ALGORITHM]="${DEFAULT__KEY_ALGORITHM}"
   [CERT_EXPIRY_DAYS]="${DEFAULT__CERT_EXPIRY_DAYS}"
+  [MD_ALGORITHM]="${DEFAULT__MD_ALGORITHM}"
   [SUBJ_COUNTRY]="NA"
   [SUBJ_STATE]="NA"
   [SUBJ_CITY]="NA"
@@ -755,6 +782,10 @@ function client__validate_invocation {
         ;;
       --key-algorithm)
         client_pki_creator_args[KEY_ALGORITHM]="$2"
+        shift; shift
+        ;;
+      --md-algorithm)
+        client_pki_creator_args[MD_ALGORITHM]="$2"
         shift; shift
         ;;
       --cert-expiry-days)
@@ -833,7 +864,7 @@ function client__create_cert_openssl_conf {
 	echo "Creating client certificate openssl config file: path=${cert_conf_file}"
 	cat <<- EOF > "${cert_conf_file}"
 [ req ]
-default_md = sha256
+default_md = ${client_pki_creator_args[MD_ALGORITHM]}
 basicConstraints = critical, CA:false
 keyUsage = critical, nonRepudiation, digitalSignature, keyEncipherment
 extendedKeyUsage = critical, clientAuth
@@ -870,7 +901,7 @@ function main {
       rm -f "${rootca_pki_creator_args[ROOTCA_CERT_FILEPATH]}"
     fi
     rootca__create_cert_openssl_conf "${rootca_pki_creator_args[ROOTCA_CERT_FILEPATH]}" || true
-    rootca__create_cert_file "${rootca_pki_creator_args[ROOTCA_KEY_FILEPATH]}" "${rootca_pki_creator_args[ROOTCA_CERT_FILEPATH]}" "${rootca_pki_creator_args[CERT_EXPIRY_DAYS]}" || true
+    rootca__create_cert_file "${rootca_pki_creator_args[ROOTCA_KEY_FILEPATH]}" "${rootca_pki_creator_args[ROOTCA_CERT_FILEPATH]}" "${rootca_pki_creator_args[CERT_EXPIRY_DAYS]}"  "${rootca_pki_creator_args[MD_ALGORITHM]}" || true
 
   elif [ "${command_tool}" == "${COMMAND_TOOL__GATEWAY_PKI_CREATOR}" ]; then
     cmn__create_ca_cert_csr_conf_file "${gateway_pki_creator_args[CA_CERT_FILEPATH]}" || true

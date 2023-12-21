@@ -22,7 +22,9 @@
     * [Trust0 Gateway](#trust0-gateway)
     * [Trust0 Client](#trust0-client)
     * [Tools](#tools)
-      * [Create Client Certificate](#create-client-certificate)
+      * [Create Root CA PKI Resources](#create-root-ca-pki-resources)
+      * [Create Gateway PKI Resources](#create-gateway-pki-resources)
+      * [Create Client PKI Resources](#create-client-pki-resources)
   * [Examples](#examples)
     * [Example - Chat TCP service](#example---chat-tcp-service)
     * [Example - Echo UDP service](#example---echo-udp-service)
@@ -239,7 +241,7 @@ The gateway needs to be configured with the:
 Additional configuration is explained in the following usage display:
 
 ```
-Runs a trust0 gateway server on :PORT.  The default PORT is 443
+Runs a Trust0 gateway server on :PORT.  The default PORT is 443.
 
 Usage: trust0-gateway [OPTIONS] --port <PORT> --cert-file <CERT_FILE> --key-file <KEY_FILE> --auth-cert-file <AUTH_CERT_FILE> --gateway-service-host <GATEWAY_SERVICE_HOST> <COMMAND>
 
@@ -250,37 +252,90 @@ Commands:
 
 Options:
   -p, --port <PORT>
-          Listen on PORT [env: PORT=] [default: 443]
+          Listen on PORT
+          
+          [env: PORT=]
+          [default: 443]
+
   -c, --cert-file <CERT_FILE>
-          Read server certificates from <CERT_FILE>. This should contain PEM-format certificates in the right order (first certificate should certify <KEY_FILE>, last should be a root CA) [env: CERT_FILE=]
+          Read server certificates from <CERT_FILE>. This should contain PEM-format certificates in the right order (first certificate should certify <KEY_FILE>, last should be a root CA)
+          
+          [env: CERT_FILE=]
+
   -k, --key-file <KEY_FILE>
-          Read private key from <KEY_FILE>.  This should be a RSA private key or PKCS8-encoded private key, in PEM format [env: KEY_FILE=]
+          Read private key from <KEY_FILE>. This should be an ECDSA, EdDSA or RSA private key encoded as PKCS1, PKCS8 or Sec1 in a PEM file.
+          Note - For ECDSA keys, curves 'prime256v1' and 'secp384r1' have been tested (others may be supported as well)
+          Note - For EdDSA keys, currently only 'Ed25519' is supported
+          
+          [env: KEY_FILE=]
+
   -a, --auth-cert-file <AUTH_CERT_FILE>
-          Accept client authentication certificates signed by those roots provided in <AUTH_CERT_FILE> [env: AUTH_CERT_FILE=]
+          Accept client authentication certificates signed by those roots provided in <AUTH_CERT_FILE>
+          
+          [env: AUTH_CERT_FILE=]
+
       --protocol-version <PROTOCOL_VERSION>
-          Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead [env: PROTOCOL_VERSION=]
+          Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead
+          
+          [env: PROTOCOL_VERSION=]
+
       --cipher-suite <CIPHER_SUITE>
-          Disable default cipher suite list, and use <CIPHER_SUITE(s)> instead [env: CIPHER_SUITE=]
+          Disable default cipher suite list, and use <CIPHER_SUITE(s)> instead
+          
+          [env: CIPHER_SUITE=]
+
       --alpn-protocol <ALPN_PROTOCOL>
-          Negotiate ALPN using <ALPN_PROTOCOL(s)> [env: ALPN_PROTOCOL=]
+          Negotiate ALPN using <ALPN_PROTOCOL(s)>
+          
+          [env: ALPN_PROTOCOL=]
+
       --session-resumption
-          Support session resumption [env: SESSION_RESUMPTION=]
+          Support session resumption
+          
+          [env: SESSION_RESUMPTION=]
+
       --tickets
-          Support tickets [env: TICKETS=]
+          Support tickets
+          
+          [env: TICKETS=]
+
       --gateway-service-host <GATEWAY_SERVICE_HOST>
-          Hostname of this gateway given to clients, used in service proxy connections (if not supplied, clients will determine that on their own) [env: GATEWAY_SERVICE_HOST=]
+          Hostname/ip of this gateway given to clients, used in service proxy connections (if not supplied, clients will determine that on their own)
+          
+          [env: GATEWAY_SERVICE_HOST=]
+
       --gateway-service-ports <GATEWAY_SERVICE_PORTS>
-          Service proxy port range. If this is omitted, service connections can be made to the primary gateway port (in addition to the control plane connection). ALPN protocol configuration is used to specify the service ID [env: GATEWAY_SERVICE_PORTS=]
+          Service proxy port range. If this is omitted, service connections can be made to the primary gateway port (in addition to the control plane connection). ALPN protocol configuration is used to specify the service ID
+          
+          [env: GATEWAY_SERVICE_PORTS=]
+
       --gateway-service-reply-host <GATEWAY_SERVICE_REPLY_HOST>
-          Hostname/ip of this gateway, which is routable by UDP services, used in UDP socket replies. If not supplied, then "127.0.0.1" will be used (if necessary) [env: GATEWAY_SERVICE_REPLY_HOST=]
-      --no-mask-addrs
-          Show all gateway and service addresses (in REPL shell responses) [env: NO_MASK_ADDRESSES=]
+          Hostname/ip of this gateway, which is routable by UDP services, used in UDP socket replies. If not supplied, then "127.0.0.1" will be used (if necessary)
+          
+          [env: GATEWAY_SERVICE_REPLY_HOST=]
+
       --verbose
-          Enable verbose logging [env: VERBOSE=]
+          Enable verbose logging
+          
+          [env: VERBOSE=]
+
+      --no-mask-addrs
+          Show all gateway and service addresses (in REPL shell responses)
+          
+          [env: NO_MASK_ADDRESSES=]
+
       --mode <MODE>
-          Server mode: startup server as control-plane, or as a stand-alone service gateway node [env: MODE=] [possible values: control-plane, proxy]
+          Server mode: startup server as control-plane, or as a stand-alone service gateway node
+          
+          [env: MODE=]
+
+          Possible values:
+          - control-plane: Control-plane for service gateway management
+          - proxy:         Forward traffic to respective service
+
   -h, --help
-          Print help (see more with '--help')
+          Print help (see a summary with '-h')
+
   -V, --version
           Print version
 ```
@@ -316,9 +371,9 @@ The client needs to be configured with the:
 Additional configuration is explained in the following usage display:
 
 ```
-Connects to the TLS server at HOSTNAME:PORT.  The default PORT is 443.  By default, this reads a request from stdin (to EOF) before making the connection.
+Connects to the Trust0 gateway server at HOSTNAME:PORT (default PORT is 443). An control plane REPL shell allows service proxies to be opened (among other features).
 
-Usage: trust0-client [OPTIONS] --gateway_host <GATEWAY_HOST> --gateway-port <GATEWAY_PORT> --auth-key-file <AUTH_KEY_FILE> --auth-cert-file <AUTH_CERT_FILE>
+Usage: trust0-client [OPTIONS] --gateway_host <GATEWAY_HOST> --gateway-port <GATEWAY_PORT> --auth-key-file <AUTH_KEY_FILE> --auth-cert-file <AUTH_CERT_FILE> --ca-root-cert-file <CA_ROOT_CERT_FILE>
 
 Options:
   -g, --gateway_host <GATEWAY_HOST>
@@ -333,7 +388,9 @@ Options:
           [default: 443]
 
   -k, --auth-key-file <AUTH_KEY_FILE>
-          Read client authentication key from <AUTH_KEY_FILE>
+          Read client authentication key from <AUTH_KEY_FILE> This should be an ECDSA, EdDSA or RSA private key encoded as PKCS1, PKCS8 or Sec1 in a PEM file.
+          Note - For ECDSA keys, curves 'prime256v1' and 'secp384r1' have been tested (others may be supported as well)
+          Note - For EdDSA keys, currently only 'Ed25519' is supported
           
           [env: AUTH_KEY_FILE=]
 
@@ -402,32 +459,183 @@ Here is an example invocation (taken from the provided [Chat TCP](#example---cha
 
 ### Tools
 
-In the `resources` directory, you will find the `trust0-admin.sh` script that can be used for (potentially) several administration tasks.
+In the `resources` directory, you will find the `trust0-admin.sh` script, which offers multiple utilities (see below).
 
 Here is the usage description:
 
 ```
 Trust0 administration tool. Refer to command(s) for further information.
 
-Usage: ./trust0-admin.sh client-pki-creator (<CLIENT_PKI_OPTIONS>|--help)
-
+Usage: ./trust0-admin.sh rootca-pki-creator (<ROOTCA_PKI_OPTIONS>|--help)
+       ./trust0-admin.sh gateway-pki-creator (<GATEWAY_PKI_OPTIONS>|--help)
+       ./trust0-admin.sh client-pki-creator (<CLIENT_PKI_OPTIONS>|--help)
        ./trust0-admin.sh --help
 
 Options:
   --help
           Show this usage description
+
 ```
 
-#### Create Client Certificate
+#### Create Root CA PKI Resources
 
-The `trust0-admin.sh` script can be used to create valid Trust0 client PKI certificate/key resources.
+The `trust0-admin.sh` script can be used to create valid Trust0 root CA PKI certificate/key resources. Feel free to bring your own CA PKI resources instead of using this utility.
+
+Here is the usage description:
+
+```
+Create root CA certificate and key files usable in a Trust0 environment.
+
+Usage: ./trust0-admin.sh rootca-pki-creator --rootca-cert-filepath <ROOTCA_CERT_FILEPATH> --rootca-key-filepath <ROOTCA_KEY_FILEPATH> [--key-algorithm <KEY_ALGORITHM>] [--md-algorithm <MD_ALGORITHM>] [--cert-expiry-days <CERT_EXPIRY_DAYS>] --subj-common-name <SUBJ_COMMON_NAME> [--subj-country <SUBJ_COUNTRY>] [--subj-state <SUBJ_STATE>] [--subj-city <SUBJ_CITY>] [--subj-company <SUBJ_COMPANY>] [--subj-dept <SUBJ_DEPT>]
+
+       ./trust0-admin.sh rootca-pki-creator --help
+
+Options:
+  --rootca-cert-filepath <ROOTCA_CERT_FILEPATH>
+          The filepath spec for the rootca certificate file
+
+  --rootca-key-filepath <ROOTCA_KEY_FILEPATH>
+          The filepath spec for the rootca key file
+
+  --key-algorithm <KEY_ALGORITHM>
+          Private key algorithm (values: 'rsa:<RSA_SIZE>', 'ec:<EC_PARAMS_FILEPATH>', ed:<ED_SCHEME>)
+          RSA_SIZE: valid key bit length for RSA key
+          EC_PARAMS_FILEPATH: File path to an openssl EC params file (curves 'prime256v1' and 'secp384r1' tested)
+          ED_SCHEME: ED scheme to use. (currently only 'ed25519' supported)
+          [default: rsa:4096]
+
+  --md-algorithm <MD_ALGORITHM>
+          Valid openssl message digest hash algorithm to use where necessary in PKI resource creation
+          [default: 'sha256']
+
+  --cert-expiry-days <CERT_EXPIRY_DAYS>
+          Number of days certificate is valid
+          [default: 365]
+
+  --subj-common-name <SUBJ_COMMON_NAME>
+          The rootca certificate subject common name value
+
+  --subj-country <SUBJ_COUNTRY>
+          The rootca certificate subject country value
+          [default: NA]
+
+  --subj-state <SUBJ_STATE>
+          The rootca certificate subject state value
+          [default: NA]
+
+  --subj-city <SUBJ_CITY>
+          The rootca certificate subject city value
+          [default: NA]
+
+  --subj-company <SUBJ_COMPANY>
+          The rootca certificate subject company value
+          [default: NA]
+
+  --subj-dept <SUBJ_DEPT>
+          The rootca certificate subject department value
+          [default: NA]
+
+  --help
+          Show this usage description
+```
+
+Here is a simple invocation of this tool:
+
+```
+<TRUST0_REPO>/resources$ ./trust0-admin.sh rootca-pki-creator --rootca-cert-filepath rootca.crt.pem --rootca-key-filepath rootca.key.pem --subj-common-name rootca123
+```
+
+#### Create Gateway PKI Resources
+
+The `trust0-admin.sh` script can be used to create valid Trust0 gateway PKI certificate/key resources. Feel free to bring your own gateway PKI resources instead of using this utility.
+
+Here is the usage description:
+
+```
+Create gateway certificate and key files usable in a Trust0 environment.
+
+Usage: ./trust0-admin.sh gateway-pki-creator --gateway-cert-filepath <GATEWAY_CERT_FILEPATH> --gateway-key-filepath <GATEWAY_KEY_FILEPATH> [--key-algorithm <KEY_ALGORITHM>] [--md-algorithm <MD_ALGORITHM>] [--cert-expiry-days <CERT_EXPIRY_DAYS>] --ca-cert-filepath <CA_CERT_FILEPATH> --ca-key-filepath <CA_KEY_FILEPATH> --subj-common-name <SUBJ_COMMON_NAME> [--subj-country <SUBJ_COUNTRY>] [--subj-state <SUBJ_STATE>] [--subj-city <SUBJ_CITY>] [--subj-company <SUBJ_COMPANY>] [--subj-dept <SUBJ_DEPT>] [--san-dns1 <SAN_DNS1>] [--san-dns2 <SAN_DNS2>]
+
+       ./trust0-admin.sh gateway-pki-creator --help
+
+Options:
+  --gateway-cert-filepath <GATEWAY_CERT_FILEPATH>
+          The filepath spec for the gateway certificate file
+
+  --gateway-key-filepath <GATEWAY_KEY_FILEPATH>
+          The filepath spec for the gateway key file
+
+  --ca-cert-filepath <CA_CERT_FILEPATH>
+          The filepath spec for the CA certificate file used to sign the gateway certificate
+
+  --ca-key-filepath <CA_KEY_FILEPATH>
+          The filepath spec for the CA key file used to sign the gateway certificate
+
+  --key-algorithm <KEY_ALGORITHM>
+          Private key algorithm (values: 'rsa:<RSA_SIZE>', 'ec:<EC_PARAMS_FILEPATH>', ed:<ED_SCHEME>)
+          RSA_SIZE: valid key bit length for RSA key
+          EC_PARAMS_FILEPATH: File path to an openssl EC params file (curves 'prime256v1' and 'secp384r1' tested)
+          ED_SCHEME: ED scheme to use. (currently only 'ed25519' supported)
+          [default: rsa:4096]
+
+  --md-algorithm <MD_ALGORITHM>
+          Valid openssl message digest hash algorithm to use where necessary in PKI resource creation
+          [default: 'sha256']
+
+  --cert-expiry-days <CERT_EXPIRY_DAYS>
+          Number of days certificate is valid
+          [default: 365]
+
+  --subj-common-name <SUBJ_COMMON_NAME>
+          The gateway certificate subject common name value
+
+  --subj-country <SUBJ_COUNTRY>
+          The gateway certificate subject country value
+          [default: NA]
+
+  --subj-state <SUBJ_STATE>
+          The gateway certificate subject state value
+          [default: NA]
+
+  --subj-city <SUBJ_CITY>
+          The gateway certificate subject city value
+          [default: NA]
+
+  --subj-company <SUBJ_COMPANY>
+          The gateway certificate subject company value
+          [default: NA]
+
+  --subj-dept <SUBJ_DEPT>
+          The gateway certificate subject department value
+          [default: NA]
+
+  --san-dns1 <SAN_DNS1>
+          First DNS SAN (Subject Alternative Name) value
+          [default: '127.0.0.1']
+  --san-dns2 <SAN_DNS2>
+          Second DNS SAN (Subject Alternative Name) value
+          [default: '::1']
+
+  --help
+          Show this usage description
+```
+
+Here is a simple invocation of this tool (CA certificate and key must be accessible):
+
+```
+<TRUST0_REPO>/resources$ ./trust0-admin.sh gateway-pki-creator --gateway-cert-filepath gateway.crt.pem --gateway-key-filepath gateway.key.pem --ca-cert-filepath ca.crt.pem --ca-key-filepath ca.key.pem --subj-common-name gateway123 --san-dns1 trust0-gw.example.com --san-dns2 10.0.0.1
+```
+
+#### Create Client PKI Resources
+
+The `trust0-admin.sh` script can be used to create valid Trust0 client PKI certificate/key resources. Feel free to bring your own CA PKI resources instead of using this utility (make sure the certificate specifies the correct SAN details).
 
 Here is the usage description:
 
 ```
 Create client certificate and key files usable in a Trust0 environment.
 
-Usage: ./trust0-admin.sh client-pki-creator --client-cert-filepath <CLIENT_CERT_FILEPATH> --client-key-filepath <CLIENT_KEY_FILEPATH> --ca-cert-filepath <CA_CERT_FILEPATH> --ca-key-filepath <CA_KEY_FILEPATH> --subj-common-name <SUBJ_COMMON_NAME> --auth-user-id <AUTH_USER_ID> --auth-platform <AUTH_PLATFORM> [--subj-country <SUBJ_COUNTRY>] [--subj-state <SUBJ_STATE>] [--subj-city <SUBJ_CITY>] [--subj-company <SUBJ_COMPANY>] [--subj-dept <SUBJ_DEPT>]
+Usage: ./trust0-admin.sh client-pki-creator --client-cert-filepath <CLIENT_CERT_FILEPATH> --client-key-filepath <CLIENT_KEY_FILEPATH> [--key-algorithm <KEY_ALGORITHM>] [--md-algorithm <MD_ALGORITHM>] [--cert-expiry-days <CERT_EXPIRY_DAYS>] --ca-cert-filepath <CA_CERT_FILEPATH> --ca-key-filepath <CA_KEY_FILEPATH> --subj-common-name <SUBJ_COMMON_NAME> --auth-user-id <AUTH_USER_ID> --auth-platform <AUTH_PLATFORM> [--subj-country <SUBJ_COUNTRY>] [--subj-state <SUBJ_STATE>] [--subj-city <SUBJ_CITY>] [--subj-company <SUBJ_COMPANY>] [--subj-dept <SUBJ_DEPT>]
 
        ./trust0-admin.sh client-pki-creator --help
 
@@ -443,6 +651,21 @@ Options:
 
   --ca-key-filepath <CA_KEY_FILEPATH>
           The filepath spec for the CA key file used to sign the client certificate
+
+  --key-algorithm <KEY_ALGORITHM>
+          Private key algorithm (values: 'rsa:<RSA_SIZE>', 'ec:<EC_PARAMS_FILEPATH>', ed:<ED_SCHEME>)
+          RSA_SIZE: valid key bit length for RSA key
+          EC_PARAMS_FILEPATH: File path to an openssl EC params file (curves 'prime256v1' and 'secp384r1' tested)
+          ED_SCHEME: ED scheme to use. (currently only 'ed25519' supported)
+          [default: 'rsa:4096']
+
+  --md-algorithm <MD_ALGORITHM>
+          Valid openssl message digest hash algorithm to use where necessary in PKI resource creation
+          [default: 'sha256']
+
+  --cert-expiry-days <CERT_EXPIRY_DAYS>
+          Number of days certificate is valid
+          [default: '365']
 
   --auth-user-id <AUTH_USER_ID>
           The Trust0 user account ID value
@@ -472,7 +695,7 @@ Options:
   --subj-dept <SUBJ_DEPT>
           The client certificate subject department value
           [default: NA]
-          
+
   --help
           Show this usage description
 ```

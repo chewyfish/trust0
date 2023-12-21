@@ -4,7 +4,9 @@ use std::sync::{Arc, Mutex};
 use clap::*;
 use dnsclient::sync::DNSClient;
 use lazy_static::lazy_static;
-use pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use pki_types::{
+    CertificateDer, PrivateKeyDer, PrivatePkcs1KeyDer, PrivatePkcs8KeyDer, PrivateSec1KeyDer,
+};
 
 use crate::repository::access_repo::in_memory_repo::InMemAccessRepo;
 use crate::repository::access_repo::AccessRepository;
@@ -120,7 +122,7 @@ pub struct InMemoryDb {
     pub user_db_file: String,
 }
 
-/// Runs a trust0 gateway server on :PORT.  The default PORT is 443.
+/// Runs a Trust0 gateway server on :PORT.  The default PORT is 443.
 #[derive(Parser)]
 #[command(author, version, long_about)]
 pub struct AppConfigArgs {
@@ -139,9 +141,10 @@ pub struct AppConfigArgs {
     #[arg(required=true, short='c', long="cert-file", env, value_parser=trust0_common::crypto::file::verify_certificates)]
     pub cert_file: String,
 
-    /// Read private key from <KEY_FILE>.  This should be a RSA private key or PKCS8-encoded
-    /// private key, in PEM format
-    #[arg(required=true, short='k', long="key-file", env, value_parser=trust0_common::crypto::file::verify_private_key_file)]
+    /// Read private key from <KEY_FILE>. This should be an ECDSA, EdDSA or RSA private key encoded as PKCS1, PKCS8 or Sec1 in a PEM file.
+    /// Note - For ECDSA keys, curves 'prime256v1' and 'secp384r1' have been tested (others may be supported as well)
+    /// Note - For EdDSA keys, currently only 'Ed25519' is supported
+    #[arg(required=true, short='k', long="key-file", env, value_parser=trust0_common::crypto::file::verify_private_key_file, verbatim_doc_comment)]
     pub key_file: String,
 
     /// Accept client authentication certificates signed by those roots provided in <AUTH_CERT_FILE>
@@ -228,13 +231,27 @@ impl TlsServerConfigBuilder {
             .into(),
         )
         .with_protocol_versions(self.protocol_versions.as_slice())
-        .expect("inconsistent cipher-suites/versions specified")
+        .expect("Inconsistent cipher-suites/versions specified")
         .with_client_cert_verifier(self.build_client_cert_verifier()?)
         .with_single_cert(
             self.certs.clone(),
-            PrivatePkcs8KeyDer::from(self.key.secret_der().to_owned()).into(),
+            match &self.key {
+                PrivateKeyDer::Pkcs1(key_der) => {
+                    Ok(PrivatePkcs1KeyDer::from(key_der.secret_pkcs1_der().to_vec()).into())
+                }
+                PrivateKeyDer::Pkcs8(key_der) => {
+                    Ok(PrivatePkcs8KeyDer::from(key_der.secret_pkcs8_der().to_vec()).into())
+                }
+                PrivateKeyDer::Sec1(key_der) => {
+                    Ok(PrivateSec1KeyDer::from(key_der.secret_sec1_der().to_vec()).into())
+                }
+                _ => Err(AppError::General(format!(
+                    "Unsupported key type: key={:?}",
+                    &self.key
+                ))),
+            }?,
         )
-        .expect("bad certificates/private key");
+        .expect("Bad certificates/private key");
 
         tls_server_config.key_log = Arc::new(rustls::KeyLogFile::new());
 
