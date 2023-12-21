@@ -6,7 +6,7 @@ use std::time::{Duration, SystemTime};
 use std::{fs, io, thread};
 
 use anyhow::Result;
-use pki_types::{CertificateDer, CertificateRevocationListDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use pki_types::{CertificateDer, CertificateRevocationListDer, PrivateKeyDer};
 
 use crate::error::AppError;
 use crate::logging::{error, info};
@@ -47,7 +47,7 @@ pub fn load_certificates(filepath: String) -> Result<Vec<CertificateDer<'static>
     }
 }
 
-/// Verify the validity of the (PKCS8) key in the given PEM file
+/// Verify the validity of the private key in the given PEM file
 pub fn verify_private_key_file(filepath: &str) -> Result<String, AppError> {
     match load_private_key(filepath.to_string()) {
         Ok(_) => Ok(filepath.to_string()),
@@ -55,7 +55,7 @@ pub fn verify_private_key_file(filepath: &str) -> Result<String, AppError> {
     }
 }
 
-/// Load the (PKCS8) key from the given PEM file
+/// Load the private key from the given PEM file
 pub fn load_private_key(filepath: String) -> Result<PrivateKeyDer<'static>, AppError> {
     match fs::File::open(filepath.clone()).map_err(|err| {
         AppError::IoWithMsg(
@@ -65,28 +65,20 @@ pub fn load_private_key(filepath: String) -> Result<PrivateKeyDer<'static>, AppE
     }) {
         Ok(key_file) => {
             let mut reader = BufReader::new(key_file);
-            let mut keys: Vec<Result<PrivatePkcs8KeyDer<'static>, io::Error>> =
-                rustls_pemfile::pkcs8_private_keys(&mut reader).collect();
-
-            match keys.len() {
-                0 => Err(AppError::General(format!(
-                    "No PKCS8-encoded private key: file={}",
-                    &filepath
-                ))),
-                1 => match keys.remove(0) {
-                    Ok(pkcs8_key) => Ok(pkcs8_key.into()),
-                    Err(err) => Err(AppError::General(format!(
-                        "Invalid PKCS8 key: file={}, err={:?}",
-                        &filepath, &err
+            match rustls_pemfile::private_key(&mut reader) {
+                Ok(key_option) => match key_option {
+                    Some(key) => Ok(key),
+                    None => Err(AppError::General(format!(
+                        "No private key found: file={}",
+                        &filepath
                     ))),
                 },
-                _ => Err(AppError::General(format!(
-                    "More than one PKCS8-encoded private key: file={}",
-                    &filepath
+                Err(err) => Err(AppError::General(format!(
+                    "Invalid key file: file={}, err={:?}",
+                    &filepath, &err
                 ))),
             }
         }
-
         Err(err) => Err(err),
     }
 }

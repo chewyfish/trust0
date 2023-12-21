@@ -8,9 +8,8 @@ use crate::console::ShellOutputWriter;
 use trust0_common::crypto::file::{load_certificates, load_private_key};
 use trust0_common::error::AppError;
 
-/// Connects to the TLS server at HOSTNAME:PORT.  The default PORT
-/// is 443.  By default, this reads a request from stdin (to EOF)
-/// before making the connection.
+/// Connects to the Trust0 gateway server at HOSTNAME:PORT (default PORT is 443).
+/// An control plane REPL shell allows service proxies to be opened (among other features).
 #[derive(Parser, Debug)]
 #[command(author, version, long_about)]
 pub struct AppConfigArgs {
@@ -28,8 +27,10 @@ pub struct AppConfigArgs {
     )]
     pub gateway_port: u16,
 
-    /// Read client authentication key from <AUTH_KEY_FILE>
-    #[arg(required=true, short='k', long="auth-key-file", env, value_parser=trust0_common::crypto::file::verify_private_key_file)]
+    /// Read client authentication key from <AUTH_KEY_FILE> This should be an ECDSA, EdDSA or RSA private key encoded as PKCS1, PKCS8 or Sec1 in a PEM file.
+    /// Note - For ECDSA keys, curves 'prime256v1' and 'secp384r1' have been tested (others may be supported as well)
+    /// Note - For EdDSA keys, currently only 'Ed25519' is supported
+    #[arg(required=true, short='k', long="auth-key-file", env, value_parser=trust0_common::crypto::file::verify_private_key_file, verbatim_doc_comment)]
     pub auth_key_file: String,
 
     /// Read client authentication certificates from <AUTH_CERT_FILE> (must match up with auth key)
