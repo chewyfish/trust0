@@ -151,12 +151,8 @@ pub struct AppConfigArgs {
     #[arg(required=true, short='a', long="auth-cert-file", env, value_parser=trust0_common::crypto::file::verify_certificates)]
     pub auth_cert_file: String,
 
-    /// EXPERIMENTAL. Perform client certificate revocation checking using the DER-encoded <CRL_FILE(s)>. Will update list during runtime, if file has changed.
-    #[cfg(feature = "experimental-crl")]
+    /// Perform client certificate revocation checking using the DER-encoded <CRL_FILE(s)>. Will update list during runtime, if file has changed.
     #[arg(required=false, long="crl-file", env, value_parser=trust0_common::crypto::file::verify_crl_list)]
-    pub crl_file: Option<String>,
-    #[cfg(not(feature = "experimental-crl"))]
-    #[arg(skip=None)]
     pub crl_file: Option<String>,
 
     /// Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead
@@ -265,24 +261,15 @@ impl TlsServerConfigBuilder {
     }
 
     /// Build a TLS client verifier
-    #[cfg(feature = "experimental-crl")]
     fn build_client_cert_verifier(&self) -> Result<Arc<dyn ClientCertVerifier>, AppError> {
         let crl_list = match &self.crl_file {
-            Some(crl_file) => vec![crl_file.lock().unwrap().crl_list()?],
+            Some(crl_file) => crl_file.lock().unwrap().crl_list()?,
             None => vec![],
         };
 
         Ok(
             WebPkiClientVerifier::builder(Arc::new(self.auth_root_certs.clone()))
                 .with_crls(crl_list)
-                .build()
-                .unwrap(),
-        )
-    }
-    #[cfg(not(feature = "experimental-crl"))]
-    fn build_client_cert_verifier(&self) -> Result<Arc<dyn ClientCertVerifier>, AppError> {
-        Ok(
-            WebPkiClientVerifier::builder(Arc::new(self.auth_root_certs.clone()))
                 .build()
                 .unwrap(),
         )
@@ -325,22 +312,18 @@ impl AppConfig {
         let certs = load_certificates(config_args.cert_file.clone()).unwrap();
         let key = load_private_key(config_args.key_file.clone()).unwrap();
 
-        let crl_file = if cfg!(feature = "experimental-crl") {
-            match &config_args.crl_file {
-                Some(filepath) => {
-                    let crl_file = CRLFile::new(filepath.as_str());
-                    crl_file.spawn_list_reloader(
-                        None,
-                        Some(Box::new(|err| {
-                            panic!("Error during CRL reload, exiting: err={:?}", &err);
-                        })),
-                    );
-                    Some(Arc::new(Mutex::new(crl_file)))
-                }
-                None => None,
+        let crl_file = match &config_args.crl_file {
+            Some(filepath) => {
+                let crl_file = CRLFile::new(filepath.as_str());
+                crl_file.spawn_list_reloader(
+                    None,
+                    Some(Box::new(|err| {
+                        panic!("Error during CRL reload, exiting: err={:?}", &err);
+                    })),
+                );
+                Some(Arc::new(Mutex::new(crl_file)))
             }
-        } else {
-            None
+            None => None,
         };
 
         let mut auth_root_certs = rustls::RootCertStore::empty();

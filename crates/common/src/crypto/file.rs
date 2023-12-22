@@ -1,5 +1,5 @@
 use std::io::{BufReader, Read};
-use std::ops::{Deref, DerefMut};
+use std::ops::DerefMut;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -119,7 +119,7 @@ pub type ErrorHandlerFn = Box<dyn Fn(&AppError) + Send + 'static>;
 /// Exposes the ability to re-parse entries when file has changed.
 pub struct CRLFile {
     path: String,
-    crl_list: Arc<Mutex<Option<CertificateRevocationListDer<'static>>>>,
+    crl_list: Arc<Mutex<Vec<CertificateRevocationListDer<'static>>>>,
     reloading: Arc<Mutex<bool>>,
 }
 
@@ -128,7 +128,7 @@ impl CRLFile {
     pub fn new(filepath: &str) -> Self {
         CRLFile {
             path: filepath.to_string(),
-            crl_list: Arc::new(Mutex::new(None)),
+            crl_list: Arc::new(Mutex::new(vec![])),
             reloading: Arc::new(Mutex::new(false)),
         }
     }
@@ -139,14 +139,24 @@ impl CRLFile {
     }
 
     /// CRL list accessor (if not present, attempt to load from file)
-    pub fn crl_list(&mut self) -> Result<CertificateRevocationListDer<'static>, AppError> {
-        if let Some(crl_list) = self.crl_list.lock().unwrap().deref() {
-            return Ok(crl_list.clone());
+    pub fn crl_list(&mut self) -> Result<Vec<CertificateRevocationListDer<'static>>, AppError> {
+        if !self.crl_list.lock().unwrap().is_empty() || *self.reloading.lock().unwrap() {
+            return Ok(self.crl_list.lock().unwrap().clone());
         }
 
         let crl_list_bytes = load_crl_list(&self.path)?;
-        let crl_list = CertificateRevocationListDer::from(crl_list_bytes);
-        self.crl_list = Arc::new(Mutex::new(Some(crl_list.clone())));
+        let crl_list: Vec<CertificateRevocationListDer<'static>> =
+            rustls_pemfile::crls(&mut crl_list_bytes.as_slice())
+                .map(|result| {
+                    result.map_err(|err| {
+                        AppError::GenWithMsgAndErr(
+                            format!("Error reading CRL entries: file={}", &self.path),
+                            Box::new(err),
+                        )
+                    })
+                })
+                .collect::<Result<Vec<CertificateRevocationListDer<'static>>, AppError>>()?;
+        self.crl_list = Arc::new(Mutex::new(crl_list.clone()));
         Ok(crl_list)
     }
 
@@ -201,7 +211,7 @@ impl CRLFile {
     fn process_list_reload(
         last_mtime: &mut SystemTime,
         crlfile_pathbuf: &PathBuf,
-        crl_list: &Arc<Mutex<Option<CertificateRevocationListDer<'static>>>>,
+        crl_list: &Arc<Mutex<Vec<CertificateRevocationListDer<'static>>>>,
         on_critical_err_fn: &Option<ErrorHandlerFn>,
     ) -> Result<bool, AppError> {
         // Check if file has changed
@@ -223,11 +233,16 @@ impl CRLFile {
         // Parse/reload CRL list
         match load_crl_list(crlfile_pathbuf.to_str().unwrap()) {
             Ok(list) => {
-                let _ = crl_list
-                    .lock()
-                    .unwrap()
-                    .deref_mut()
-                    .replace(CertificateRevocationListDer::from(list));
+                *crl_list.lock().unwrap().deref_mut() = rustls_pemfile::crls(&mut list.as_slice())
+                    .map(|result| {
+                        result.map_err(|err| {
+                            AppError::GenWithMsgAndErr(
+                                format!("Error reading CRL entries: file={:?}", crlfile_pathbuf),
+                                Box::new(err),
+                            )
+                        })
+                    })
+                    .collect::<Result<Vec<CertificateRevocationListDer<'static>>, AppError>>()?;
                 Ok(true)
             }
             Err(err) => Err(AppError::GenWithMsgAndErr(
@@ -343,7 +358,7 @@ mod crl_tests {
         let crl_file = CRLFile::new(crl_filepath_str);
 
         assert_eq!(crl_file.path, crl_filepath_str.to_string());
-        assert!(crl_file.crl_list.lock().unwrap().is_none());
+        assert!(crl_file.crl_list.lock().unwrap().is_empty());
         assert_eq!(*crl_file.reloading.lock().unwrap(), false);
     }
 
@@ -364,7 +379,7 @@ mod crl_tests {
             );
         }
 
-        assert!(crl_file.crl_list.lock().unwrap().is_none());
+        assert!(crl_file.crl_list.lock().unwrap().is_empty());
     }
 
     #[ignore]
@@ -384,7 +399,7 @@ mod crl_tests {
             );
         }
 
-        assert!(crl_file.crl_list.lock().unwrap().is_some());
+        assert!(!crl_file.crl_list.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -403,7 +418,7 @@ mod crl_tests {
             );
         }
 
-        assert!(crl_file.crl_list.lock().unwrap().is_some());
+        assert!(!crl_file.crl_list.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -422,14 +437,14 @@ mod crl_tests {
             );
         }
 
-        assert!(crl_file.crl_list.lock().unwrap().is_some());
+        assert!(!crl_file.crl_list.lock().unwrap().is_empty());
     }
 
     #[test]
     fn crlfile_process_list_reload_when_file_unchanged() {
         let crl_filepath: PathBuf = CRLFILE_REVOKED_CERTS_0_PATHPARTS.iter().collect();
         let crl_filepath_str = crl_filepath.to_str().unwrap();
-        let crl_list = Arc::new(Mutex::new(None));
+        let crl_list = Arc::new(Mutex::new(vec![]));
         let mut last_mtime = file::file_mtime(crl_filepath.as_path()).unwrap();
         let saved_last_mtime = last_mtime.clone();
         let invoked_error_fn = Arc::new(Mutex::new(false));
@@ -457,7 +472,7 @@ mod crl_tests {
 
         assert_eq!(was_reloaded, false);
         assert_eq!(last_mtime, saved_last_mtime);
-        assert!(crl_list.lock().unwrap().is_none());
+        assert!(crl_list.lock().unwrap().is_empty());
         assert_eq!(*invoked_error_fn.lock().unwrap(), false);
     }
 
@@ -465,7 +480,7 @@ mod crl_tests {
     fn crlfile_process_list_reload_when_file_changed() {
         let crl_filepath: PathBuf = CRLFILE_REVOKED_CERTS_0_PATHPARTS.iter().collect();
         let crl_filepath_str = crl_filepath.to_str().unwrap();
-        let crl_list = Arc::new(Mutex::new(None));
+        let crl_list = Arc::new(Mutex::new(vec![]));
         let mut last_mtime = SystemTime::now();
         let saved_last_mtime = last_mtime.clone();
         let invoked_error_fn = Arc::new(Mutex::new(false));
@@ -493,7 +508,7 @@ mod crl_tests {
 
         assert_eq!(was_reloaded, true);
         assert_ne!(last_mtime, saved_last_mtime);
-        assert!(crl_list.lock().unwrap().is_some());
+        assert!(!crl_list.lock().unwrap().is_empty());
         assert_eq!(*invoked_error_fn.lock().unwrap(), false);
     }
 
@@ -501,7 +516,7 @@ mod crl_tests {
     fn crlfile_process_list_reload_when_invalid_filepath() {
         let crl_filepath: PathBuf = CRLFILE_MISSING_PATHPARTS.iter().collect();
         let crl_filepath_str = crl_filepath.to_str().unwrap();
-        let crl_list = Arc::new(Mutex::new(None));
+        let crl_list = Arc::new(Mutex::new(vec![]));
         let mut last_mtime = SystemTime::now();
         let invoked_error_fn = Arc::new(Mutex::new(false));
         let invoked_error_fn_copy = invoked_error_fn.clone();
@@ -524,7 +539,7 @@ mod crl_tests {
             );
         }
 
-        assert!(crl_list.lock().unwrap().is_none());
+        assert!(crl_list.lock().unwrap().is_empty());
         assert_eq!(*invoked_error_fn.lock().unwrap(), true);
     }
 
@@ -533,7 +548,7 @@ mod crl_tests {
     fn crlfile_process_list_reload_when_invalid_crlfile() {
         let crl_filepath: PathBuf = CRLFILE_INVALID_PATHPARTS.iter().collect();
         let crl_filepath_str = crl_filepath.to_str().unwrap();
-        let crl_list = Arc::new(Mutex::new(None));
+        let crl_list = Arc::new(Mutex::new(vec![]));
         let mut last_mtime = SystemTime::now();
         let invoked_error_fn = Arc::new(Mutex::new(false));
         let invoked_error_fn_copy = invoked_error_fn.clone();
@@ -556,7 +571,7 @@ mod crl_tests {
             );
         }
 
-        assert!(crl_list.lock().unwrap().is_none());
+        assert!(crl_list.lock().unwrap().is_empty());
         assert_eq!(*invoked_error_fn.lock().unwrap(), false);
     }
 }
