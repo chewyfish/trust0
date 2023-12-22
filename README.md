@@ -4,7 +4,6 @@
   * [Trust0 SDP Service Access Framework](#trust0-sdp-service-access-framework)
     * [Summary](#summary)
     * [To-Do](#to-do)
-    * [Experimental](#experimental)
     * [Change History](#change-history)
     * [Contributions](#contributions)
     * [License](#license)
@@ -28,6 +27,7 @@
   * [Examples](#examples)
     * [Example - Chat TCP service](#example---chat-tcp-service)
     * [Example - Echo UDP service](#example---echo-udp-service)
+    * [Example - Revoke Certificate](#example---revoke-certificate)
 <!-- TOC -->
 
 ## Trust0 SDP Service Access Framework
@@ -44,7 +44,6 @@ This is very early alpha, use with care.
 
 * Verify/add macOS and Windows support
 * Enhance gateway for runtime client certificate reissuance (on expiry or on demand)
-* Finalize certificate revocation list (CRL) support
 * Incorporate device posture trust assessment and rules processor for security enforcement
 * Build (more) testing: unit, integration, performance, ...
 * Strategize non-name resolution (DNS/hosts file/...) approach to handle client TLS hostname verification for service connections
@@ -53,16 +52,11 @@ This is very early alpha, use with care.
 * Consider supporting UDP multicast services
 * Consider gateway-to-gateway service proxy routing (reasons of proximity, security, ...)
 * Consider gateway load-balancing, via client redirect (reasons of load, rollout deployment, ...)
-* Incorporate runtime certificate revocation list (CRL) reload on updated list
 * Accommodate integration to well-known identity provider (IdP) systems/protocols for user authentication and 2FA purposes
 
-### Experimental
-
-* Certificate revocation list (CRL) file support. Handle runtime updates for updated lists
- 
 ### Change History
 
-Refer to [Change Log](CHANGES.md)
+Refer to [Trust0 Releases](https://github.com/chewyfish/trust0/releases)
 
 ### Contributions
 
@@ -191,6 +185,13 @@ All connections use the same gateway port. The gateway knows the kind of connect
 | T0SRV<SVC_ID> | Service Proxy (for service denoted by service ID (u64 value) `<SVC_ID>`) |
 
 Note - A future Trust0 may accommodate gateway-to-gateway service proxy routing. In this case, gateway's will also use TLS client authentication in the same manner as clients (albeit they will have a different SAN field JSON structure to denote themselves as gateways).
+
+Trust0 supports Certificate Revocation List (CRL). A file containing the CRL list can be supplied to the gateway. Periodically it will be scanned for changes (revoked or un-revoked certificates) and will reload accordingly and will be available for scrutiny on the next client to gateway TLS connection.
+
+For more details on using the CRL feature:
+
+* Refer to [Trust0 Gateway](#trust0-gateway) for information on how to configure the gateway
+* Refer to [Echo UDP](#example---revoke-certificate) for a certificate revocation example
 
 ### Database
 
@@ -769,3 +770,31 @@ You will be presented with a tmux session w/multiple panes, which represent:
 Follow the instructions in step order. The following shows a screencast (using asciinema) of a echo session:
 
 [![asciicast](https://asciinema.org/a/626134.png)](https://asciinema.org/a/626134)
+
+### Example - Revoke Certificate
+
+In the `example` directory, you can run an example, which shows certificate revocation in action using the CRL feature (refer to [Client Auth](#client-auth) for an explanation of this feature). The example is a modified [Echo UDP](#example---echo-udp-service), which has a second echo client that will connect after an updated CRL file has been reloaded. This will deny connection access to this second client, whereas the first client connection (and control plane connection) will be still be active (as revocation is only enforced on new connections).
+
+To run this example, execute the `run-revoke-cert-example.sh` script. You will be asked for free ports to be used for the client, gateway and the echo service (script uses these ports to update the echo service DB record and also now knows how to run the gateway).
+
+```
+[example] $ ./run-echo-udp-example.sh
+Enter an available port for the trust0 gateway: 8400
+...
+Enter an available port for the echo service: 8600
+Enter an available port for the echo proxy: 8601
+
+(... PKI certificates/keys created, trust0 binaries built ...)
+```
+
+You will be presented with a tmux session w/multiple panes, which represent:
+* Trust0 Gateway
+* Trust0 Client
+* Echo server
+* First Echo client
+* Second Echo client (fails connection after revocation list is updated)
+* Shutdown example action
+
+Follow the instructions in step order. The following shows a screencast (using asciinema) of a revoke certificate session:
+
+[![asciicast](https://asciinema.org/a/628346.png)](https://asciinema.org/a/628346)

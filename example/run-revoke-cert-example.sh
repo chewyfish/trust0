@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-1>&2 echo "EXPERIMENTAL: CRL support is currently not finalized and is not available for use yet"
-
 set -euo pipefail
 
 EXAMPLE_DIR=$(dirname "$0")
@@ -25,7 +23,7 @@ make clean-all
 make gateway-server-pki
 make client-pki
 make setup-crl-files
-make trust0-gateway CARGOBUILD_EXTRA_ARGS='--features experimental-crl'
+make trust0-gateway
 make trust0-client
 
 # Run example in tmux session
