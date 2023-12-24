@@ -152,7 +152,7 @@ impl Server {
                 let mut result: Option<Result<(), AppError>> = None;
 
                 let peer_addr: String;
-                if let Ok(socket_addr) = connection.get_tls_conn_as_ref().sock.peer_addr() {
+                if let Ok(socket_addr) = connection.get_tcp_stream().peer_addr() {
                     peer_addr = format!("{:?}", socket_addr);
                 } else {
                     peer_addr = "(unknown)".to_string();
@@ -321,5 +321,103 @@ pub trait ServerVisitor: Send {
     /// Returns whether listener shutdown is required
     fn get_shutdown_requested(&self) -> bool {
         false
+    }
+}
+
+/// Unit tests
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use mockall::mock;
+
+    // mocks
+    // =====
+
+    mock! {
+        pub ServerVisit {}
+        impl ServerVisitor for ServerVisit {
+            fn create_client_conn(&mut self, tls_conn: TlsServerConnection) -> Result<conn_std::Connection, AppError>;
+            fn on_listening(&mut self) -> Result<(), AppError>;
+            fn on_tls_handshaking(&mut self, _accepted: &Accepted) -> Result<rustls::ServerConfig, AppError>;
+            fn on_conn_accepted(&mut self, connection: conn_std::Connection) -> Result<(), AppError>;
+            fn get_shutdown_requested(&self) -> bool;
+        }
+    }
+
+    // tests
+    // ====
+
+    #[test]
+    fn server_assert_listening_when_not_listening() {
+        let server = Server {
+            visitor: Arc::new(Mutex::new(MockServerVisit::new())),
+            _server_port: 1234,
+            tcp_listener: None,
+            listen_addr: "addr1".to_string(),
+            polling: false,
+            closing: false,
+            closed: false,
+        };
+
+        if let Ok(()) = server.assert_listening() {
+            panic!("Unexpected successful result");
+        }
+    }
+
+    #[test]
+    fn server_shutdown_when_not_polling() {
+        let mut server = Server {
+            visitor: Arc::new(Mutex::new(MockServerVisit::new())),
+            _server_port: 1234,
+            tcp_listener: None,
+            listen_addr: "addr1".to_string(),
+            polling: false,
+            closing: false,
+            closed: false,
+        };
+
+        server.shutdown();
+
+        assert_eq!(server.closing, true);
+        assert_eq!(server.closed, true);
+        assert_eq!(server.polling, false);
+        assert!(server.tcp_listener.is_none());
+    }
+
+    #[test]
+    fn server_shutdown_when_polling() {
+        let mut server = Server {
+            visitor: Arc::new(Mutex::new(MockServerVisit::new())),
+            _server_port: 1234,
+            tcp_listener: None,
+            listen_addr: "addr1".to_string(),
+            polling: true,
+            closing: false,
+            closed: false,
+        };
+
+        server.shutdown();
+
+        assert_eq!(server.closing, false);
+        assert_eq!(server.closed, false);
+        assert_eq!(server.polling, false);
+        assert!(server.tcp_listener.is_none());
+    }
+
+    #[test]
+    fn server_stop_poller_when_polling() {
+        let mut server = Server {
+            visitor: Arc::new(Mutex::new(MockServerVisit::new())),
+            _server_port: 1234,
+            tcp_listener: None,
+            listen_addr: "addr1".to_string(),
+            polling: true,
+            closing: false,
+            closed: false,
+        };
+
+        server.stop_poller();
+
+        assert_eq!(server.polling, false);
     }
 }

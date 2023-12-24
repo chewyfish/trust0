@@ -318,3 +318,99 @@ pub trait ServerVisitor: Send {
     /// Returns whether listener shutdown is required
     fn get_shutdown_requested(&self) -> bool;
 }
+
+/// Unit tests
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use mockall::mock;
+
+    // mocks
+    // =====
+
+    mock! {
+        pub ServerVisit {}
+        impl ServerVisitor for ServerVisit {
+            fn on_listening(&mut self) -> Result<(), AppError>;
+            fn on_message_received(&mut self, local_addr: &SocketAddr, peer_addr: &SocketAddr, data: Vec<u8>) -> Result<(), AppError>;
+            fn get_shutdown_requested(&self) -> bool;
+        }
+    }
+
+    // tests
+    // ====
+
+    #[test]
+    fn server_assert_listening_when_not_listening() {
+        let server = Server {
+            visitor: Arc::new(Mutex::new(MockServerVisit::new())),
+            _server_port: 1234,
+            server_socket: None,
+            server_addr: "127.0.0.1:8080".parse().unwrap(),
+            polling: false,
+            closing: false,
+            closed: false,
+        };
+
+        if let Ok(()) = server.assert_listening() {
+            panic!("Unexpected successful result");
+        }
+    }
+
+    #[test]
+    fn server_shutdown_when_not_polling() {
+        let mut server = Server {
+            visitor: Arc::new(Mutex::new(MockServerVisit::new())),
+            _server_port: 1234,
+            server_socket: None,
+            server_addr: "127.0.0.1:8080".parse().unwrap(),
+            polling: false,
+            closing: false,
+            closed: false,
+        };
+
+        server.shutdown();
+
+        assert_eq!(server.closing, true);
+        assert_eq!(server.closed, true);
+        assert_eq!(server.polling, false);
+        assert!(server.server_socket.is_none());
+    }
+
+    #[test]
+    fn server_shutdown_when_polling() {
+        let mut server = Server {
+            visitor: Arc::new(Mutex::new(MockServerVisit::new())),
+            _server_port: 1234,
+            server_socket: None,
+            server_addr: "127.0.0.1:8080".parse().unwrap(),
+            polling: true,
+            closing: false,
+            closed: false,
+        };
+
+        server.shutdown();
+
+        assert_eq!(server.closing, false);
+        assert_eq!(server.closed, false);
+        assert_eq!(server.polling, false);
+        assert!(server.server_socket.is_none());
+    }
+
+    #[test]
+    fn server_stop_poller_when_polling() {
+        let mut server = Server {
+            visitor: Arc::new(Mutex::new(MockServerVisit::new())),
+            _server_port: 1234,
+            server_socket: None,
+            server_addr: "127.0.0.1:8080".parse().unwrap(),
+            polling: true,
+            closing: false,
+            closed: false,
+        };
+
+        server.stop_poller();
+
+        assert_eq!(server.polling, false);
+    }
+}
