@@ -159,15 +159,14 @@ Trust0 connections use TLS client (and server) authentication, which allows the 
 
 Certificates/keys required by Trust0 Client/Gateway execution
 
-| Process | Resource           | Description                                    |
-|---------|--------------------|------------------------------------------------|
-| T0G     | Auth CA cert       | Certificate used to sign client certificates   |
-|         | Server certificate | Gateway's X.509 certificate                    |
-|         | Server key         | Gateway's private key                          |
-| T0C     | Auth CA cert       | Certificate used to sign client certificates   |
-|         | Client certificate | Client's X.509 certificate                     |
-|         | Client key         | Client's private key                           |
-|         | Server CA cert     | Certificated used to sign gateway certificates |
+| Process | Resource           | Description                                          |
+|---------|--------------------|------------------------------------------------------|
+| T0G     | CA certificate     | Certificate used to sign client/gateway certificates |
+|         | Server certificate | Gateway's X.509 certificate                          |
+|         | Server key         | Gateway's private key                                |
+| T0C     | CA certificate     | Certificate used to sign client/gateway certificates |
+|         | Client certificate | Client's X.509 certificate                           |
+|         | Client key         | Client's private key                                 |
 
 Additionally, client (X.509) certificates are created w/a subject alternative name (SAN) field containing a JSON structure as follows:
 
@@ -711,10 +710,11 @@ Here is a simple invocation of this tool (CA certificate and key must be accessi
 
 -----------------
 
-Two examples are provided in the `examples` directory:
+The following examples are provided in the `examples` directory:
 
 * [Chat TCP](#example---chat-tcp-service)
 * [Echo UDP](#example---echo-udp-service)
+* [Revoke Cert](#example---revoke-certificate)
 
 ### Example - Chat TCP service
 
