@@ -26,3 +26,17 @@ impl User {
         }
     }
 }
+
+/// Unit tests
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    fn user_new() {
+        let user = User::new(100, "user100", Status::Active);
+        assert_eq!(user.user_id, 100);
+        assert_eq!(user.name, "user100");
+        assert_eq!(user.status, Status::Active);
+    }
+}
