@@ -375,3 +375,237 @@ impl ProxyStream for TcpAndTcpStreamProxy {
 }
 
 unsafe impl Send for TcpAndTcpStreamProxy {}
+
+/// Unit tests
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use crate::net::stream_utils::tests::ConnectedTcpStream;
+    use anyhow::Result;
+    use std::io::ErrorKind::WouldBlock;
+    use std::io::{Read, Write};
+
+    fn create_tcp_and_tcp_stream_proxy(
+        proxy_key: &str,
+    ) -> Result<(
+        TcpAndTcpStreamProxy,
+        ConnectedTcpStream,
+        ConnectedTcpStream,
+        (
+            sync::mpsc::Sender<ProxyEvent>,
+            sync::mpsc::Receiver<ProxyEvent>,
+        ),
+    )> {
+        let connected_tcp_stream1 = ConnectedTcpStream::new()?;
+        let connected_tcp_stream2 = ConnectedTcpStream::new()?;
+        let client_tcp_stream =
+            stream_utils::clone_std_tcp_stream(&connected_tcp_stream1.server_stream.0)?;
+        let client_reader_writer: Box<dyn StreamReaderWriter> =
+            Box::new(stream_utils::clone_std_tcp_stream(&client_tcp_stream)?);
+        let server_tcp_stream =
+            stream_utils::clone_std_tcp_stream(&connected_tcp_stream2.client_stream.0)?;
+        let server_reader_writer: Box<dyn StreamReaderWriter> =
+            Box::new(stream_utils::clone_std_tcp_stream(&server_tcp_stream)?);
+        let proxy_channel = sync::mpsc::channel();
+        let proxy = TcpAndTcpStreamProxy::new(
+            proxy_key,
+            client_tcp_stream,
+            server_tcp_stream,
+            Arc::new(Mutex::new(client_reader_writer)),
+            Arc::new(Mutex::new(server_reader_writer)),
+            proxy_channel.0.clone(),
+        )?;
+        Ok((
+            proxy,
+            connected_tcp_stream1,
+            connected_tcp_stream2,
+            proxy_channel,
+        ))
+    }
+
+    #[test]
+    fn tcptcpproxy_new() {
+        if let Err(err) = create_tcp_and_tcp_stream_proxy("key1") {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn tcptcpproxy_connect_when_stream1_to_stream2_copy() {
+        let mut proxy_result = create_tcp_and_tcp_stream_proxy("key1").unwrap();
+
+        if let Err(err) = proxy_result.0.connect() {
+            panic!("Unexpected proxy connect result: err={:?}", &err);
+        }
+
+        let data = "hello".as_bytes();
+        if let Err(err) = proxy_result.1.client_stream.0.write_all(data) {
+            panic!("Unexpected tcp stream write result: err={:?}", &err);
+        }
+
+        thread::sleep(Duration::from_millis(10));
+        *proxy_result.0.closing.lock().unwrap() = true;
+
+        let mut buffer = [0u8; 10];
+        proxy_result
+            .2
+            .server_stream
+            .0
+            .set_nonblocking(true)
+            .unwrap();
+        let read_result = proxy_result.2.server_stream.0.read(&mut buffer);
+        if let Err(err) = read_result {
+            panic!("Unexpected tcp stream read result: err={:?}", &err);
+        }
+
+        assert_eq!(read_result.unwrap(), 5);
+
+        let mut expected_buffer = [0u8; 10];
+        expected_buffer.as_mut_slice()[..5].copy_from_slice(data);
+        assert_eq!(buffer, expected_buffer);
+    }
+
+    #[test]
+    fn tcptcpproxy_connect_when_no_stream1_to_stream2_copy() {
+        let mut proxy_result = create_tcp_and_tcp_stream_proxy("key1").unwrap();
+
+        if let Err(err) = proxy_result.0.connect() {
+            panic!("Unexpected proxy connect result: err={:?}", &err);
+        }
+
+        thread::sleep(Duration::from_millis(10));
+        *proxy_result.0.closing.lock().unwrap() = true;
+
+        let mut buffer = [0u8; 10];
+        proxy_result
+            .2
+            .server_stream
+            .0
+            .set_nonblocking(true)
+            .unwrap();
+        match proxy_result.2.server_stream.0.read(&mut buffer) {
+            Ok(len) => panic!(
+                "Unexpected successful tcp stream read result: byteslen={}",
+                len
+            ),
+            Err(err) => {
+                if err.kind() != WouldBlock {
+                    panic!("Unexpected tcp stream read result: err={:?}", &err);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tcptcpproxy_connect_when_stream2_to_stream1_copy() {
+        let mut proxy_result = create_tcp_and_tcp_stream_proxy("key1").unwrap();
+
+        if let Err(err) = proxy_result.0.connect() {
+            panic!("Unexpected proxy connect result: err={:?}", &err);
+        }
+
+        let data = "hello".as_bytes();
+        if let Err(err) = proxy_result.2.server_stream.0.write_all(data) {
+            panic!("Unexpected tcp stream write result: err={:?}", &err);
+        }
+
+        thread::sleep(Duration::from_millis(10));
+        *proxy_result.0.closing.lock().unwrap() = true;
+
+        let mut buffer = [0u8; 10];
+        proxy_result
+            .1
+            .client_stream
+            .0
+            .set_nonblocking(true)
+            .unwrap();
+        let read_result = proxy_result.1.client_stream.0.read(&mut buffer);
+        if let Err(err) = read_result {
+            panic!("Unexpected tcp stream read result: err={:?}", &err);
+        }
+
+        assert_eq!(read_result.unwrap(), 5);
+
+        let mut expected_buffer = [0u8; 10];
+        expected_buffer.as_mut_slice()[..5].copy_from_slice(data);
+        assert_eq!(buffer, expected_buffer);
+    }
+
+    #[test]
+    fn tcptcpproxy_connect_when_no_stream2_to_stream1_copy() {
+        let mut proxy_result = create_tcp_and_tcp_stream_proxy("key1").unwrap();
+
+        if let Err(err) = proxy_result.0.connect() {
+            panic!("Unexpected proxy connect result: err={:?}", &err);
+        }
+
+        thread::sleep(Duration::from_millis(10));
+        *proxy_result.0.closing.lock().unwrap() = true;
+
+        let mut buffer = [0u8; 10];
+        proxy_result
+            .1
+            .client_stream
+            .0
+            .set_nonblocking(true)
+            .unwrap();
+        match proxy_result.1.client_stream.0.read(&mut buffer) {
+            Ok(len) => panic!(
+                "Unexpected successful tcp stream read result: byteslen={}",
+                len
+            ),
+            Err(err) => {
+                if err.kind() != WouldBlock {
+                    panic!("Unexpected tcp stream read result: err={:?}", &err);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tcptcpproxy_perform_shutdown() {
+        let proxy_result = create_tcp_and_tcp_stream_proxy("key1").unwrap();
+        let closed = Arc::new(Mutex::new(false));
+
+        let tcp_stream1 = mio::net::TcpStream::from_std(
+            stream_utils::clone_std_tcp_stream(&proxy_result.1.server_stream.0).unwrap(),
+        );
+        let tcp_stream2 = mio::net::TcpStream::from_std(
+            stream_utils::clone_std_tcp_stream(&proxy_result.2.client_stream.0).unwrap(),
+        );
+
+        TcpAndTcpStreamProxy::perform_shutdown(
+            "key1",
+            &tcp_stream1,
+            &tcp_stream2,
+            &proxy_result.3 .0,
+            &closed,
+        );
+
+        match proxy_result.3 .1.try_recv() {
+            Ok(proxy_event) => match proxy_event {
+                ProxyEvent::Closed(key) => assert_eq!(key, "key1".to_string()),
+                ProxyEvent::Message(key, addr, data) => panic!(
+                    "Unexpected message proxy event: key={}, addr={:?}, addr={:?}",
+                    &key, &addr, &data
+                ),
+            },
+            Err(err) => panic!("Unexpected proxy channel result: err={:?}", &err),
+        }
+
+        assert!(*closed.lock().unwrap());
+    }
+
+    #[test]
+    fn tcptcpproxy_disconnect() {
+        let mut proxy_result = create_tcp_and_tcp_stream_proxy("key1").unwrap();
+
+        *proxy_result.0.closing.lock().unwrap() = false;
+        *proxy_result.0.closed.lock().unwrap() = false;
+
+        match proxy_result.0.disconnect() {
+            Ok(()) => assert!(*proxy_result.0.closing.lock().unwrap()),
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
+    }
+}

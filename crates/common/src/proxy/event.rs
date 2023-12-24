@@ -2,6 +2,7 @@ use crate::proxy::proxy_base::ProxyType;
 use std::net::SocketAddr;
 
 /// Proxy-related events (to be used as channel messages)
+#[derive(Debug)]
 pub enum ProxyEvent {
     Closed(String),                       // argument: proxy key
     Message(String, SocketAddr, Vec<u8>), // arguments: proxy key, destination addr, and data

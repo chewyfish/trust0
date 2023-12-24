@@ -23,3 +23,16 @@ pub trait ProxyStream: Send {
     // Disconnect active proxy
     fn disconnect(&mut self) -> Result<(), AppError>;
 }
+
+// Unit tests
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    fn proxytype_key_value() {
+        assert_eq!(ProxyType::ChannelAndTcp.key_value(), "C&T".to_string());
+        assert_eq!(ProxyType::TcpAndTcp.key_value(), "T&T".to_string());
+        assert_eq!(ProxyType::TcpAndUdp.key_value(), "T&U".to_string());
+    }
+}
