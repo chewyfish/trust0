@@ -16,3 +16,16 @@ impl ServiceAccess {
         }
     }
 }
+
+/// Unit tests
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+
+    #[test]
+    fn serviceaccess_new() {
+        let access = ServiceAccess::new(100, 200);
+        assert_eq!(access.user_id, 100);
+        assert_eq!(access.service_id, 200);
+    }
+}

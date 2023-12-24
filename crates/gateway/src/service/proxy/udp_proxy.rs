@@ -210,18 +210,19 @@ impl server_std::ServerVisitor for UdpGatewayProxyServerVisitor {
 
         // Send request to proxy executor to startup new proxy
 
-        let tls_conn = connection.get_tls_conn_as_ref();
-        let proxy_addrs = UdpGatewayProxyServerVisitor::create_proxy_addrs(tls_conn);
+        let tcp_stream = connection.get_tcp_stream();
+        let proxy_addrs =
+            UdpGatewayProxyServerVisitor::create_proxy_addrs(connection.get_tls_conn_as_ref());
         let proxy_key = ProxyEvent::key_value(
             &ProxyType::TcpAndUdp,
             udp_socket.local_addr().ok(),
             Some(service_addr),
         );
-        let client_stream = tls_conn.sock.try_clone().map_err(|err| {
+        let client_stream = tcp_stream.try_clone().map_err(|err| {
             AppError::GenWithMsgAndErr(
                 format!(
                     "Unable to clone client service proxy stream: client_stream={:?}",
-                    &tls_conn.sock
+                    tcp_stream
                 ),
                 Box::new(err),
             )

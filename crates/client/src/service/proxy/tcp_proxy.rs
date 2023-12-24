@@ -121,8 +121,7 @@ impl server_std::ServerVisitor for TcpClientProxyServerVisitor {
             .get_connection()
             .as_ref()
             .unwrap()
-            .get_tls_conn_as_ref()
-            .sock
+            .get_tcp_stream()
             .try_clone()
             .map_err(|err| {
                 AppError::GenWithMsgAndErr(

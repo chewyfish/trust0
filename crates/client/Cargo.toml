@@ -8,20 +8,20 @@ license = "Apache-2.0"
 publish = false
 
 [dependencies]
-anyhow = "1.0.75"
-clap = { version = "4.4.5", features = [ "derive", "env" ] }
-ctrlc = "3.4.1"
+anyhow = "1.0.76"
+clap = { version = "4.4.11", features = [ "derive", "env" ] }
+ctrlc = "3.4.2"
 derive_builder = "0.12.0"
 dotenvy = "0.15.7"
 futures = "*"
 log = "0.4.20"
 log4rs = "1.2.0"
 pki-types = { package = "rustls-pki-types", version = "1.0.1", features = ["std"] }
-rcgen = { version = "0.11.1", features = ["pem"], default-features = false }
+rcgen = { version = "0.11.3", features = ["pem"], default-features = false }
 ring = "0.17.7"
 rustls = { version = "0.22.1", features = [ "logging" ] }
 rustls-pemfile = "2.0.0"
-sct = "0.7"
+sct = "0.7.1"
 serde = { version = "*", features = ["derive"] }
 serde_derive = "*"
 serde_json = { version = "*", features = ["arbitrary_precision"] }
@@ -29,4 +29,4 @@ trust0-common = { version = "0.3.0-alpha", path = "../common" }
 webpki-roots = "0.25"
 
 [dev-dependencies]
-mockall = { version = "0.12.0" }
+mockall = { version = "0.12.1" }

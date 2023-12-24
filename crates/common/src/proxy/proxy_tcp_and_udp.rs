@@ -37,8 +37,6 @@ impl TcpAndUdpStreamProxy {
         tcp_stream_reader_writer: Arc<Mutex<Box<dyn StreamReaderWriter>>>,
         proxy_channel_sender: sync::mpsc::Sender<ProxyEvent>,
     ) -> Result<Self, AppError> {
-        //let proxy_key = ProxyEvent::key_value(&ProxyType::TcpAndUdp, tcp_stream.peer_addr().ok(), udp_socket.peer_addr().ok());
-
         // Convert streams to non-blocking
         let tcp_stream = stream_utils::clone_std_tcp_stream(&tcp_stream)?;
         let udp_socket = stream_utils::clone_std_udp_socket(&udp_socket)?;
@@ -361,3 +359,239 @@ impl ProxyStream for TcpAndUdpStreamProxy {
 }
 
 unsafe impl Send for TcpAndUdpStreamProxy {}
+
+/// Unit tests
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use crate::net::stream_utils::tests::{ConnectedTcpStream, ConnectedUdpSocket};
+    use anyhow::Result;
+    use std::io::ErrorKind::WouldBlock;
+    use std::io::{Read, Write};
+
+    fn create_tcp_and_udp_stream_proxy(
+        proxy_key: &str,
+    ) -> Result<(
+        TcpAndUdpStreamProxy,
+        ConnectedTcpStream,
+        ConnectedUdpSocket,
+        (
+            sync::mpsc::Sender<ProxyEvent>,
+            sync::mpsc::Receiver<ProxyEvent>,
+        ),
+    )> {
+        let connected_tcp_stream = ConnectedTcpStream::new()?;
+        let connected_udp_socket = ConnectedUdpSocket::new()?;
+        let client_tcp_stream =
+            stream_utils::clone_std_tcp_stream(&connected_tcp_stream.server_stream.0)?;
+        let client_reader_writer: Box<dyn StreamReaderWriter> =
+            Box::new(stream_utils::clone_std_tcp_stream(&client_tcp_stream)?);
+        let server_udp_socket =
+            stream_utils::clone_std_udp_socket(&connected_udp_socket.client_socket.0)?;
+        let proxy_channel = sync::mpsc::channel();
+        let proxy = TcpAndUdpStreamProxy::new(
+            proxy_key,
+            client_tcp_stream,
+            server_udp_socket,
+            Arc::new(Mutex::new(client_reader_writer)),
+            proxy_channel.0.clone(),
+        )?;
+        Ok((
+            proxy,
+            connected_tcp_stream,
+            connected_udp_socket,
+            proxy_channel,
+        ))
+    }
+
+    #[test]
+    fn tcpudpproxy_new() {
+        if let Err(err) = create_tcp_and_udp_stream_proxy("key1") {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn tcpudpproxy_connect_when_tcp_to_udp_copy() {
+        let mut proxy_result = create_tcp_and_udp_stream_proxy("key1").unwrap();
+
+        if let Err(err) = proxy_result.0.connect() {
+            panic!("Unexpected proxy connect result: err={:?}", &err);
+        }
+
+        let data = "hello".as_bytes();
+        if let Err(err) = proxy_result.1.client_stream.0.write_all(data) {
+            panic!("Unexpected tcp stream write result: err={:?}", &err);
+        }
+
+        thread::sleep(Duration::from_millis(10));
+        *proxy_result.0.closing.lock().unwrap() = true;
+
+        let mut buffer = [0u8; 10];
+        proxy_result
+            .2
+            .server_socket
+            .0
+            .set_nonblocking(true)
+            .unwrap();
+        let read_result = proxy_result.2.server_socket.0.recv(&mut buffer);
+        if let Err(err) = read_result {
+            panic!("Unexpected udp socket read result: err={:?}", &err);
+        }
+
+        assert_eq!(read_result.unwrap(), 5);
+
+        let mut expected_buffer = [0u8; 10];
+        expected_buffer.as_mut_slice()[..5].copy_from_slice(data);
+        assert_eq!(buffer, expected_buffer);
+    }
+
+    #[test]
+    fn tcpudpproxy_connect_when_no_tcp_to_udp_copy() {
+        let mut proxy_result = create_tcp_and_udp_stream_proxy("key1").unwrap();
+
+        if let Err(err) = proxy_result.0.connect() {
+            panic!("Unexpected proxy connect result: err={:?}", &err);
+        }
+
+        thread::sleep(Duration::from_millis(10));
+        *proxy_result.0.closing.lock().unwrap() = true;
+
+        let mut buffer = [0u8; 10];
+        proxy_result
+            .2
+            .server_socket
+            .0
+            .set_nonblocking(true)
+            .unwrap();
+        match proxy_result.2.server_socket.0.recv(&mut buffer) {
+            Ok(len) => panic!(
+                "Unexpected successful udp socket read result: byteslen={}",
+                len
+            ),
+            Err(err) => {
+                if err.kind() != WouldBlock {
+                    panic!("Unexpected udp socket read result: err={:?}", &err);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tcpudpproxy_connect_when_udp_to_tcp_copy() {
+        let mut proxy_result = create_tcp_and_udp_stream_proxy("key1").unwrap();
+
+        if let Err(err) = proxy_result.0.connect() {
+            panic!("Unexpected proxy connect result: err={:?}", &err);
+        }
+
+        let data = "hello".as_bytes();
+        if let Err(err) = proxy_result
+            .2
+            .server_socket
+            .0
+            .send_to(data, proxy_result.2.client_socket.1)
+        {
+            panic!("Unexpected udp socket write result: err={:?}", &err);
+        }
+
+        thread::sleep(Duration::from_millis(10));
+        *proxy_result.0.closing.lock().unwrap() = true;
+
+        let mut buffer = [0u8; 10];
+        proxy_result
+            .1
+            .client_stream
+            .0
+            .set_nonblocking(true)
+            .unwrap();
+        let read_result = proxy_result.1.client_stream.0.read(&mut buffer);
+        if let Err(err) = read_result {
+            panic!("Unexpected tcp stream read result: err={:?}", &err);
+        }
+
+        assert_eq!(read_result.unwrap(), 5);
+
+        let mut expected_buffer = [0u8; 10];
+        expected_buffer.as_mut_slice()[..5].copy_from_slice(data);
+        assert_eq!(buffer, expected_buffer);
+    }
+
+    #[test]
+    fn tcpudpproxy_connect_when_no_udp_to_tcp_copy() {
+        let mut proxy_result = create_tcp_and_udp_stream_proxy("key1").unwrap();
+
+        if let Err(err) = proxy_result.0.connect() {
+            panic!("Unexpected proxy connect result: err={:?}", &err);
+        }
+
+        thread::sleep(Duration::from_millis(10));
+        *proxy_result.0.closing.lock().unwrap() = true;
+
+        let mut buffer = [0u8; 10];
+        proxy_result
+            .1
+            .client_stream
+            .0
+            .set_nonblocking(true)
+            .unwrap();
+        match proxy_result.1.client_stream.0.read(&mut buffer) {
+            Ok(len) => panic!(
+                "Unexpected successful tcp stream read result: byteslen={}",
+                len
+            ),
+            Err(err) => {
+                if err.kind() != WouldBlock {
+                    panic!("Unexpected tcp stream read result: err={:?}", &err);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tcpudpproxy_perform_shutdown() {
+        let proxy_result = create_tcp_and_udp_stream_proxy("key1").unwrap();
+        let closed = Arc::new(Mutex::new(false));
+
+        let tcp_stream = mio::net::TcpStream::from_std(
+            stream_utils::clone_std_tcp_stream(&proxy_result.1.server_stream.0).unwrap(),
+        );
+        let udp_socket = mio::net::UdpSocket::from_std(
+            stream_utils::clone_std_udp_socket(&proxy_result.2.client_socket.0).unwrap(),
+        );
+
+        TcpAndUdpStreamProxy::perform_shutdown(
+            "key1",
+            &tcp_stream,
+            &udp_socket,
+            &proxy_result.3 .0,
+            &closed,
+        );
+
+        match proxy_result.3 .1.try_recv() {
+            Ok(proxy_event) => match proxy_event {
+                ProxyEvent::Closed(key) => assert_eq!(key, "key1".to_string()),
+                ProxyEvent::Message(key, addr, data) => panic!(
+                    "Unexpected message proxy event: key={}, addr={:?}, addr={:?}",
+                    &key, &addr, &data
+                ),
+            },
+            Err(err) => panic!("Unexpected proxy channel result: err={:?}", &err),
+        }
+
+        assert!(*closed.lock().unwrap());
+    }
+
+    #[test]
+    fn tcpudpproxy_disconnect() {
+        let mut proxy_result = create_tcp_and_udp_stream_proxy("key1").unwrap();
+
+        *proxy_result.0.closing.lock().unwrap() = false;
+        *proxy_result.0.closed.lock().unwrap() = false;
+
+        match proxy_result.0.disconnect() {
+            Ok(()) => assert!(*proxy_result.0.closing.lock().unwrap()),
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
+    }
+}

@@ -141,3 +141,63 @@ pub trait ClientVisitor: Send {
         Ok(())
     }
 }
+
+/// Unit tests
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use mockall::mock;
+    use rustls::RootCertStore;
+
+    // mocks
+    // =====
+
+    mock! {
+        pub CliVisit {}
+        impl ClientVisitor for CliVisit {
+            fn create_server_conn(&mut self, tls_conn: TlsClientConnection) -> Result<conn_std::Connection, AppError>;
+            fn on_connected(&mut self) -> Result<(), AppError>;
+        }
+    }
+
+    // tests
+    // ====
+
+    #[test]
+    fn client_assert_connected_when_connected() {
+        let tls_client_config = rustls::ClientConfig::builder()
+            .with_root_certificates(RootCertStore::empty())
+            .with_no_client_auth();
+
+        let client = Client {
+            visitor: Box::new(MockCliVisit::new()),
+            tls_client_config: Arc::new(tls_client_config),
+            server_host: "server1".to_string(),
+            server_port: 1234,
+            connection: Some(conn_std::tests::create_simple_connection()),
+        };
+
+        if let Err(err) = client.assert_connected() {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn client_assert_connected_when_not_connected() {
+        let tls_client_config = rustls::ClientConfig::builder()
+            .with_root_certificates(RootCertStore::empty())
+            .with_no_client_auth();
+
+        let client = Client {
+            visitor: Box::new(MockCliVisit::new()),
+            tls_client_config: Arc::new(tls_client_config),
+            server_host: "server1".to_string(),
+            server_port: 1234,
+            connection: None,
+        };
+
+        if let Ok(()) = client.assert_connected() {
+            panic!("Unexpected successful result");
+        }
+    }
+}

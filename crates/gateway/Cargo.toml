@@ -8,9 +8,9 @@ license = "Apache-2.0"
 publish = false
 
 [dependencies]
-anyhow = "1.0.75"
-clap = { version = "4.4.5", features = [ "derive", "env" ] }
-ctrlc = "3.4.1"
+anyhow = "1.0.76"
+clap = { version = "4.4.11", features = [ "derive", "env" ] }
+ctrlc = "3.4.2"
 derive_builder = "0.12.0"
 dnsclient = "0.1.18"
 dotenvy = "0.15.7"
@@ -20,7 +20,7 @@ lazy_static = "1.4.0"
 log = "0.4.20"
 log4rs = "1.2.0"
 pki-types = { package = "rustls-pki-types", version = "1.0.1" }
-rcgen = { version = "0.11.1", features = ["pem"], default-features = false }
+rcgen = { version = "0.11.3", features = ["pem"], default-features = false }
 ring = "0.17.7"
 rustls = { version = "0.22.1", features = [ "logging" ] }
 sct = "0.7"
@@ -34,4 +34,4 @@ x509-parser = "0.15.1"
 regex = "1.10.2"
 
 [dev-dependencies]
-mockall = "0.11.4"
+mockall = "0.12.1"

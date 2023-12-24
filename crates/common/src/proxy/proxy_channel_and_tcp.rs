@@ -363,3 +363,247 @@ impl ProxyStream for ChannelAndTcpStreamProxy {
 }
 
 unsafe impl Send for ChannelAndTcpStreamProxy {}
+
+/// Unit tests
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use crate::net::stream_utils::tests::ConnectedTcpStream;
+    use anyhow::Result;
+    use std::io::ErrorKind::WouldBlock;
+    use std::io::{Read, Write};
+    use std::sync::mpsc::TryRecvError;
+
+    fn create_channel_and_tcp_stream_proxy(
+        proxy_key: &str,
+        socket_channel_addr: &SocketAddr,
+    ) -> Result<(
+        ChannelAndTcpStreamProxy,
+        sync::mpsc::Sender<ProxyEvent>,
+        sync::mpsc::Receiver<ProxyEvent>,
+        ConnectedTcpStream,
+        (
+            sync::mpsc::Sender<ProxyEvent>,
+            sync::mpsc::Receiver<ProxyEvent>,
+        ),
+    )> {
+        let socket_channel = sync::mpsc::channel();
+        let server_socket_channel = sync::mpsc::channel();
+        let connected_tcp_stream = ConnectedTcpStream::new()?;
+        let client_tcp_stream =
+            stream_utils::clone_std_tcp_stream(&connected_tcp_stream.client_stream.0)?;
+        let client_reader_writer: Box<dyn StreamReaderWriter> =
+            Box::new(stream_utils::clone_std_tcp_stream(&client_tcp_stream)?);
+        let proxy_channel = sync::mpsc::channel();
+        let proxy = ChannelAndTcpStreamProxy::new(
+            proxy_key,
+            socket_channel_addr.clone(),
+            socket_channel.1,
+            server_socket_channel.0,
+            client_tcp_stream,
+            Arc::new(Mutex::new(client_reader_writer)),
+            proxy_channel.0.clone(),
+        )?;
+        Ok((
+            proxy,
+            socket_channel.0,
+            server_socket_channel.1,
+            connected_tcp_stream,
+            proxy_channel,
+        ))
+    }
+
+    #[test]
+    fn channeltcpproxy_new() {
+        let socket_channel_addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
+        if let Err(err) = create_channel_and_tcp_stream_proxy("key1", &socket_channel_addr) {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn channeltcpproxy_connect_when_channel_to_stream_copy() {
+        let socket_channel_addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
+        let mut proxy_result =
+            create_channel_and_tcp_stream_proxy("key1", &socket_channel_addr).unwrap();
+
+        if let Err(err) = proxy_result.0.connect() {
+            panic!("Unexpected proxy connect result: err={:?}", &err);
+        }
+
+        let data = "hello".as_bytes();
+        proxy_result
+            .1
+            .send(ProxyEvent::Message(
+                "key1".to_string(),
+                socket_channel_addr.clone(),
+                data.to_vec(),
+            ))
+            .unwrap();
+
+        thread::sleep(Duration::from_millis(10));
+        *proxy_result.0.closing.lock().unwrap() = true;
+
+        let mut buffer = [0u8; 10];
+        proxy_result
+            .3
+            .server_stream
+            .0
+            .set_nonblocking(true)
+            .unwrap();
+        let read_result = proxy_result.3.server_stream.0.read(&mut buffer);
+        if let Err(err) = read_result {
+            panic!("Unexpected tcp stream read result: err={:?}", &err);
+        }
+
+        assert_eq!(read_result.unwrap(), 5);
+
+        let mut expected_buffer = [0u8; 10];
+        expected_buffer.as_mut_slice()[..5].copy_from_slice(data);
+        assert_eq!(buffer, expected_buffer);
+    }
+
+    #[test]
+    fn channeltcpproxy_connect_when_no_channel_to_stream_copy() {
+        let socket_channel_addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
+        let mut proxy_result =
+            create_channel_and_tcp_stream_proxy("key1", &socket_channel_addr).unwrap();
+
+        if let Err(err) = proxy_result.0.connect() {
+            panic!("Unexpected proxy connect result: err={:?}", &err);
+        }
+
+        thread::sleep(Duration::from_millis(10));
+        *proxy_result.0.closing.lock().unwrap() = true;
+
+        let mut buffer = [0u8; 10];
+        proxy_result
+            .3
+            .server_stream
+            .0
+            .set_nonblocking(true)
+            .unwrap();
+        match proxy_result.3.server_stream.0.read(&mut buffer) {
+            Ok(len) => panic!(
+                "Unexpected successful tcp stream read result: byteslen={}",
+                len
+            ),
+            Err(err) => {
+                if err.kind() != WouldBlock {
+                    panic!("Unexpected tcp stream read result: err={:?}", &err);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn channeltcpproxy_connect_when_stream_to_channel_copy() {
+        let socket_channel_addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
+        let mut proxy_result =
+            create_channel_and_tcp_stream_proxy("key1", &socket_channel_addr).unwrap();
+
+        if let Err(err) = proxy_result.0.connect() {
+            panic!("Unexpected proxy connect result: err={:?}", &err);
+        }
+
+        let data = "hello".as_bytes();
+        if let Err(err) = proxy_result.3.server_stream.0.write_all(data) {
+            panic!("Unexpected tcp stream write result: err={:?}", &err);
+        }
+
+        thread::sleep(Duration::from_millis(10));
+        *proxy_result.0.closing.lock().unwrap() = true;
+
+        let channel_read_result = proxy_result.2.try_recv();
+        if let Err(err) = channel_read_result {
+            panic!("Unexpected channel read result: err={:?}", &err);
+        }
+
+        let channel_proxy_event = channel_read_result.unwrap();
+        match &channel_proxy_event {
+            ProxyEvent::Message(result_key, result_addr, result_data) => {
+                assert_eq!(*result_key, "key1".to_string());
+                assert_eq!(*result_addr, socket_channel_addr);
+                assert_eq!(*result_data, data.to_vec());
+            }
+            _ => panic!(
+                "Unexpected channel proxy result: evt={:?}",
+                &channel_proxy_event
+            ),
+        }
+    }
+
+    #[test]
+    fn channeltcpproxy_connect_when_no_stream_to_channel_copy() {
+        let socket_channel_addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
+        let mut proxy_result =
+            create_channel_and_tcp_stream_proxy("key1", &socket_channel_addr).unwrap();
+
+        if let Err(err) = proxy_result.0.connect() {
+            panic!("Unexpected proxy connect result: err={:?}", &err);
+        }
+
+        thread::sleep(Duration::from_millis(10));
+        *proxy_result.0.closing.lock().unwrap() = true;
+
+        match proxy_result.2.try_recv() {
+            Ok(proxy_event) => panic!(
+                "Unexpected successful proxy channel result: event={:?}",
+                &proxy_event
+            ),
+            Err(err) => match err {
+                TryRecvError::Disconnected => {
+                    panic!("Unexpected disconnected proxy channel result")
+                }
+                TryRecvError::Empty => {}
+            },
+        }
+    }
+
+    #[test]
+    fn channeltcpproxy_perform_shutdown() {
+        let socket_channel_addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
+        let proxy_result =
+            create_channel_and_tcp_stream_proxy("key1", &socket_channel_addr).unwrap();
+        let closed = Arc::new(Mutex::new(false));
+
+        let tcp_stream = mio::net::TcpStream::from_std(
+            stream_utils::clone_std_tcp_stream(&proxy_result.3.client_stream.0).unwrap(),
+        );
+
+        ChannelAndTcpStreamProxy::perform_shutdown(
+            "key1",
+            &tcp_stream,
+            &proxy_result.4 .0,
+            &closed,
+        );
+
+        match proxy_result.4 .1.try_recv() {
+            Ok(proxy_event) => match proxy_event {
+                ProxyEvent::Closed(key) => assert_eq!(key, "key1".to_string()),
+                ProxyEvent::Message(key, addr, data) => panic!(
+                    "Unexpected message proxy event: key={}, addr={:?}, addr={:?}",
+                    &key, &addr, &data
+                ),
+            },
+            Err(err) => panic!("Unexpected proxy channel result: err={:?}", &err),
+        }
+
+        assert!(*closed.lock().unwrap());
+    }
+
+    #[test]
+    fn channeltcpproxy_disconnect() {
+        let socket_channel_addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
+        let mut proxy_result =
+            create_channel_and_tcp_stream_proxy("key1", &socket_channel_addr).unwrap();
+
+        *proxy_result.0.closing.lock().unwrap() = false;
+        *proxy_result.0.closed.lock().unwrap() = false;
+
+        match proxy_result.0.disconnect() {
+            Ok(()) => assert!(*proxy_result.0.closing.lock().unwrap()),
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
+    }
+}
