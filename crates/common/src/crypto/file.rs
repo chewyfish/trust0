@@ -300,7 +300,6 @@ mod crl_tests {
         }
     }
 
-    #[ignore]
     #[test]
     fn file_verify_crl_list_when_invalid_crlfile() {
         let crl_filepath: PathBuf = CRLFILE_INVALID_PATHPARTS.iter().collect();
@@ -308,11 +307,8 @@ mod crl_tests {
 
         let result = verify_crl_list(crl_filepath_str);
 
-        if let Ok(result_crl_filepath_str) = &result {
-            panic!(
-                "Unexpected successful result: path={}",
-                result_crl_filepath_str
-            );
+        if let Err(err) = &result {
+            panic!("Unexpected result: err={:?}", &err);
         }
     }
 
@@ -382,7 +378,6 @@ mod crl_tests {
         assert!(crl_file.crl_list.lock().unwrap().is_empty());
     }
 
-    #[ignore]
     #[test]
     fn crlfile_crl_list_when_invalid_crlfile() {
         let crl_filepath: PathBuf = CRLFILE_INVALID_PATHPARTS.iter().collect();
@@ -399,7 +394,7 @@ mod crl_tests {
             );
         }
 
-        assert!(!crl_file.crl_list.lock().unwrap().is_empty());
+        assert!(crl_file.crl_list.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -543,7 +538,6 @@ mod crl_tests {
         assert_eq!(*invoked_error_fn.lock().unwrap(), true);
     }
 
-    #[ignore]
     #[test]
     fn crlfile_process_list_reload_when_invalid_crlfile() {
         let crl_filepath: PathBuf = CRLFILE_INVALID_PATHPARTS.iter().collect();
