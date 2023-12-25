@@ -84,3 +84,175 @@ impl From<std::net::AddrParseError> for AppError {
         AppError::AddrParse(err)
     }
 }
+
+/// Unit tests
+#[cfg(test)]
+mod test {
+    use super::*;
+    use AppError as AE;
+
+    fn assert_error_code(error: &AppError, code: u16) {
+        assert!(error.get_code().is_some());
+        assert_eq!(error.get_code().unwrap(), code);
+    }
+
+    #[test]
+    fn apperror_get_code() {
+        let bad_addr_parse: Result<std::net::IpAddr, std::net::AddrParseError> =
+            "127.0.0.1:8080".parse();
+        let addr_parse_err = bad_addr_parse.err().unwrap();
+        assert!(AE::AddrParse(addr_parse_err.clone()).get_code().is_none());
+        assert!(AE::General("g1".to_string()).get_code().is_none());
+        assert_error_code(&AE::GenWithCode(111), 111);
+        assert_error_code(
+            &AE::GenWithCodeAndErr(112, Box::new(addr_parse_err.clone())),
+            112,
+        );
+        assert_error_code(&AE::GenWithCodeAndMsg(113, "gwcam1".to_string()), 113);
+        assert_error_code(
+            &AE::GenWithCodeAndMsgAndErr(
+                114,
+                "gwcamae1".to_string(),
+                Box::new(addr_parse_err.clone()),
+            ),
+            114,
+        );
+        assert!(AE::GenWithErr(Box::new(addr_parse_err.clone()))
+            .get_code()
+            .is_none());
+        assert!(
+            AE::GenWithMsgAndErr("gwmae1".to_string(), Box::new(addr_parse_err.clone()))
+                .get_code()
+                .is_none()
+        );
+        assert!(AE::Io(io::Error::new(io::ErrorKind::Other, "ioe1"))
+            .get_code()
+            .is_none());
+        assert!(AE::IoWithMsg(
+            "iwm1".to_string(),
+            io::Error::new(io::ErrorKind::Other, "ioe2")
+        )
+        .get_code()
+        .is_none());
+        assert!(AE::Tls(rustls::Error::General("re1".to_string()))
+            .get_code()
+            .is_none());
+        assert!(AE::WouldBlock.get_code().is_none());
+        assert!(AE::StreamEOF.get_code().is_none());
+    }
+
+    #[test]
+    fn apperror_display() {
+        let bad_addr_parse: Result<std::net::IpAddr, std::net::AddrParseError> =
+            "127.0.0.1:8080".parse();
+        let addr_parse_err = bad_addr_parse.err().unwrap();
+        assert_eq!(
+            format!("{:?}", &AE::AddrParse(addr_parse_err.clone())),
+            "AddrParse(AddrParseError(Ip))".to_string()
+        );
+        assert_eq!(
+            format!("{:?}", &AE::General("g1".to_string())),
+            "General(\"g1\")".to_string()
+        );
+        assert_eq!(
+            format!("{:?}", &AE::GenWithCode(111)),
+            "GenWithCode(111)".to_string()
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                &AE::GenWithCodeAndErr(112, Box::new(addr_parse_err.clone()))
+            ),
+            "GenWithCodeAndErr(112, AddrParseError(Ip))".to_string()
+        );
+        assert_eq!(
+            format!("{:?}", &AE::GenWithCodeAndMsg(113, "gwcam1".to_string())),
+            "GenWithCodeAndMsg(113, \"gwcam1\")".to_string()
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                &AE::GenWithCodeAndMsgAndErr(
+                    114,
+                    "gwcamae1".to_string(),
+                    Box::new(addr_parse_err.clone())
+                )
+            ),
+            "GenWithCodeAndMsgAndErr(114, \"gwcamae1\", AddrParseError(Ip))".to_string()
+        );
+        assert_eq!(
+            format!("{:?}", &AE::GenWithErr(Box::new(addr_parse_err.clone()))),
+            "GenWithErr(AddrParseError(Ip))".to_string()
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                &AE::GenWithMsgAndErr("gwmae1".to_string(), Box::new(addr_parse_err.clone()))
+            ),
+            "GenWithMsgAndErr(\"gwmae1\", AddrParseError(Ip))".to_string()
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                &AE::Io(io::Error::new(io::ErrorKind::Other, "ioe1"))
+            ),
+            "Io(Custom { kind: Other, error: \"ioe1\" })".to_string()
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                &AE::IoWithMsg(
+                    "iwm1".to_string(),
+                    io::Error::new(io::ErrorKind::Other, "ioe2")
+                )
+            ),
+            "IoWithMsg(\"iwm1\", Custom { kind: Other, error: \"ioe2\" })".to_string()
+        );
+        assert_eq!(
+            format!("{:?}", &AE::Tls(rustls::Error::General("re1".to_string()))),
+            "Tls(General(\"re1\"))".to_string()
+        );
+        assert_eq!(format!("{:?}", &AE::WouldBlock), "WouldBlock".to_string());
+        assert_eq!(format!("{:?}", &AE::StreamEOF), "StreamEOF".to_string());
+    }
+
+    #[test]
+    fn apperror_from() {
+        let bad_addr_parse: Result<std::net::IpAddr, std::net::AddrParseError> =
+            "127.0.0.1:8080".parse();
+        let error: Box<dyn Error + Send + Sync + 'static> = Box::new(bad_addr_parse.err().unwrap());
+        let app_error = error.into();
+        match app_error {
+            AE::GenWithErr(_) => {}
+            _ => panic!("Unexpected from result for Box<Error>: err={:?}", app_error),
+        }
+
+        let error = io::Error::new(io::ErrorKind::Other, "ioe2");
+        let app_error = error.into();
+        match app_error {
+            AE::Io(_) => {}
+            _ => panic!("Unexpected from result for io::Error: err={:?}", app_error),
+        }
+
+        let error = rustls::Error::General("re1".to_string());
+        let app_error = error.into();
+        match app_error {
+            AE::Tls(_) => {}
+            _ => panic!(
+                "Unexpected from result for rustls::Error: err={:?}",
+                app_error
+            ),
+        }
+
+        let bad_addr_parse: Result<std::net::IpAddr, std::net::AddrParseError> =
+            "127.0.0.1:8080".parse();
+        let app_error = bad_addr_parse.err().unwrap().into();
+        match app_error {
+            AE::AddrParse(_) => {}
+            _ => panic!(
+                "Unexpected from result for AddrParseError: err={:?}",
+                app_error
+            ),
+        }
+    }
+}
