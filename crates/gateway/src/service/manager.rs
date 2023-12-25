@@ -34,7 +34,7 @@ pub trait ServiceMgr: Send {
     fn get_service_proxy(
         &self,
         service_id: u64,
-    ) -> Option<&Arc<Mutex<dyn GatewayServiceProxyVisitor>>>;
+    ) -> Option<Arc<Mutex<dyn GatewayServiceProxyVisitor>>>;
     /// Clone proxy tasks sender
     fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent>;
     /// Startup new proxy service to allow clients to connect/communicate to given service
@@ -148,8 +148,8 @@ impl ServiceMgr for GatewayServiceMgr {
     fn get_service_proxy(
         &self,
         service_id: u64,
-    ) -> Option<&Arc<Mutex<dyn GatewayServiceProxyVisitor>>> {
-        self.service_proxy_visitors.get(&service_id)
+    ) -> Option<Arc<Mutex<dyn GatewayServiceProxyVisitor>>> {
+        self.service_proxy_visitors.get(&service_id).cloned()
     }
     fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent> {
         self.proxy_tasks_sender.clone()
@@ -334,7 +334,7 @@ pub mod tests {
         impl ServiceMgr for SvcMgr {
             fn get_service_id_by_proxy_key(&self, proxy_key: &str) -> Option<u64>;
             fn get_service_proxies(&self) -> Vec<Arc<Mutex<dyn GatewayServiceProxyVisitor>>>;
-            fn get_service_proxy(&self, service_id: u64) -> Option<&'static Arc<Mutex<dyn GatewayServiceProxyVisitor>>>;
+            fn get_service_proxy(&self, service_id: u64) -> Option<Arc<Mutex<dyn GatewayServiceProxyVisitor>>>;
             fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent>;
             fn startup(&mut self, service_mgr: Arc<Mutex<dyn ServiceMgr>>, service: &Service) -> Result<(Option<String>, u16), AppError>;
             fn has_proxy_for_user_and_service(&mut self, user_id: u64, service_id: u64) -> bool;
