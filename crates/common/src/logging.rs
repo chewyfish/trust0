@@ -46,6 +46,7 @@ macro_rules! target {
 pub use target;
 
 /// Construct logging implementation
+#[derive(Debug)]
 pub enum LogLevel {
     DEBUG,
     INFO,
@@ -53,14 +54,16 @@ pub enum LogLevel {
     ERROR,
 }
 
+pub type LogVisitor = dyn Fn(LogLevel, &str) + Send + 'static;
+
 pub struct Logger {
     handle: Option<Handle>,
-    visitor: Option<fn(LogLevel, &str)>,
+    visitor: Option<Box<LogVisitor>>,
 }
 
 impl Logger {
     /// configure logger
-    pub fn configure(&mut self, level_filter: LogLevel, visitor: Option<fn(LogLevel, &str)>) {
+    pub fn configure(&mut self, level_filter: LogLevel, visitor: Option<Box<LogVisitor>>) {
         let level_filter = match level_filter {
             LogLevel::DEBUG => LevelFilter::Debug,
             LogLevel::INFO => LevelFilter::Info,
@@ -85,7 +88,7 @@ impl Logger {
         if log_enabled!(Level::Debug) {
             debug!(target: target, "{}", msg);
             if self.visitor.is_some() {
-                self.visitor.unwrap()(LogLevel::DEBUG, msg);
+                self.visitor.as_ref().unwrap()(LogLevel::DEBUG, msg);
             }
         }
     }
@@ -95,7 +98,7 @@ impl Logger {
         if log_enabled!(Level::Info) {
             info!(target: target, "{}", msg);
             if self.visitor.is_some() {
-                self.visitor.unwrap()(LogLevel::INFO, msg);
+                self.visitor.as_ref().unwrap()(LogLevel::INFO, msg);
             }
         }
     }
@@ -105,7 +108,7 @@ impl Logger {
         if log_enabled!(Level::Warn) {
             warn!(target: target, "{}", msg);
             if self.visitor.is_some() {
-                self.visitor.unwrap()(LogLevel::WARN, msg);
+                self.visitor.as_ref().unwrap()(LogLevel::WARN, msg);
             }
         }
     }
@@ -115,8 +118,214 @@ impl Logger {
         if log_enabled!(Level::Error) {
             error!(target: target, "{}", msg);
             if self.visitor.is_some() {
-                self.visitor.unwrap()(LogLevel::ERROR, msg);
+                self.visitor.as_ref().unwrap()(LogLevel::ERROR, msg);
             }
         }
+    }
+}
+
+/// Unit tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    /// Logger singleton
+    pub static TST_LOG: Lazy<Mutex<Logger>> = Lazy::new(|| {
+        let mut logger = Logger {
+            handle: None,
+            visitor: None,
+        };
+        logger.configure(LogLevel::DEBUG, None);
+        Mutex::new(logger)
+    });
+
+    /// re-configure logger
+    pub fn re_configure(
+        logger: &mut Logger,
+        level_filter: LogLevel,
+        visitor: Option<Box<LogVisitor>>,
+    ) {
+        let level_filter = match level_filter {
+            LogLevel::DEBUG => LevelFilter::Debug,
+            LogLevel::INFO => LevelFilter::Info,
+            LogLevel::WARN => LevelFilter::Warn,
+            LogLevel::ERROR => LevelFilter::Error,
+        };
+
+        let stdout: ConsoleAppender = ConsoleAppender::builder()
+            .encoder(Box::new(JsonEncoder::new()))
+            .build();
+        let log_config = log4rs::config::Config::builder()
+            .appender(Appender::builder().build("stdout", Box::new(stdout)))
+            .build(Root::builder().appender("stdout").build(level_filter))
+            .unwrap();
+
+        logger.handle.as_mut().unwrap().set_config(log_config);
+        logger.visitor = visitor;
+    }
+
+    #[test]
+    fn logger_debug_level() {
+        let mut logger = TST_LOG.lock();
+        let captured: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let captured_copy = captured.clone();
+        let log_visitor = move |level, msg: &str| {
+            *captured_copy.lock().unwrap() = Some(format!("{:?}:{}", level, msg));
+        };
+
+        re_configure(
+            logger.as_mut().unwrap(),
+            LogLevel::DEBUG,
+            Some(Box::new(log_visitor)),
+        );
+
+        logger.as_ref().unwrap().debug("t1", "m1");
+        assert!(captured.lock().unwrap().is_some());
+        assert_eq!(
+            captured.lock().unwrap().as_ref().unwrap().to_string(),
+            "DEBUG:m1".to_string()
+        );
+
+        *captured.lock().unwrap() = None;
+        logger.as_ref().unwrap().info("t2", "m2");
+        assert!(captured.lock().unwrap().is_some());
+        assert_eq!(
+            captured.lock().unwrap().as_ref().unwrap().to_string(),
+            "INFO:m2".to_string()
+        );
+
+        *captured.lock().unwrap() = None;
+        logger.as_ref().unwrap().warn("t3", "m3");
+        assert!(captured.lock().unwrap().is_some());
+        assert_eq!(
+            captured.lock().unwrap().as_ref().unwrap().to_string(),
+            "WARN:m3".to_string()
+        );
+
+        *captured.lock().unwrap() = None;
+        logger.as_ref().unwrap().error("t4", "m4");
+        assert!(captured.lock().unwrap().is_some());
+        assert_eq!(
+            captured.lock().unwrap().as_ref().unwrap().to_string(),
+            "ERROR:m4".to_string()
+        );
+    }
+
+    #[test]
+    fn logger_info_level() {
+        let mut logger = TST_LOG.lock();
+        let captured: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let captured_copy = captured.clone();
+        let log_visitor = move |level, msg: &str| {
+            *captured_copy.lock().unwrap() = Some(format!("{:?}:{}", level, msg));
+        };
+
+        re_configure(
+            logger.as_mut().unwrap(),
+            LogLevel::INFO,
+            Some(Box::new(log_visitor)),
+        );
+
+        logger.as_ref().unwrap().debug("t1", "m1");
+        assert!(captured.lock().unwrap().is_none());
+
+        *captured.lock().unwrap() = None;
+        logger.as_ref().unwrap().info("t2", "m2");
+        assert!(captured.lock().unwrap().is_some());
+        assert_eq!(
+            captured.lock().unwrap().as_ref().unwrap().to_string(),
+            "INFO:m2".to_string()
+        );
+
+        *captured.lock().unwrap() = None;
+        logger.as_ref().unwrap().warn("t3", "m3");
+        assert!(captured.lock().unwrap().is_some());
+        assert_eq!(
+            captured.lock().unwrap().as_ref().unwrap().to_string(),
+            "WARN:m3".to_string()
+        );
+
+        *captured.lock().unwrap() = None;
+        logger.as_ref().unwrap().error("t4", "m4");
+        assert!(captured.lock().unwrap().is_some());
+        assert_eq!(
+            captured.lock().unwrap().as_ref().unwrap().to_string(),
+            "ERROR:m4".to_string()
+        );
+    }
+
+    #[test]
+    fn logger_warn_level() {
+        let mut logger = TST_LOG.lock();
+        let captured: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let captured_copy = captured.clone();
+        let log_visitor = move |level, msg: &str| {
+            *captured_copy.lock().unwrap() = Some(format!("{:?}:{}", level, msg));
+        };
+
+        re_configure(
+            logger.as_mut().unwrap(),
+            LogLevel::WARN,
+            Some(Box::new(log_visitor)),
+        );
+
+        logger.as_ref().unwrap().debug("t1", "m1");
+        assert!(captured.lock().unwrap().is_none());
+
+        *captured.lock().unwrap() = None;
+        logger.as_ref().unwrap().info("t2", "m2");
+        assert!(captured.lock().unwrap().is_none());
+
+        *captured.lock().unwrap() = None;
+        logger.as_ref().unwrap().warn("t3", "m3");
+        assert!(captured.lock().unwrap().is_some());
+        assert_eq!(
+            captured.lock().unwrap().as_ref().unwrap().to_string(),
+            "WARN:m3".to_string()
+        );
+
+        *captured.lock().unwrap() = None;
+        logger.as_ref().unwrap().error("t4", "m4");
+        assert!(captured.lock().unwrap().is_some());
+        assert_eq!(
+            captured.lock().unwrap().as_ref().unwrap().to_string(),
+            "ERROR:m4".to_string()
+        );
+    }
+
+    #[test]
+    fn logger_error_level() {
+        let mut logger = TST_LOG.lock();
+        let captured: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let captured_copy = captured.clone();
+        let log_visitor = move |level, msg: &str| {
+            *captured_copy.lock().unwrap() = Some(format!("{:?}:{}", level, msg));
+        };
+
+        re_configure(
+            logger.as_mut().unwrap(),
+            LogLevel::ERROR,
+            Some(Box::new(log_visitor)),
+        );
+
+        logger.as_ref().unwrap().debug("t1", "m1");
+        assert!(captured.lock().unwrap().is_none());
+
+        *captured.lock().unwrap() = None;
+        logger.as_ref().unwrap().info("t2", "m2");
+        assert!(captured.lock().unwrap().is_none());
+
+        *captured.lock().unwrap() = None;
+        logger.as_ref().unwrap().warn("t3", "m3");
+        assert!(captured.lock().unwrap().is_none());
+
+        *captured.lock().unwrap() = None;
+        logger.as_ref().unwrap().error("t4", "m4");
+        assert!(captured.lock().unwrap().is_some());
+        assert_eq!(
+            captured.lock().unwrap().as_ref().unwrap().to_string(),
+            "ERROR:m4".to_string()
+        );
     }
 }

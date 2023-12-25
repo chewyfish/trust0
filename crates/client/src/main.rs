@@ -16,9 +16,9 @@ fn process_runner() -> Result<(), AppError> {
         } else {
             LogLevel::ERROR
         },
-        Some(|_, _| {
+        Some(Box::new(|_, _| {
             let _ = write_shell_prompt(false);
-        }),
+        })),
     );
 
     let mut processor = MainProcessor::new(app_config);
