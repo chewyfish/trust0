@@ -1,5 +1,8 @@
-use std::io;
+use log::error;
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::{io, thread};
 
 use rustls::{ClientConnection, ServerConnection, StreamOwned};
 
@@ -133,16 +136,86 @@ pub fn clone_std_udp_socket(
     })
 }
 
+/// Connected TCP stream pair creator
+pub struct ConnectedTcpStream {
+    pub listener: Arc<TcpListener>,
+    pub server_stream: (TcpStream, SocketAddr),
+    pub client_stream: (TcpStream, SocketAddr),
+}
+
+impl ConnectedTcpStream {
+    /// ConnectedTcpStream constructor, create a connected socket pair
+    pub fn new() -> anyhow::Result<Self> {
+        // spawn server listener
+        let listener = Arc::new(TcpListener::bind("127.0.0.1:0")?);
+        let listener_copy = listener.clone();
+        let server_thread: JoinHandle<io::Result<(TcpStream, SocketAddr)>> =
+            thread::spawn(move || listener_copy.accept());
+
+        // connect to server
+        let server_addr: SocketAddr = listener.local_addr()?;
+        let client_stream = TcpStream::connect(server_addr)?;
+
+        // join server thread
+        let server_stream = server_thread.join().unwrap()?;
+
+        // instantiate ConnectedTcpStream
+        Ok(Self {
+            listener,
+            server_stream,
+            client_stream: (client_stream, server_addr),
+        })
+    }
+}
+
+impl Drop for ConnectedTcpStream {
+    fn drop(&mut self) {
+        if let Err(err) = self.server_stream.0.shutdown(Shutdown::Both) {
+            error!(
+                "Error shutting down connected tcp stream server: err={:?}",
+                &err
+            );
+        }
+        if let Err(err) = self.client_stream.0.shutdown(Shutdown::Both) {
+            error!(
+                "Error shutting down connected tcp stream client: err={:?}",
+                &err
+            );
+        }
+    }
+}
+
+/// Connected UDP socket pair creator
+pub struct ConnectedUdpSocket {
+    pub server_socket: (UdpSocket, SocketAddr),
+    pub client_socket: (UdpSocket, SocketAddr),
+}
+
+impl ConnectedUdpSocket {
+    /// ConnectedUdpStream constructor, create a connected socket pair
+    pub fn new() -> anyhow::Result<Self> {
+        // bind server/client socket
+        let server_socket = UdpSocket::bind("127.0.0.1:0")?;
+        let client_socket = UdpSocket::bind("127.0.0.1:0")?;
+        let server_addr: SocketAddr = server_socket.local_addr()?;
+        let client_addr: SocketAddr = client_socket.local_addr()?;
+
+        // connect to server
+        client_socket.connect(server_addr)?;
+
+        // instantiate ConnectedUdpSocket
+        Ok(Self {
+            server_socket: (server_socket, server_addr),
+            client_socket: (client_socket, client_addr),
+        })
+    }
+}
+
 /// Unit tests
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use anyhow::Result;
-    use log::error;
     use mockall::mock;
-    use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, UdpSocket};
-    use std::thread;
-    use std::thread::JoinHandle;
 
     // mocks
     // =====
@@ -174,86 +247,5 @@ pub mod tests {
             fn write_all(&mut self, buf: &[u8]) -> io::Result<()>;
         }
         impl StreamReaderWriter for StreamReadWrite {}
-    }
-
-    // utils
-    // =====
-
-    /// Connected TCP stream pair creator
-    pub struct ConnectedTcpStream {
-        pub listener: Arc<TcpListener>,
-        pub server_stream: (TcpStream, SocketAddr),
-        pub client_stream: (TcpStream, SocketAddr),
-    }
-
-    impl ConnectedTcpStream {
-        /// ConnectedTcpStream constructor, create a connected socket pair
-        pub fn new() -> Result<Self> {
-            // spawn server listener
-            let listener = Arc::new(TcpListener::bind("127.0.0.1:0")?);
-            let listener_copy = listener.clone();
-            let server_thread: JoinHandle<io::Result<(TcpStream, SocketAddr)>> =
-                thread::spawn(move || {
-                    let res = listener_copy.accept();
-                    res
-                });
-
-            // connect to server
-            let server_addr: SocketAddr = listener.local_addr()?;
-            let client_stream = TcpStream::connect(server_addr.clone())?;
-
-            // join server thread
-            let server_stream = server_thread.join().unwrap()?;
-
-            // instantiate ConnectedTcpStream
-            Ok(Self {
-                listener,
-                server_stream,
-                client_stream: (client_stream, server_addr),
-            })
-        }
-    }
-
-    impl Drop for ConnectedTcpStream {
-        fn drop(&mut self) {
-            if let Err(err) = self.server_stream.0.shutdown(Shutdown::Both) {
-                error!(
-                    "Error shutting down connected tcp stream server: err={:?}",
-                    &err
-                );
-            }
-            if let Err(err) = self.client_stream.0.shutdown(Shutdown::Both) {
-                error!(
-                    "Error shutting down connected tcp stream client: err={:?}",
-                    &err
-                );
-            }
-        }
-    }
-
-    /// Connected UDP socket pair creator
-    pub struct ConnectedUdpSocket {
-        pub server_socket: (UdpSocket, SocketAddr),
-        pub client_socket: (UdpSocket, SocketAddr),
-    }
-
-    impl ConnectedUdpSocket {
-        /// ConnectedUdpStream constructor, create a connected socket pair
-        pub fn new() -> Result<Self> {
-            // bind server/client socket
-            let server_socket = UdpSocket::bind("127.0.0.1:0")?;
-            let client_socket = UdpSocket::bind("127.0.0.1:0")?;
-            let server_addr: SocketAddr = server_socket.local_addr()?;
-            let client_addr: SocketAddr = client_socket.local_addr()?;
-
-            // connect to server
-            client_socket.connect(server_addr.clone())?;
-
-            // instantiate ConnectedUdpSocket
-            Ok(Self {
-                server_socket: (server_socket, server_addr),
-                client_socket: (client_socket, client_addr),
-            })
-        }
     }
 }
