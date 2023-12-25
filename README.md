@@ -1,4 +1,4 @@
-![](resources/banner.png)
+![](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/banner.png)
 
 <!-- TOC -->
   * [Trust0 SDP Service Access Framework](#trust0-sdp-service-access-framework)
@@ -95,7 +95,7 @@ There is no authentication enforced for network connections made to the T0C. Lik
 
 ### Network Diagram
 
-![](resources/network-diagram.png)
+![](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/network-diagram.png)
 
 ### Control Plane
 
@@ -747,7 +747,7 @@ You will be presented with a tmux session w/multiple panes, which represent:
 
 Follow the instructions in step order. The following shows a screencast (using asciinema) of a chat session:
 
-[![asciicast](https://asciinema.org/a/626132.png)](https://asciinema.org/a/626132)
+[![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-chat-tcp.png)](https://asciinema.org/a/626132)
 
 ### Example - Echo UDP service
 
@@ -774,7 +774,7 @@ You will be presented with a tmux session w/multiple panes, which represent:
 
 Follow the instructions in step order. The following shows a screencast (using asciinema) of a echo session:
 
-[![asciicast](https://asciinema.org/a/626134.png)](https://asciinema.org/a/626134)
+[![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-echo-udp.png)](https://asciinema.org/a/626134)
 
 ### Example - Revoke Certificate
 
@@ -802,4 +802,4 @@ You will be presented with a tmux session w/multiple panes, which represent:
 
 Follow the instructions in step order. The following shows a screencast (using asciinema) of a revoke certificate session:
 
-[![asciicast](https://asciinema.org/a/628346.png)](https://asciinema.org/a/628346)
+[![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-revoke-cert.png)](https://asciinema.org/a/628346)
