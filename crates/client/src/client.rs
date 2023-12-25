@@ -74,3 +74,18 @@ impl client_std::ClientVisitor for ClientVisitor {
         Ok(connection)
     }
 }
+
+/// Unit tests
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use crate::{config, service};
+
+    #[test]
+    fn client_new() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let service_mgr = Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+
+        let _ = Client::new(app_config, service_mgr);
+    }
+}
