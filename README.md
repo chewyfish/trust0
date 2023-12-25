@@ -243,7 +243,7 @@ Additional configuration is explained in the following usage display:
 ```
 Runs a Trust0 gateway server on :PORT.  The default PORT is 443.
 
-Usage: trust0-gateway [OPTIONS] --port <PORT> --cert-file <CERT_FILE> --key-file <KEY_FILE> --auth-cert-file <AUTH_CERT_FILE> --gateway-service-host <GATEWAY_SERVICE_HOST> <COMMAND>
+Usage: trust0-gateway [OPTIONS] --port <PORT> --cert-file <CERT_FILE> --key-file <KEY_FILE> --auth-cert-file <AUTH_CERT_FILE> --gateway-service-host <GATEWAY_SERVICE_HOST> [COMMAND]
 
 Commands:
   no-db         No DB configured, used in testing
@@ -273,6 +273,11 @@ Options:
           Accept client authentication certificates signed by those roots provided in <AUTH_CERT_FILE>
           
           [env: AUTH_CERT_FILE=]
+
+      --crl-file <CRL_FILE>
+          Perform client certificate revocation checking using the DER-encoded <CRL_FILE(s)>. Will update list during runtime, if file has changed
+          
+          [env: CRL_FILE=]
 
       --protocol-version <PROTOCOL_VERSION>
           Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead
@@ -373,10 +378,10 @@ Additional configuration is explained in the following usage display:
 ```
 Connects to the Trust0 gateway server at HOSTNAME:PORT (default PORT is 443). An control plane REPL shell allows service proxies to be opened (among other features).
 
-Usage: trust0-client [OPTIONS] --gateway_host <GATEWAY_HOST> --gateway-port <GATEWAY_PORT> --auth-key-file <AUTH_KEY_FILE> --auth-cert-file <AUTH_CERT_FILE> --ca-root-cert-file <CA_ROOT_CERT_FILE>
+Usage: trust0-client [OPTIONS] --gateway-host <GATEWAY_HOST> --gateway-port <GATEWAY_PORT> --auth-key-file <AUTH_KEY_FILE> --auth-cert-file <AUTH_CERT_FILE> --ca-root-cert-file <CA_ROOT_CERT_FILE>
 
 Options:
-  -g, --gateway_host <GATEWAY_HOST>
+  -g, --gateway-host <GATEWAY_HOST>
           Connect to <GATEWAY_HOST>
           
           [env: GATEWAY_HOST=]
@@ -454,7 +459,7 @@ Options:
 Here is an example invocation (taken from the provided [Chat TCP](#example---chat-tcp-service) example):
 
 ```
-<TRUST0_REPO>/example$ <TRUST0_REPO>/target/debug/trust0-client --gateway_host localhost --gateway-port 8400 --auth-key-file target/example-client.local.key.pem --auth-cert-file target/example-client.local.crt.pem --ca-root-cert-file target/example-ca.local.crt.pem
+<TRUST0_REPO>/example$ <TRUST0_REPO>/target/debug/trust0-client --gateway-host localhost --gateway-port 8400 --auth-key-file target/example-client.local.key.pem --auth-cert-file target/example-client.local.crt.pem --ca-root-cert-file target/example-ca.local.crt.pem
 ```
 
 ### Tools
