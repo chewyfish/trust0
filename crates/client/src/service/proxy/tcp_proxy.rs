@@ -267,3 +267,92 @@ impl conn_std::ConnectionVisitor for ClientConnVisitor {
 }
 
 unsafe impl Send for ClientConnVisitor {}
+
+/// Unit tests
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use crate::config;
+    use std::sync;
+    use trust0_common::model::service::Transport;
+    use trust0_common::net::stream_utils;
+    use trust0_common::net::tcp_server::server_std::ServerVisitor;
+
+    #[test]
+    fn tcpcliproxy_new() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let server_visitor = Arc::new(Mutex::new(TcpClientProxyServerVisitor {
+            app_config: app_config.clone(),
+            service: Service {
+                service_id: 200,
+                name: "svc200".to_string(),
+                transport: Transport::TCP,
+                host: "svchost1".to_string(),
+                port: 4000,
+            },
+            client_proxy_port: 3000,
+            gateway_proxy_host: "gwhost1".to_string(),
+            gateway_proxy_port: 2000,
+            proxy_tasks_sender: sync::mpsc::channel().0,
+            proxy_events_sender: sync::mpsc::channel().0,
+            services_by_proxy_key: Arc::new(Mutex::new(HashMap::new())),
+            proxy_keys: HashSet::new(),
+            shutdown_requested: false,
+        }));
+
+        let _ = TcpClientProxy::new(app_config, server_visitor, 3000);
+    }
+
+    #[test]
+    fn tcpsvrproxyvisit_new() {
+        let server_visitor = TcpClientProxyServerVisitor::new(
+            Arc::new(config::tests::create_app_config(None).unwrap()),
+            Service {
+                service_id: 200,
+                name: "svc200".to_string(),
+                transport: Transport::TCP,
+                host: "svchost1".to_string(),
+                port: 4000,
+            },
+            3000,
+            "gwhost1",
+            2000,
+            sync::mpsc::channel().0,
+            sync::mpsc::channel().0,
+            Arc::new(Mutex::new(HashMap::new())),
+        );
+
+        assert!(server_visitor.is_ok());
+    }
+
+    #[test]
+    fn tcpsvrproxyvisit_create_client_conn() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
+
+        let mut server_visitor = TcpClientProxyServerVisitor {
+            app_config: app_config.clone(),
+            service: Service {
+                service_id: 200,
+                name: "svc200".to_string(),
+                transport: Transport::TCP,
+                host: "svchost1".to_string(),
+                port: 4000,
+            },
+            client_proxy_port: 3000,
+            gateway_proxy_host: "gwhost1".to_string(),
+            gateway_proxy_port: 2000,
+            proxy_tasks_sender: sync::mpsc::channel().0,
+            proxy_events_sender: sync::mpsc::channel().0,
+            services_by_proxy_key: Arc::new(Mutex::new(HashMap::new())),
+            proxy_keys: HashSet::new(),
+            shutdown_requested: false,
+        };
+
+        if let Err(err) = server_visitor.create_client_conn(
+            stream_utils::clone_std_tcp_stream(&connected_tcp_stream.server_stream.0).unwrap(),
+        ) {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+}

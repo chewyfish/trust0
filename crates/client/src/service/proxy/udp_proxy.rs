@@ -311,3 +311,62 @@ impl ClientServiceProxyVisitor for UdpClientProxyServerVisitor {
         };
     }
 }
+
+/// Unit tests
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use crate::config;
+    use std::sync;
+    use trust0_common::model::service::Transport;
+
+    #[test]
+    fn udpcliproxy_new() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let server_visitor = Arc::new(Mutex::new(UdpClientProxyServerVisitor {
+            app_config: app_config.clone(),
+            service: Service {
+                service_id: 200,
+                name: "svc200".to_string(),
+                transport: Transport::UDP,
+                host: "svchost1".to_string(),
+                port: 4000,
+            },
+            client_proxy_port: 3000,
+            gateway_proxy_host: "gwhost1".to_string(),
+            gateway_proxy_port: 2000,
+            server_socket_channel_sender: mpsc::channel().0,
+            proxy_tasks_sender: mpsc::channel().0,
+            proxy_events_sender: mpsc::channel().0,
+            services_by_proxy_key: Arc::new(Mutex::new(HashMap::new())),
+            socket_channel_senders_by_proxy_key: HashMap::new(),
+            proxy_keys: HashSet::new(),
+            shutdown_requested: false,
+        }));
+
+        let _ = UdpClientProxy::new(app_config, mpsc::channel().1, server_visitor, 3000);
+    }
+
+    #[test]
+    fn udpsvrproxyvisit_new() {
+        let server_visitor = UdpClientProxyServerVisitor::new(
+            Arc::new(config::tests::create_app_config(None).unwrap()),
+            Service {
+                service_id: 200,
+                name: "svc200".to_string(),
+                transport: Transport::UDP,
+                host: "svchost1".to_string(),
+                port: 4000,
+            },
+            3000,
+            "gwhost1",
+            2000,
+            sync::mpsc::channel().0,
+            sync::mpsc::channel().0,
+            sync::mpsc::channel().0,
+            Arc::new(Mutex::new(HashMap::new())),
+        );
+
+        assert!(server_visitor.is_ok());
+    }
+}
