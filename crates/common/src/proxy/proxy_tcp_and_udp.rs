@@ -364,7 +364,7 @@ unsafe impl Send for TcpAndUdpStreamProxy {}
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::net::stream_utils::tests::{ConnectedTcpStream, ConnectedUdpSocket};
+    use crate::net::stream_utils::{ConnectedTcpStream, ConnectedUdpSocket};
     use anyhow::Result;
     use std::io::ErrorKind::WouldBlock;
     use std::io::{Read, Write};

@@ -39,6 +39,7 @@ impl ConnectionEvent {
 pub struct Connection {
     visitor: Box<dyn ConnectionVisitor>,
     tls_conn: Option<TlsClientConnection>,
+    #[allow(dead_code)]
     tls_conn_alt: Option<Box<dyn StreamReaderWriter>>,
     tcp_stream: Option<TcpStream>,
     event_channel: (Sender<ConnectionEvent>, Receiver<ConnectionEvent>),
@@ -242,12 +243,7 @@ impl Connection {
         let mut buffer = Vec::new();
         let mut buff_chunk = [0; READ_BLOCK_SIZE];
         loop {
-            let read_result = if self.tls_conn.is_some() {
-                self.tls_conn.as_mut().unwrap().read(&mut buff_chunk)
-            } else {
-                self.tls_conn_alt.as_mut().unwrap().read(&mut buff_chunk)
-            };
-            let bytes_read = match read_result {
+            let bytes_read = match self.read_stream(&mut buff_chunk) {
                 Ok(bytes_read) => bytes_read,
 
                 Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
@@ -282,14 +278,21 @@ impl Connection {
         Ok(buffer)
     }
 
+    /// Read stream content implementation
+    #[cfg(not(test))]
+    #[inline(always)]
+    fn read_stream(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.tls_conn.as_mut().unwrap().read(buffer)
+    }
+    #[cfg(test)]
+    #[inline(always)]
+    fn read_stream(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.tls_conn_alt.as_mut().unwrap().read(buffer)
+    }
+
     /// Write content to client connection
     fn write_tls_conn(&mut self, buffer: &[u8]) -> Result<(), AppError> {
-        let write_result = if self.tls_conn.is_some() {
-            self.tls_conn.as_mut().unwrap().write_all(buffer)
-        } else {
-            self.tls_conn_alt.as_mut().unwrap().write_all(buffer)
-        };
-        match write_result {
+        match self.write_stream(buffer) {
             Ok(()) => {}
 
             Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => self
@@ -323,6 +326,18 @@ impl Connection {
         }
 
         Ok(())
+    }
+
+    /// Write stream content implementation
+    #[cfg(not(test))]
+    #[inline(always)]
+    fn write_stream(&mut self, buffer: &[u8]) -> io::Result<()> {
+        self.tls_conn.as_mut().unwrap().write_all(buffer)
+    }
+    #[cfg(test)]
+    #[inline(always)]
+    fn write_stream(&mut self, buffer: &[u8]) -> io::Result<()> {
+        self.tls_conn_alt.as_mut().unwrap().write_all(buffer)
     }
 }
 

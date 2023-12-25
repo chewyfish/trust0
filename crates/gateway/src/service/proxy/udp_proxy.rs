@@ -362,3 +362,83 @@ impl GatewayServiceProxyVisitor for UdpGatewayProxyServerVisitor {
         }
     }
 }
+
+/// Unit tests
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use crate::repository::access_repo::tests::MockAccessRepo;
+    use crate::repository::service_repo::tests::MockServiceRepo;
+    use crate::repository::user_repo::tests::MockUserRepo;
+    use crate::{config, service};
+    use std::sync;
+    use trust0_common::model::service::Transport;
+
+    #[test]
+    fn udpgwproxy_new() {
+        let app_config = Arc::new(
+            config::tests::create_app_config_with_repos(
+                Arc::new(Mutex::new(MockUserRepo::new())),
+                Arc::new(Mutex::new(MockServiceRepo::new())),
+                Arc::new(Mutex::new(MockAccessRepo::new())),
+            )
+            .unwrap(),
+        );
+        let service_mgr = Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+        let server_visitor = Arc::new(Mutex::new(UdpGatewayProxyServerVisitor {
+            app_config: app_config.clone(),
+            service_mgr: service_mgr.clone(),
+            service: Service {
+                service_id: 200,
+                name: "svc200".to_string(),
+                transport: Transport::UDP,
+                host: "svchost1".to_string(),
+                port: 4000,
+            },
+            proxy_host: Some("gwhost1".to_string()),
+            proxy_port: 2000,
+            proxy_tasks_sender: sync::mpsc::channel().0,
+            proxy_events_sender: sync::mpsc::channel().0,
+            services_by_proxy_key: Arc::new(Mutex::new(HashMap::new())),
+            users_by_proxy_addrs: HashMap::new(),
+            proxy_addrs_by_proxy_key: HashMap::new(),
+            proxy_keys_by_user: HashMap::new(),
+        }));
+
+        let _ = UdpGatewayProxy::new(app_config, server_visitor, 3000);
+    }
+
+    #[test]
+    fn udpsvrproxyvisit_new() {
+        let app_config = Arc::new(
+            config::tests::create_app_config_with_repos(
+                Arc::new(Mutex::new(MockUserRepo::new())),
+                Arc::new(Mutex::new(MockServiceRepo::new())),
+                Arc::new(Mutex::new(MockAccessRepo::new())),
+            )
+            .unwrap(),
+        );
+        let service_mgr = Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+
+        let result = UdpGatewayProxyServerVisitor::new(
+            app_config,
+            service_mgr,
+            Service {
+                service_id: 200,
+                name: "svc200".to_string(),
+                transport: Transport::UDP,
+                host: "svchost1".to_string(),
+                port: 4000,
+            },
+            Some("gwhost1".to_string()),
+            2000,
+            sync::mpsc::channel().0,
+            sync::mpsc::channel().0,
+            Arc::new(Mutex::new(HashMap::new())),
+        );
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+}

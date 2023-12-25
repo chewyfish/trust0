@@ -380,7 +380,7 @@ unsafe impl Send for TcpAndTcpStreamProxy {}
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::net::stream_utils::tests::ConnectedTcpStream;
+    use crate::net::stream_utils::ConnectedTcpStream;
     use anyhow::Result;
     use std::io::ErrorKind::WouldBlock;
     use std::io::{Read, Write};

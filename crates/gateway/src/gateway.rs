@@ -125,3 +125,127 @@ impl server_std::ServerVisitor for ServerVisitor {
         self.shutdown_requested
     }
 }
+
+/// Unit tests
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use crate::repository::access_repo::tests::MockAccessRepo;
+    use crate::repository::service_repo::tests::MockServiceRepo;
+    use crate::repository::user_repo::tests::MockUserRepo;
+    use crate::service;
+    use crate::service::proxy::proxy_base::tests::MockGwSvcProxyVisitor;
+    use mockall::predicate;
+
+    #[test]
+    fn gateway_new() {
+        let app_config = Arc::new(
+            config::tests::create_app_config_with_repos(
+                Arc::new(Mutex::new(MockUserRepo::new())),
+                Arc::new(Mutex::new(MockServiceRepo::new())),
+                Arc::new(Mutex::new(MockAccessRepo::new())),
+            )
+            .unwrap(),
+        );
+        let service_mgr = Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+        let server_visitor = Arc::new(Mutex::new(ServerVisitor {
+            app_config: app_config.clone(),
+            service_mgr: service_mgr.clone(),
+            control_plane_visitor: ControlPlaneServerVisitor::new(
+                app_config.clone(),
+                service_mgr.clone(),
+            ),
+            shutdown_requested: false,
+        }));
+
+        let _ = Gateway::new(app_config, server_visitor);
+    }
+
+    #[test]
+    fn servervisit_new() {
+        let app_config = Arc::new(
+            config::tests::create_app_config_with_repos(
+                Arc::new(Mutex::new(MockUserRepo::new())),
+                Arc::new(Mutex::new(MockServiceRepo::new())),
+                Arc::new(Mutex::new(MockAccessRepo::new())),
+            )
+            .unwrap(),
+        );
+        let service_mgr = Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+
+        let _ = ServerVisitor::new(app_config.clone(), service_mgr.clone());
+    }
+
+    #[test]
+    fn servervisit_get_service_proxy_when_existent() {
+        let app_config = Arc::new(
+            config::tests::create_app_config_with_repos(
+                Arc::new(Mutex::new(MockUserRepo::new())),
+                Arc::new(Mutex::new(MockServiceRepo::new())),
+                Arc::new(Mutex::new(MockAccessRepo::new())),
+            )
+            .unwrap(),
+        );
+
+        let mut service_mgr = service::manager::tests::MockSvcMgr::new();
+        service_mgr
+            .expect_get_service_proxy()
+            .with(predicate::eq(100))
+            .times(1)
+            .return_once(|_| Some(Arc::new(Mutex::new(MockGwSvcProxyVisitor::new()))));
+        let service_mgr = Arc::new(Mutex::new(service_mgr));
+
+        let server_visitor = ServerVisitor::new(app_config, service_mgr);
+
+        if let Err(err) = server_visitor.get_service_proxy(100) {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn servervisit_get_service_proxy_when_nonexistent() {
+        let app_config = Arc::new(
+            config::tests::create_app_config_with_repos(
+                Arc::new(Mutex::new(MockUserRepo::new())),
+                Arc::new(Mutex::new(MockServiceRepo::new())),
+                Arc::new(Mutex::new(MockAccessRepo::new())),
+            )
+            .unwrap(),
+        );
+
+        let mut service_mgr = service::manager::tests::MockSvcMgr::new();
+        service_mgr
+            .expect_get_service_proxy()
+            .with(predicate::eq(100))
+            .times(1)
+            .return_once(|_| None);
+        let service_mgr = Arc::new(Mutex::new(service_mgr));
+
+        let server_visitor = ServerVisitor::new(app_config, service_mgr);
+
+        if let Ok(_) = server_visitor.get_service_proxy(100) {
+            panic!("Unexpected existent result");
+        }
+    }
+
+    #[test]
+    fn servervisit_set_shutdown_requested() {
+        let app_config = Arc::new(
+            config::tests::create_app_config_with_repos(
+                Arc::new(Mutex::new(MockUserRepo::new())),
+                Arc::new(Mutex::new(MockServiceRepo::new())),
+                Arc::new(Mutex::new(MockAccessRepo::new())),
+            )
+            .unwrap(),
+        );
+        let service_mgr = Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+
+        let mut server_visitor = ServerVisitor::new(app_config, service_mgr);
+
+        server_visitor.set_shutdown_requested(true);
+        assert_eq!(server_visitor.shutdown_requested, true);
+
+        server_visitor.set_shutdown_requested(false);
+        assert_eq!(server_visitor.shutdown_requested, false);
+    }
+}

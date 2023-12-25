@@ -14,7 +14,7 @@ use trust0_common::error::AppError;
 #[command(author, version, long_about)]
 pub struct AppConfigArgs {
     /// Connect to <GATEWAY_HOST>
-    #[arg(required = true, short = 'g', long = "gateway_host", env)]
+    #[arg(required = true, short = 'g', long = "gateway-host", env)]
     pub gateway_host: String,
 
     /// Connect to <GATEWAY_PORT>
@@ -84,11 +84,10 @@ pub struct AppConfig {
 
 impl AppConfig {
     // load config
-
     pub fn new() -> Result<Self, AppError> {
         // parse process arguments
 
-        let config_args = AppConfigArgs::parse();
+        let config_args = Self::parse_config();
 
         // create TLS client configuration
 
@@ -160,6 +159,18 @@ impl AppConfig {
             console_shell_output: Arc::new(Mutex::new(ShellOutputWriter::new(None))),
         })
     }
+
+    #[cfg(not(test))]
+    #[inline(always)]
+    fn parse_config() -> AppConfigArgs {
+        AppConfigArgs::parse()
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    fn parse_config() -> AppConfigArgs {
+        AppConfigArgs::parse_from::<Vec<_>, String>(vec![])
+    }
 }
 
 mod danger {
@@ -222,11 +233,14 @@ mod danger {
 /// Unit tests
 #[cfg(test)]
 pub mod tests {
-
     use super::*;
+    use crate::config::danger::NoCertificateVerification;
+    use pki_types::{ServerName, UnixTime};
+    use rustls::client::danger::ServerCertVerifier;
+    use std::env;
     use std::path::PathBuf;
 
-    const _CERTFILE_ROOT_CA_PATHPARTS: [&str; 3] =
+    const CERTFILE_ROOT_CA_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "root-ca.crt.pem"];
     const CERTFILE_CLIENT_UID100_PATHPARTS: [&str; 3] = [
         env!("CARGO_MANIFEST_DIR"),
@@ -239,6 +253,8 @@ pub mod tests {
         "client-uid100.key.pem",
     ];
 
+    // utils
+    // =====
     pub fn create_app_config(
         shell_output_writer: Option<ShellOutputWriter>,
     ) -> Result<AppConfig, AppError> {
@@ -276,5 +292,81 @@ pub mod tests {
             verbose_logging: false,
             console_shell_output: Arc::new(Mutex::new(shell_output_writer)),
         })
+    }
+
+    // tests
+    // =====
+
+    #[test]
+    fn appcfg_new_when_all_supplied_and_valid() {
+        let ca_root_cert_file: PathBuf = CERTFILE_ROOT_CA_PATHPARTS.iter().collect();
+        let ca_root_cert_file_str = ca_root_cert_file.to_str().unwrap();
+        let client_key_file: PathBuf = KEYFILE_CLIENT_UID100_PATHPARTS.iter().collect();
+        let client_key_file_str = client_key_file.to_str().unwrap();
+        let client_cert_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
+        let client_cert_file_str = client_cert_file.to_str().unwrap();
+        env::set_var("GATEWAY_HOST", "gwhost1");
+        env::set_var("GATEWAY_PORT", "8000");
+        env::set_var("AUTH_KEY_FILE", client_key_file_str);
+        env::set_var("AUTH_CERT_FILE", client_cert_file_str);
+        env::set_var("CA_ROOT_CERT_FILE", ca_root_cert_file_str);
+        env::set_var("PROTOCOL_VERSION", "1.3");
+        env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
+        env::set_var("MAX_FRAG_SIZE", "1024");
+        env::set_var("SESSION_RESUMPTION", "true");
+        env::set_var("NO_TICKETS", "true");
+        env::set_var("NO_SNI", "true");
+        env::set_var("INSECURE", "true");
+        env::set_var("VERBOSE", "true");
+
+        let result = AppConfig::new();
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+        let config = result.unwrap();
+
+        assert_eq!(config.gateway_host, "gwhost1".to_string());
+        assert_eq!(config.gateway_port, 8000);
+        assert!(config
+            .tls_client_config
+            .client_auth_cert_resolver
+            .has_certs());
+        assert!(!config.tls_client_config.enable_sni);
+        let expected_alpn_protocols: Vec<Vec<u8>> = vec![];
+        assert_eq!(
+            config.tls_client_config.alpn_protocols,
+            expected_alpn_protocols
+        );
+        assert!(config.tls_client_config.max_fragment_size.is_some());
+        assert_eq!(config.tls_client_config.max_fragment_size.unwrap(), 1024);
+        assert!(config.verbose_logging);
+    }
+
+    #[test]
+    fn nocertverify_verify_server_cert() {
+        let ca_root_cert_file: PathBuf = CERTFILE_ROOT_CA_PATHPARTS.iter().collect();
+        let ca_root_cert_file_str = ca_root_cert_file.to_str().unwrap();
+        let client_cert_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
+        let client_cert_file_str = client_cert_file.to_str().unwrap();
+        let ca_root_cert = load_certificates(ca_root_cert_file_str.to_string()).unwrap();
+        let client_cert = load_certificates(client_cert_file_str.to_string()).unwrap();
+
+        let no_cert_verification = NoCertificateVerification {};
+        match no_cert_verification.verify_server_cert(
+            client_cert.get(0).unwrap(),
+            ca_root_cert.as_slice(),
+            &ServerName::try_from("server1").unwrap(),
+            &vec![],
+            UnixTime::now(),
+        ) {
+            Ok(_) => {}
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
+    }
+
+    #[test]
+    fn nocertverify_supported_verify_schemes() {
+        let no_cert_verification = NoCertificateVerification {};
+        assert!(no_cert_verification.supported_verify_schemes().len() > 0);
     }
 }
