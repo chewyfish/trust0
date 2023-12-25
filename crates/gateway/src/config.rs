@@ -201,7 +201,7 @@ pub struct AppConfigArgs {
 
     /// DB datasource configuration
     #[command(subcommand)]
-    pub datasource: DataSource,
+    pub datasource: Option<DataSource>,
 }
 
 /// TLS server configuration builder
@@ -296,14 +296,21 @@ impl AppConfig {
     /// Load config
     pub fn new() -> Result<Self, AppError> {
         // parse process arguments
-
-        let config_args = AppConfigArgs::parse();
+        let mut config_args = Self::parse_config();
 
         // Datasource repositories
 
+        if config_args.datasource.is_none() {
+            config_args.datasource = Some(DataSource::NoDB);
+        }
+
         let repositories = Self::create_datasource_repositories(
-            &config_args.datasource,
-            &config_args.datasource.repository_factories(),
+            config_args.datasource.as_ref().unwrap(),
+            &config_args
+                .datasource
+                .as_ref()
+                .unwrap()
+                .repository_factories(),
         )?;
 
         // create TLS server configuration builder
@@ -447,12 +454,23 @@ impl AppConfig {
 
         Ok((port_start, port_end))
     }
+
+    #[cfg(not(test))]
+    #[inline(always)]
+    fn parse_config() -> AppConfigArgs {
+        AppConfigArgs::parse()
+    }
+
+    #[cfg(test)]
+    #[inline(always)]
+    fn parse_config() -> AppConfigArgs {
+        AppConfigArgs::parse_from::<Vec<_>, String>(vec![])
+    }
 }
 
 /// Unit tests
 #[cfg(test)]
 pub mod tests {
-
     use super::*;
     use crate::repository::access_repo::tests::MockAccessRepo;
     use crate::repository::access_repo::AccessRepository;
@@ -461,14 +479,21 @@ pub mod tests {
     use crate::repository::user_repo::tests::MockUserRepo;
     use crate::repository::user_repo::UserRepository;
     use mockall::predicate;
+    use std::env;
     use std::path::PathBuf;
 
+    const _CERTFILE_CLIENT_UID100_PATHPARTS: [&str; 3] = [
+        env!("CARGO_MANIFEST_DIR"),
+        "testdata",
+        "client-uid100.crt.pem",
+    ];
     const CERTFILE_GATEWAY_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "gateway.crt.pem"];
     const KEYFILE_GATEWAY_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "gateway.key.pem"];
 
-    // Utilities
+    // utils
+    // =====
 
     pub fn create_app_config_with_repos(
         user_repo: Arc<Mutex<dyn UserRepository>>,
@@ -519,15 +544,82 @@ pub mod tests {
         })
     }
 
+    // tests
+    // =====
+
     #[test]
-    pub fn appconfig_parse_gateway_service_ports_when_invalid_range() {
+    fn appcfg_new_when_all_supplied_and_valid() {
+        let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
+        let gateway_key_file_str = gateway_key_file.to_str().unwrap();
+        let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
+        let gateway_cert_file_str = gateway_cert_file.to_str().unwrap();
+        env::set_var("PORT", "8000");
+        env::set_var("KEY_FILE", gateway_key_file_str);
+        env::set_var("CERT_FILE", gateway_cert_file_str);
+        env::set_var("AUTH_CERT_FILE", gateway_cert_file_str);
+        env::set_var("PROTOCOL_VERSION", "1.3");
+        env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
+        env::set_var("SESSION_RESUMPTION", "true");
+        env::set_var("ICKETS", "true");
+        env::set_var("GATEWAY_SERVICE_HOST", "gwhost1");
+        env::set_var("GATEWAY_SERVICE_PORTS", "8000-8010");
+        env::set_var("GATEWAY_SERVICE_REPLY_HOST", "gwhost2");
+        env::set_var("NO_MASK_ADDRESSES", "true");
+        env::set_var("MODE", "control-plane");
+        env::set_var("VERBOSE", "true");
+
+        let result = AppConfig::new();
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+        let config = result.unwrap();
+
+        assert_eq!(config.server_port, 8000);
+        assert!(config.gateway_service_host.is_some());
+        assert_eq!(config.gateway_service_host.unwrap(), "gwhost1".to_string());
+        assert!(config.gateway_service_ports.is_some());
+        assert_eq!(config.gateway_service_ports.unwrap(), (8000, 8010));
+        assert!(!config.mask_addresses);
+        assert_eq!(config.gateway_service_reply_host, "gwhost2".to_string());
+        assert!(config.verbose_logging);
+    }
+
+    #[test]
+    fn tlsservercfgbld_build() {
+        let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
+        let gateway_key_file_str = gateway_key_file.to_str().unwrap();
+        let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
+        let gateway_cert_file_str = gateway_cert_file.to_str().unwrap();
+        let mut auth_root_certs = rustls::RootCertStore::empty();
+        for auth_root_cert in load_certificates(gateway_cert_file_str.to_string()).unwrap() {
+            auth_root_certs.add(auth_root_cert).unwrap();
+        }
+
+        let config_builder = TlsServerConfigBuilder {
+            certs: load_certificates(gateway_cert_file_str.to_string()).unwrap(),
+            key: load_private_key(gateway_key_file_str.to_string()).unwrap(),
+            cipher_suites: rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec(),
+            protocol_versions: rustls::ALL_VERSIONS.to_vec(),
+            auth_root_certs,
+            crl_file: None,
+            session_resumption: true,
+            alpn_protocols: vec![alpn::Protocol::ControlPlane.to_string().into_bytes()],
+        };
+
+        if let Err(err) = config_builder.build() {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn appconfig_parse_gateway_service_ports_when_invalid_range() {
         if let Ok(range) = AppConfig::parse_gateway_service_ports("20-NAN") {
             panic!("Unexpected result: val={:?}", &range);
         }
     }
 
     #[test]
-    pub fn appconfig_parse_gateway_service_ports_when_valid_range() {
+    fn appconfig_parse_gateway_service_ports_when_valid_range() {
         let result = AppConfig::parse_gateway_service_ports("20-40");
         if let Ok(range) = result {
             assert_eq!(range, (20, 40));
@@ -538,7 +630,7 @@ pub mod tests {
     }
 
     #[test]
-    pub fn appconfig_create_datasource_repositories_when_inmemdb_ds() {
+    fn appconfig_create_datasource_repositories_when_inmemdb_ds() {
         let repo_factories: (
             Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
             Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,
@@ -587,7 +679,7 @@ pub mod tests {
     }
 
     #[test]
-    pub fn appconfig_create_datasource_repositories_when_nodb_ds() {
+    fn appconfig_create_datasource_repositories_when_nodb_ds() {
         let repo_factories: (
             Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
             Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,
