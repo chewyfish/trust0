@@ -71,17 +71,6 @@ lazy_static! {
     };
 }
 
-/// Which mode the server operates in.
-#[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-pub enum ServerMode {
-    /// Control-plane for service gateway management
-    #[default]
-    ControlPlane,
-
-    /// Forward traffic to respective service
-    Proxy,
-}
-
 /// Datasource configuration for the trust framework entities
 #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 pub enum DataSource {
@@ -196,10 +185,6 @@ pub struct AppConfigArgs {
     #[arg(required = false, long = "no-mask-addrs", default_value_t = false, env)]
     pub no_mask_addresses: bool,
 
-    /// Server mode: startup server as control-plane, or as a stand-alone service gateway node
-    #[arg(required = false, value_enum, long = "mode", env)]
-    pub mode: Option<ServerMode>,
-
     /// DB datasource type
     #[arg(required = false, value_enum, long = "datasource", default_value_t = crate::config::DataSource::InMemoryDb, env)]
     pub datasource: DataSource,
@@ -291,7 +276,6 @@ impl TlsServerConfigBuilder {
 
 /// Main application configuration/context struct
 pub struct AppConfig {
-    pub server_mode: ServerMode,
     pub server_port: u16,
     pub tls_server_config_builder: TlsServerConfigBuilder,
     pub crl_reloader_loading: Arc<Mutex<bool>>,
@@ -387,7 +371,6 @@ impl AppConfig {
 
         // Instantiate AppConfig
         Ok(AppConfig {
-            server_mode: config_args.mode.unwrap_or_default(),
             server_port: config_args.port,
             tls_server_config_builder,
             crl_reloader_loading,
@@ -556,7 +539,6 @@ pub mod tests {
         };
 
         Ok(AppConfig {
-            server_mode: ServerMode::ControlPlane,
             server_port: 2000,
             tls_server_config_builder,
             crl_reloader_loading: Arc::new(Mutex::new(false)),

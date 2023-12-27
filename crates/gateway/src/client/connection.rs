@@ -21,7 +21,6 @@ use trust0_common::{crypto, target};
 /// tls_server::std_conn::Connection strategy visitor pattern implementation
 pub struct ClientConnVisitor {
     app_config: Arc<AppConfig>,
-    server_mode: config::ServerMode,
     access_repo: Arc<Mutex<dyn AccessRepository>>,
     service_repo: Arc<Mutex<dyn ServiceRepository>>,
     user_repo: Arc<Mutex<dyn UserRepository>>,
@@ -35,14 +34,12 @@ pub struct ClientConnVisitor {
 impl ClientConnVisitor {
     /// ClientConnVisitor constructor
     pub fn new(app_config: Arc<AppConfig>, service_mgr: Arc<Mutex<dyn ServiceMgr>>) -> Self {
-        let server_mode = app_config.server_mode;
         let access_repo = Arc::clone(&app_config.access_repo);
         let service_repo = Arc::clone(&app_config.service_repo);
         let user_repo = Arc::clone(&app_config.user_repo);
 
         Self {
             app_config: app_config.clone(),
-            server_mode,
             access_repo,
             service_repo,
             user_repo,
@@ -207,24 +204,18 @@ impl conn_std::ConnectionVisitor for ClientConnVisitor {
     }
 
     fn on_connection_read(&mut self, data: &[u8]) -> Result<(), AppError> {
-        match self.server_mode {
-            config::ServerMode::ControlPlane => {
-                let data_text = String::from_utf8(data.to_vec()).map_err(|err| {
-                    AppError::GenWithMsgAndErr(
-                        "Error converting client input as UTF8".to_string(),
-                        Box::new(err),
-                    )
-                })?;
+        let data_text = String::from_utf8(data.to_vec()).map_err(|err| {
+            AppError::GenWithMsgAndErr(
+                "Error converting client input as UTF8".to_string(),
+                Box::new(err),
+            )
+        })?;
 
-                let _ = self
-                    .request_processor
-                    .as_mut()
-                    .unwrap()
-                    .process_request(&self.service_mgr, &data_text)?;
-            }
-
-            config::ServerMode::Proxy => {}
-        }
+        let _ = self
+            .request_processor
+            .as_mut()
+            .unwrap()
+            .process_request(&self.service_mgr, &data_text)?;
 
         Ok(())
     }
