@@ -174,7 +174,7 @@ Additionally, client (X.509) certificates are created w/a subject alternative na
 URI = {"userId": <USER_ID>, "platform": <DEVICE_PLATFORM>"}
 ```
 
-This allows the gateway to identify the user by their "userId" value (currently platform is not used). Subsequently, the gateway can enforce the appropriate authorization for their session.
+This allows the gateway to identify the user by their "userId" value (currently platform is not used). Subsequently, the gateway can enforce the appropriate authorization for their session. For instance it will check the respective [User Table](#user-table) record for the current status (values: `Active`, `Inactive`). Additionally if they are making a service proxy connection, it will validate the service and if the user has appropriate access by looking up the appropriate records in the [Service Table](#service-table) and [Access Table](#access-table).
 
 All connections use the same gateway port. The gateway knows the kind of connection based on the TLS application-layer protocol negotiation (ALPN) value given by the Trust0 client. The types of values are as follows:
 
@@ -194,7 +194,11 @@ For more details on using the CRL feature:
 
 ### Database
 
-The database is used to enforce user access to Trust0 and the respective services. Currently only a simple in-memory DB based on JSON files is available. The repository is exposed as an abstract trait, so additional DB implementations may be developed.
+The database is used to enforce user access to Trust0 and the respective services.
+
+Currently only a simple in-memory DB based on JSON files is available. At runtime, the system will periodically scan for file changes and reload the corresponding DB with latest records from the changed file.
+
+The repository is exposed as an abstract trait, so additional DB implementations may be developed.
 
 #### User Table
 
