@@ -17,7 +17,6 @@ use trust0_common::net::tls_server::{conn_std, server_std};
 /// The Trust0 Gateway TLS Server
 pub struct Gateway {
     _app_config: Arc<AppConfig>,
-    _server_mode: config::ServerMode,
     tls_server: server_std::Server,
     _visitor: Arc<Mutex<ServerVisitor>>,
 }
@@ -27,7 +26,6 @@ impl Gateway {
     pub fn new(app_config: Arc<AppConfig>, visitor: Arc<Mutex<ServerVisitor>>) -> Self {
         Self {
             _app_config: Arc::clone(&app_config),
-            _server_mode: app_config.server_mode,
             tls_server: server_std::Server::new(visitor.clone(), app_config.server_port),
             _visitor: visitor,
         }

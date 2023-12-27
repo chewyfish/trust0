@@ -240,21 +240,23 @@ Access is a join table linking users to services. This serves as the authority o
 The gateway needs to be configured with the:
 * listener port
 * PKI certificates/keys (CA certificate, mTLS auth certificate, and its own certificate/key)
-* DB access information
+* DB access information (may be left out, but client connections would be prohibited)
 
 Additional configuration is explained in the following usage display:
 
 ```
 Runs a Trust0 gateway server on :PORT.  The default PORT is 443.
 
-Usage: trust0-gateway [OPTIONS] --port <PORT> --cert-file <CERT_FILE> --key-file <KEY_FILE> --auth-cert-file <AUTH_CERT_FILE> --gateway-service-host <GATEWAY_SERVICE_HOST> [COMMAND]
-
-Commands:
-  no-db         No DB configured, used in testing
-  in-memory-db  In-memory DB, with a simple backing persistence store
-  help          Print this message or the help of the given subcommand(s)
+Usage: trust0-gateway [OPTIONS] --port <PORT> --cert-file <CERT_FILE> --key-file <KEY_FILE> --auth-cert-file <AUTH_CERT_FILE> --gateway-service-host <GATEWAY_SERVICE_HOST>
 
 Options:
+  -f, --config-file <CONFIG_FILE>
+          Config file (as a shell environment file), using program's environment variable naming (see below).
+          Note - Each config file variable entry may be overriden via their respective command-line arguments
+          Note - Must be first argument (if provided)
+          
+          [env: CONFIG_FILE=]
+
   -p, --port <PORT>
           Listen on PORT
           
@@ -333,14 +335,30 @@ Options:
           
           [env: NO_MASK_ADDRESSES=]
 
-      --mode <MODE>
-          Server mode: startup server as control-plane, or as a stand-alone service gateway node
+      --datasource <DATASOURCE>
+          DB datasource type
           
-          [env: MODE=]
+          [env: DATASOURCE=]
+          [default: in-memory-db]
 
           Possible values:
-          - control-plane: Control-plane for service gateway management
-          - proxy:         Forward traffic to respective service
+          - in-memory-db: In-memory DB, with a simple backing persistence store. Entity store connect strings file paths to JSON record files
+          - no-db:        No DB configured, used in testing (internally empty in-memory DB structures are used)
+
+      --access-db-connect <ACCESS_DB_CONNECT>
+          (Service) Access entity store connect specifier string
+          
+          [env: ACCESS_DB_CONNECT=]
+
+      --service-db-connect <SERVICE_DB_CONNECT>
+          Service entity store connect specifier string
+          
+          [env: SERVICE_DB_CONNECT=]
+
+      --user-db-connect <USER_DB_CONNECT>
+          User entity store connect specifier string
+          
+          [env: USER_DB_CONNECT=]
 
   -h, --help
           Print help (see a summary with '-h')
@@ -349,26 +367,10 @@ Options:
           Print version
 ```
 
-```
-In-memory DB, with a simple backing persistence store
-
-Usage: trust0-gateway --port <PORT> --cert-file <CERT_FILE> --key-file <KEY_FILE> --auth-cert-file <AUTH_CERT_FILE> --gateway-service-host <GATEWAY_SERVICE_HOST> in-memory-db --access-db-file <ACCESS_DB_FILE> --service-db-file <SERVICE_DB_FILE> --user-db-file <USER_DB_FILE>
-
-Options:
-  -a, --access-db-file <ACCESS_DB_FILE>
-          (Service) Access entity store JSON file path [env: ACCESS_DB_FILE=]
-  -s, --service-db-file <SERVICE_DB_FILE>
-          Service entity store JSON file path [env: SERVICE_DB_FILE=]
-  -u, --user-db-file <USER_DB_FILE>
-          User entity store JSON file path [env: USER_DB_FILE=]
-  -h, --help
-          Print help
-```
-
 Here is an example invocation (taken from the provided [Chat TCP](#example---chat-tcp-service) example):
 
 ```
-<TRUST0_REPO>/example$ <TRUST0_REPO>/target/debug/trust0-gateway --port 8400 --cert-file target/example-gateway.local.crt.pem --key-file target/example-gateway.local.key.pem --auth-cert-file target/example-ca.local.crt.pem --gateway-service-host localhost  in-memory-db --access-db-file example-db-access.json --service-db-file target/example-db-service.json --user-db-file example-db-user.json
+<TRUST0_REPO>/example$ <TRUST0_REPO>/target/debug/trust0-gateway --port 8400 --cert-file target/example-gateway.local.crt.pem --key-file target/example-gateway.local.key.pem --auth-cert-file target/example-ca.local.crt.pem --gateway-service-host localhost  --datasource in-memory-db --access-db-connect example-db-access.json --service-db-connect target/example-db-service.json --user-db-connect example-db-user.json
 ```
 
 ### Trust0 Client
@@ -385,6 +387,13 @@ Connects to the Trust0 gateway server at HOSTNAME:PORT (default PORT is 443). An
 Usage: trust0-client [OPTIONS] --gateway-host <GATEWAY_HOST> --gateway-port <GATEWAY_PORT> --auth-key-file <AUTH_KEY_FILE> --auth-cert-file <AUTH_CERT_FILE> --ca-root-cert-file <CA_ROOT_CERT_FILE>
 
 Options:
+  -f, --config-file <CONFIG_FILE>
+          Config file (as a shell environment file), using program's environment variable naming (see below).
+          Note - Each config file variable entry may be overriden via their respective command-line arguments
+          Note - Must be first argument (if provided)
+          
+          [env: CONFIG_FILE=]
+
   -g, --gateway-host <GATEWAY_HOST>
           Connect to <GATEWAY_HOST>
           

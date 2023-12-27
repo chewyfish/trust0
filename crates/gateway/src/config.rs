@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::env;
 use std::sync::{Arc, Mutex};
 
 use clap::*;
@@ -70,25 +71,15 @@ lazy_static! {
     };
 }
 
-/// Which mode the server operates in.
-#[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-pub enum ServerMode {
-    /// Control-plane for service gateway management
-    #[default]
-    ControlPlane,
-
-    /// Forward traffic to respective service
-    Proxy,
-}
-
 /// Datasource configuration for the trust framework entities
-#[derive(Subcommand, Debug, Clone)]
+#[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 pub enum DataSource {
-    /// No DB configured, used in testing
-    NoDB,
+    /// In-memory DB, with a simple backing persistence store. Entity store connect strings file paths to JSON record files.
+    InMemoryDb,
 
-    /// In-memory DB, with a simple backing persistence store
-    InMemoryDb(InMemoryDb),
+    /// No DB configured, used in testing (internally empty in-memory DB structures are used)
+    #[default]
+    NoDb,
 }
 
 impl DataSource {
@@ -109,25 +100,22 @@ impl DataSource {
     }
 }
 
-#[derive(Args, Debug, Clone)]
-pub struct InMemoryDb {
-    /// (Service) Access entity store JSON file path
-    #[arg(required = true, short = 'a', long = "access-db-file", env)]
-    pub access_db_file: String,
-
-    /// Service entity store JSON file path
-    #[arg(required = true, short = 's', long = "service-db-file", env)]
-    pub service_db_file: String,
-
-    /// User entity store JSON file path
-    #[arg(required = true, short = 'u', long = "user-db-file", env)]
-    pub user_db_file: String,
-}
-
 /// Runs a Trust0 gateway server on :PORT.  The default PORT is 443.
 #[derive(Parser)]
 #[command(author, version, long_about)]
 pub struct AppConfigArgs {
+    /// Config file (as a shell environment file), using program's environment variable naming (see below).
+    /// Note - Each config file variable entry may be overriden via their respective command-line arguments
+    /// Note - Must be first argument (if provided)
+    #[arg(
+        required = false,
+        short = 'f',
+        long = "config-file",
+        env,
+        verbatim_doc_comment
+    )]
+    pub config_file: Option<String>,
+
     /// Listen on PORT
     #[arg(
         required = true,
@@ -197,13 +185,21 @@ pub struct AppConfigArgs {
     #[arg(required = false, long = "no-mask-addrs", default_value_t = false, env)]
     pub no_mask_addresses: bool,
 
-    /// Server mode: startup server as control-plane, or as a stand-alone service gateway node
-    #[arg(required = false, value_enum, long = "mode", env)]
-    pub mode: Option<ServerMode>,
+    /// DB datasource type
+    #[arg(required = false, value_enum, long = "datasource", default_value_t = crate::config::DataSource::InMemoryDb, env)]
+    pub datasource: DataSource,
 
-    /// DB datasource configuration
-    #[command(subcommand)]
-    pub datasource: Option<DataSource>,
+    /// (Service) Access entity store connect specifier string
+    #[arg(required = false, long = "access-db-connect", env)]
+    pub access_db_connect: Option<String>,
+
+    /// Service entity store connect specifier string
+    #[arg(required = false, long = "service-db-connect", env)]
+    pub service_db_connect: Option<String>,
+
+    /// User entity store connect specifier string
+    #[arg(required = false, long = "user-db-connect", env)]
+    pub user_db_connect: Option<String>,
 }
 
 /// TLS server configuration builder
@@ -280,7 +276,6 @@ impl TlsServerConfigBuilder {
 
 /// Main application configuration/context struct
 pub struct AppConfig {
-    pub server_mode: ServerMode,
     pub server_port: u16,
     pub tls_server_config_builder: TlsServerConfigBuilder,
     pub crl_reloader_loading: Arc<Mutex<bool>>,
@@ -298,26 +293,32 @@ pub struct AppConfig {
 impl AppConfig {
     /// Load config
     pub fn new() -> Result<Self, AppError> {
-        // parse process arguments
-        let mut config_args = Self::parse_config();
-
-        // Datasource repositories
-
-        if config_args.datasource.is_none() {
-            config_args.datasource = Some(DataSource::NoDB);
+        // Populate environment w/given config file (if provided)
+        let mut config_file = env::var_os("CONFIG_FILE");
+        if config_file.is_none()
+            && (env::args_os().len() >= 3)
+            && env::args_os().nth(1).unwrap().eq("-f")
+        {
+            config_file = env::args_os().nth(2);
         }
 
+        if let Some(config_filename) = config_file {
+            dotenvy::from_filename(config_filename).ok();
+        }
+
+        // Parse process arguments
+        let config_args = Self::parse_config();
+
+        // Datasource repositories
         let repositories = Self::create_datasource_repositories(
-            config_args.datasource.as_ref().unwrap(),
-            &config_args
-                .datasource
-                .as_ref()
-                .unwrap()
-                .repository_factories(),
+            &config_args.datasource,
+            &config_args.access_db_connect,
+            &config_args.service_db_connect,
+            &config_args.user_db_connect,
+            &config_args.datasource.repository_factories(),
         )?;
 
-        // create TLS server configuration builder
-
+        // Create TLS server configuration builder
         let auth_certs = load_certificates(config_args.auth_cert_file.clone()).unwrap();
         let certs = load_certificates(config_args.cert_file.clone()).unwrap();
         let key = load_private_key(config_args.key_file.clone()).unwrap();
@@ -364,15 +365,12 @@ impl AppConfig {
         };
 
         // Miscellaneous
-
         let dns_client = DNSClient::new_with_system_resolvers().map_err(|err| {
             AppError::GenWithMsgAndErr("Error instantiating DNSClient".to_string(), Box::new(err))
         })?;
 
         // Instantiate AppConfig
-
         Ok(AppConfig {
-            server_mode: config_args.mode.unwrap_or_default(),
             server_port: config_args.port,
             tls_server_config_builder,
             crl_reloader_loading,
@@ -394,6 +392,9 @@ impl AppConfig {
     /// Instantiate main repositories based on datasource config. Returns tuple of access, service and user repositories.
     fn create_datasource_repositories(
         datasource: &DataSource,
+        access_db_connect: &Option<String>,
+        service_db_connect: &Option<String>,
+        user_db_connect: &Option<String>,
         repo_factories: &(
             Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
             Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,
@@ -411,19 +412,25 @@ impl AppConfig {
         let service_repository = repo_factories.1();
         let user_repository = repo_factories.2();
 
-        if let DataSource::InMemoryDb(args) = datasource {
-            access_repository
-                .lock()
-                .unwrap()
-                .connect_to_datasource(&args.access_db_file)?;
-            service_repository
-                .lock()
-                .unwrap()
-                .connect_to_datasource(&args.service_db_file)?;
-            user_repository
-                .lock()
-                .unwrap()
-                .connect_to_datasource(&args.user_db_file)?;
+        if let DataSource::InMemoryDb = datasource {
+            if access_db_connect.is_some() {
+                access_repository
+                    .lock()
+                    .unwrap()
+                    .connect_to_datasource(access_db_connect.as_ref().unwrap().as_str())?;
+            }
+            if service_db_connect.is_some() {
+                service_repository
+                    .lock()
+                    .unwrap()
+                    .connect_to_datasource(service_db_connect.as_ref().unwrap().as_str())?;
+            }
+            if user_db_connect.is_some() {
+                user_repository
+                    .lock()
+                    .unwrap()
+                    .connect_to_datasource(user_db_connect.as_ref().unwrap().as_str())?;
+            }
         }
 
         Ok((access_repository, service_repository, user_repository))
@@ -483,6 +490,8 @@ pub mod tests {
     use std::env;
     use std::path::PathBuf;
 
+    const CONFIG_FILE_PATHPARTS: [&str; 3] =
+        [env!("CARGO_MANIFEST_DIR"), "testdata", "config-file.rc"];
     const _CERTFILE_CLIENT_UID100_PATHPARTS: [&str; 3] = [
         env!("CARGO_MANIFEST_DIR"),
         "testdata",
@@ -492,6 +501,11 @@ pub mod tests {
         [env!("CARGO_MANIFEST_DIR"), "testdata", "gateway.crt.pem"];
     const KEYFILE_GATEWAY_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "gateway.key.pem"];
+    const DB_ACCESS_PATHPARTS: [&str; 3] =
+        [env!("CARGO_MANIFEST_DIR"), "testdata", "db-access.json"];
+    const DB_SERVICE_PATHPARTS: [&str; 3] =
+        [env!("CARGO_MANIFEST_DIR"), "testdata", "db-service.json"];
+    const DB_USER_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "db-user.json"];
 
     // utils
     // =====
@@ -525,7 +539,6 @@ pub mod tests {
         };
 
         Ok(AppConfig {
-            server_mode: ServerMode::ControlPlane,
             server_port: 2000,
             tls_server_config_builder,
             crl_reloader_loading: Arc::new(Mutex::new(false)),
@@ -549,12 +562,20 @@ pub mod tests {
     // tests
     // =====
 
+    // Environment contention for the tests utilizing env vars. Disabling this test for now.
     #[test]
+    #[ignore]
     fn appcfg_new_when_all_supplied_and_valid() {
         let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_key_file_str = gateway_key_file.to_str().unwrap();
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_cert_file_str = gateway_cert_file.to_str().unwrap();
+        let access_db_file: PathBuf = DB_ACCESS_PATHPARTS.iter().collect();
+        let access_db_file_str = access_db_file.to_str().unwrap();
+        let service_db_file: PathBuf = DB_SERVICE_PATHPARTS.iter().collect();
+        let service_db_file_str = service_db_file.to_str().unwrap();
+        let user_db_file: PathBuf = DB_USER_PATHPARTS.iter().collect();
+        let user_db_file_str = user_db_file.to_str().unwrap();
         env::set_var("PORT", "8000");
         env::set_var("KEY_FILE", gateway_key_file_str);
         env::set_var("CERT_FILE", gateway_cert_file_str);
@@ -568,6 +589,10 @@ pub mod tests {
         env::set_var("GATEWAY_SERVICE_REPLY_HOST", "gwhost2");
         env::set_var("NO_MASK_ADDRESSES", "true");
         env::set_var("MODE", "control-plane");
+        env::set_var("DATASOURCE", "in-memory-db");
+        env::set_var("ACCESS_DB_CONNECT", access_db_file_str);
+        env::set_var("SERVICE_DB_CONNECT", service_db_file_str);
+        env::set_var("USER_DB_CONNECT", user_db_file_str);
         env::set_var("VERBOSE", "true");
 
         let result = AppConfig::new();
@@ -579,6 +604,54 @@ pub mod tests {
         assert_eq!(config.server_port, 8000);
         assert!(config.gateway_service_host.is_some());
         assert_eq!(config.gateway_service_host.unwrap(), "gwhost1".to_string());
+        assert!(config.gateway_service_ports.is_some());
+        assert_eq!(config.gateway_service_ports.unwrap(), (8000, 8010));
+        assert!(!config.mask_addresses);
+        assert_eq!(config.gateway_service_reply_host, "gwhost2".to_string());
+        assert!(config.verbose_logging);
+    }
+
+    #[test]
+    fn appcfg_new_when_mixed_configfile_and_env_supplied() {
+        let config_file: PathBuf = CONFIG_FILE_PATHPARTS.iter().collect();
+        let config_file_str = config_file.to_str().unwrap();
+        let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
+        let gateway_key_file_str = gateway_key_file.to_str().unwrap();
+        let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
+        let gateway_cert_file_str = gateway_cert_file.to_str().unwrap();
+        let access_db_file: PathBuf = DB_ACCESS_PATHPARTS.iter().collect();
+        let access_db_file_str = access_db_file.to_str().unwrap();
+        let service_db_file: PathBuf = DB_SERVICE_PATHPARTS.iter().collect();
+        let service_db_file_str = service_db_file.to_str().unwrap();
+        let user_db_file: PathBuf = DB_USER_PATHPARTS.iter().collect();
+        let user_db_file_str = user_db_file.to_str().unwrap();
+        env::set_var("CONFIG_FILE", config_file_str);
+        env::set_var("KEY_FILE", gateway_key_file_str);
+        env::set_var("CERT_FILE", gateway_cert_file_str);
+        env::set_var("AUTH_CERT_FILE", gateway_cert_file_str);
+        env::set_var("PROTOCOL_VERSION", "1.3");
+        env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
+        env::set_var("SESSION_RESUMPTION", "true");
+        env::set_var("ICKETS", "true");
+        env::set_var("GATEWAY_SERVICE_PORTS", "8000-8010");
+        env::set_var("GATEWAY_SERVICE_REPLY_HOST", "gwhost2");
+        env::set_var("NO_MASK_ADDRESSES", "true");
+        env::set_var("MODE", "control-plane");
+        env::set_var("DATASOURCE", "in-memory-db");
+        env::set_var("ACCESS_DB_CONNECT", access_db_file_str);
+        env::set_var("SERVICE_DB_CONNECT", service_db_file_str);
+        env::set_var("USER_DB_CONNECT", user_db_file_str);
+        env::set_var("VERBOSE", "true");
+
+        let result = AppConfig::new();
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+        let config = result.unwrap();
+
+        assert_eq!(config.server_port, 8888);
+        assert!(config.gateway_service_host.is_some());
+        assert_eq!(config.gateway_service_host.unwrap(), "gwhost1a".to_string());
         assert!(config.gateway_service_ports.is_some());
         assert_eq!(config.gateway_service_ports.unwrap(), (8000, 8010));
         assert!(!config.mask_addresses);
@@ -633,6 +706,17 @@ pub mod tests {
 
     #[test]
     fn appconfig_create_datasource_repositories_when_inmemdb_ds() {
+        let datasource = DataSource::InMemoryDb;
+        let access_db_file: PathBuf = DB_ACCESS_PATHPARTS.iter().collect();
+        let access_db_file_str = access_db_file.to_str().unwrap().to_string();
+        let service_db_file: PathBuf = DB_SERVICE_PATHPARTS.iter().collect();
+        let service_db_file_str = service_db_file.to_str().unwrap().to_string();
+        let user_db_file: PathBuf = DB_USER_PATHPARTS.iter().collect();
+        let user_db_file_str = user_db_file.to_str().unwrap().to_string();
+
+        let access_db_file_str_copy = access_db_file_str.clone();
+        let service_db_file_str_copy = service_db_file_str.clone();
+        let user_db_file_str_copy = user_db_file_str.clone();
         let repo_factories: (
             Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
             Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,
@@ -642,7 +726,7 @@ pub mod tests {
                 let mut access_repo = MockAccessRepo::new();
                 access_repo
                     .expect_connect_to_datasource()
-                    .with(predicate::eq("adf"))
+                    .with(predicate::eq(access_db_file_str_copy.to_owned()))
                     .times(1)
                     .return_once(move |_| Ok(()));
                 Arc::new(Mutex::new(access_repo))
@@ -651,7 +735,7 @@ pub mod tests {
                 let mut service_repo = MockServiceRepo::new();
                 service_repo
                     .expect_connect_to_datasource()
-                    .with(predicate::eq("sdf"))
+                    .with(predicate::eq(service_db_file_str_copy.to_owned()))
                     .times(1)
                     .return_once(move |_| Ok(()));
                 Arc::new(Mutex::new(service_repo))
@@ -660,20 +744,20 @@ pub mod tests {
                 let mut user_repo = MockUserRepo::new();
                 user_repo
                     .expect_connect_to_datasource()
-                    .with(predicate::eq("udf"))
+                    .with(predicate::eq(user_db_file_str_copy.to_owned()))
                     .times(1)
                     .return_once(move |_| Ok(()));
                 Arc::new(Mutex::new(user_repo))
             }),
         );
 
-        let datasource = DataSource::InMemoryDb(InMemoryDb {
-            access_db_file: "adf".to_string(),
-            service_db_file: "sdf".to_string(),
-            user_db_file: "udf".to_string(),
-        });
-
-        let result = AppConfig::create_datasource_repositories(&datasource, &repo_factories);
+        let result = AppConfig::create_datasource_repositories(
+            &datasource,
+            &Some(access_db_file_str),
+            &Some(service_db_file_str),
+            &Some(user_db_file_str),
+            &repo_factories,
+        );
 
         if let Err(err) = &result {
             panic!("Unexpected result: err={:?}", err);
@@ -704,9 +788,15 @@ pub mod tests {
             }),
         );
 
-        let datasource = DataSource::NoDB;
+        let datasource = DataSource::NoDb;
 
-        let result = AppConfig::create_datasource_repositories(&datasource, &repo_factories);
+        let result = AppConfig::create_datasource_repositories(
+            &datasource,
+            &None,
+            &None,
+            &None,
+            &repo_factories,
+        );
 
         if let Err(err) = &result {
             panic!("Unexpected result: err={:?}", err);

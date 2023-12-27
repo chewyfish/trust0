@@ -174,10 +174,10 @@ trust0-gateway:
 	${CARGO_CMD} build --color=always --bin trust0-gateway --manifest-path ${PROJECT_DIR}/crates/gateway/Cargo.toml ${CARGOBUILD_EXTRA_ARGS}
 
 run-trust0-gateway: gateway-server-pki trust0-gateway
-	${TRUST0_GATEWAY__BINARY_FILE} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} in-memory-db --access-db-file ${DATASOURCE_INMEMDB_ACCESS_FILE} --service-db-file ${DATASOURCE_INMEMDB_SERVICE_FILE} --user-db-file ${DATASOURCE_INMEMDB_USER_FILE}
+	${TRUST0_GATEWAY__BINARY_FILE} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource in-memory-db --access-db-connect ${DATASOURCE_INMEMDB_ACCESS_FILE} --service-db-connect ${DATASOURCE_INMEMDB_SERVICE_FILE} --user-db-connect ${DATASOURCE_INMEMDB_USER_FILE}
 
 run-trust0-gateway-nodeps:
-	${TRUST0_GATEWAY__BINARY_FILE} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} in-memory-db --access-db-file ${DATASOURCE_INMEMDB_ACCESS_FILE} --service-db-file ${DATASOURCE_INMEMDB_SERVICE_FILE} --user-db-file ${DATASOURCE_INMEMDB_USER_FILE}
+	${TRUST0_GATEWAY__BINARY_FILE} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource in-memory-db --access-db-connect ${DATASOURCE_INMEMDB_ACCESS_FILE} --service-db-connect ${DATASOURCE_INMEMDB_SERVICE_FILE} --user-db-connect ${DATASOURCE_INMEMDB_USER_FILE}
 
 # Targets - Trust Client
 
