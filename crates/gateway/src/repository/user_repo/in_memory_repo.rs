@@ -1,38 +1,104 @@
 use std::collections::HashMap;
 use std::fs;
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::repository::user_repo::UserRepository;
 use trust0_common::error::AppError;
+use trust0_common::file::{ReloadableFile, ReloadableTextFile};
+use trust0_common::logging::error;
 use trust0_common::model::user::User;
+use trust0_common::target;
 
 pub struct InMemUserRepo {
     users: RwLock<HashMap<u64, User>>,
+    source_file: Option<String>,
+    reloader_loading: Arc<Mutex<bool>>,
+    reloader_new_data: Arc<Mutex<String>>,
 }
 
 impl InMemUserRepo {
     /// Creates a new in-memory user store.
     pub fn new() -> InMemUserRepo {
+        let reloader_loading = Arc::new(Mutex::new(false));
+        let reloader_new_data = Arc::new(Mutex::new(String::new()));
         InMemUserRepo {
             users: RwLock::new(HashMap::new()),
+            source_file: None,
+            reloader_loading,
+            reloader_new_data,
         }
     }
 
     fn access_data_for_write(&self) -> Result<RwLockWriteGuard<HashMap<u64, User>>, AppError> {
+        if let Err(err) = self.process_source_data_updates() {
+            error(
+                &target!(),
+                &format!("Error processing updates: err={:?}", &err),
+            );
+        }
         self.users.write().map_err(|err| {
             AppError::General(format!("Failed to access write lock to DB: err={}", err))
         })
     }
 
     fn access_data_for_read(&self) -> Result<RwLockReadGuard<HashMap<u64, User>>, AppError> {
+        if let Err(err) = self.process_source_data_updates() {
+            error(
+                &target!(),
+                &format!("Error processing updates: err={:?}", &err),
+            );
+        }
         self.users.read().map_err(|err| {
             AppError::General(format!("Failed to access read lock to DB: err={}", err))
         })
+    }
+
+    /// If new (unparsed JSON) data has been queued by the reloader, replace DB accordingly
+    fn process_source_data_updates(&self) -> Result<(), AppError> {
+        // Check if new data is pending
+        if self.reloader_new_data.lock().unwrap().is_empty() {
+            return Ok(());
+        }
+
+        // Parse new (JSON) data
+        let users: Vec<User> = serde_json::from_str(
+            self.reloader_new_data.lock().unwrap().as_str(),
+        )
+        .map_err(|err| {
+            AppError::GenWithMsgAndErr(
+                format!(
+                    "Failed to parse JSON: path={}",
+                    &self.source_file.as_ref().unwrap()
+                ),
+                Box::new(err),
+            )
+        })?;
+
+        // Update database
+        let mut data = self.users.write().map_err(|err| {
+            AppError::General(format!(
+                "Failed to access write lock to DB: path={}, err={}",
+                self.source_file.as_ref().unwrap(),
+                err
+            ))
+        })?;
+
+        data.clear();
+        for user in users.iter().as_ref() {
+            data.insert(user.user_id, user.clone());
+        }
+
+        self.reloader_new_data.lock().unwrap().clear();
+
+        Ok(())
     }
 }
 
 impl UserRepository for InMemUserRepo {
     fn connect_to_datasource(&mut self, connect_spec: &str) -> Result<(), AppError> {
+        // Load DB from JSON file
+        self.source_file = Some(connect_spec.to_string());
+
         let data = fs::read_to_string(connect_spec).map_err(|err| {
             AppError::GenWithMsgAndErr(
                 format!("Failed to read file: path={}", connect_spec),
@@ -49,6 +115,15 @@ impl UserRepository for InMemUserRepo {
         for user in users.iter().as_ref() {
             self.put(user.clone())?;
         }
+
+        // Spawn DB reload thread
+        let reloadable_file = ReloadableTextFile::new(
+            connect_spec,
+            &self.reloader_new_data,
+            &self.reloader_loading,
+        )?;
+
+        <ReloadableTextFile as ReloadableFile>::spawn_reloader(reloadable_file, None);
 
         Ok(())
     }
@@ -157,6 +232,93 @@ mod tests {
                 .count(),
             0
         );
+
+        *user_repo.reloader_loading.lock().unwrap() = false;
+    }
+
+    #[test]
+    fn inmemuserrepo_process_source_data_updates_when_valid_json() {
+        let valid_user_db_path: PathBuf = VALID_USER_DB_FILE_PATHPARTS.iter().collect();
+        let valid_user_db_pathstr = valid_user_db_path.to_str().unwrap();
+
+        let mut user_repo = InMemUserRepo::new();
+
+        if let Err(err) = user_repo.connect_to_datasource(valid_user_db_pathstr) {
+            panic!(
+                "Unexpected result: file={}, err={:?}",
+                valid_user_db_pathstr, &err
+            );
+        }
+
+        assert_eq!(user_repo.users.read().unwrap().len(), 2);
+
+        *user_repo.reloader_new_data.lock().unwrap() =
+            "[{\"userId\": 800, \"name\": \"User800\", \"status\":  \"inactive\"}]".to_string();
+
+        if let Err(err) = user_repo.process_source_data_updates() {
+            panic!("Unexpected process updates result: err={:?}", &err);
+        }
+
+        let expected_user_db_map: HashMap<u64, User> = HashMap::from([(
+            800,
+            User {
+                user_id: 800,
+                name: "User800".to_string(),
+                status: Status::Inactive,
+            },
+        )]);
+
+        let actual_user_db_map: HashMap<u64, User> = HashMap::from_iter(
+            user_repo
+                .users
+                .into_inner()
+                .unwrap()
+                .iter()
+                .map(|e| (e.0.clone(), e.1.clone()))
+                .collect::<Vec<(u64, User)>>(),
+        );
+
+        assert_eq!(actual_user_db_map.len(), expected_user_db_map.len());
+        assert_eq!(
+            actual_user_db_map
+                .iter()
+                .filter(|entry| !expected_user_db_map.contains_key(entry.0))
+                .count(),
+            0
+        );
+
+        *user_repo.reloader_loading.lock().unwrap() = false;
+    }
+
+    #[test]
+    fn inmemuserrepo_process_source_data_updates_when_invalid_json() {
+        let valid_user_db_path: PathBuf = VALID_USER_DB_FILE_PATHPARTS.iter().collect();
+        let valid_user_db_pathstr = valid_user_db_path.to_str().unwrap();
+
+        let mut user_repo = InMemUserRepo::new();
+
+        if let Err(err) = user_repo.connect_to_datasource(valid_user_db_pathstr) {
+            panic!(
+                "Unexpected result: file={}, err={:?}",
+                valid_user_db_pathstr, &err
+            );
+        }
+
+        assert_eq!(user_repo.users.read().unwrap().len(), 2);
+
+        *user_repo.reloader_new_data.lock().unwrap() =
+            "[{\"userId\": 800, \"name\": \"User800\", \"status\":  \"inactive\"}".to_string();
+
+        if let Ok(()) = user_repo.process_source_data_updates() {
+            panic!(
+                "Unexpected successful process updates result: file={}",
+                valid_user_db_pathstr
+            );
+        }
+
+        assert_eq!(user_repo.users.read().unwrap().len(), 2);
+
+        *user_repo.reloader_loading.lock().unwrap() = false;
     }
 
     #[test]

@@ -5,7 +5,8 @@ use clap::*;
 use dnsclient::sync::DNSClient;
 use lazy_static::lazy_static;
 use pki_types::{
-    CertificateDer, PrivateKeyDer, PrivatePkcs1KeyDer, PrivatePkcs8KeyDer, PrivateSec1KeyDer,
+    CertificateDer, CertificateRevocationListDer, PrivateKeyDer, PrivatePkcs1KeyDer,
+    PrivatePkcs8KeyDer, PrivateSec1KeyDer,
 };
 
 use crate::repository::access_repo::in_memory_repo::InMemAccessRepo;
@@ -22,6 +23,7 @@ use trust0_common::crypto::alpn;
 use trust0_common::crypto::file::CRLFile;
 use trust0_common::crypto::file::{load_certificates, load_private_key};
 use trust0_common::error::AppError;
+use trust0_common::file::ReloadableFile;
 
 /// Client response messages
 pub const RESPCODE_0403_FORBIDDEN: u16 = 403;
@@ -211,7 +213,7 @@ pub struct TlsServerConfigBuilder {
     pub cipher_suites: Vec<rustls::SupportedCipherSuite>,
     pub protocol_versions: Vec<&'static rustls::SupportedProtocolVersion>,
     pub auth_root_certs: rustls::RootCertStore,
-    pub crl_file: Option<Arc<Mutex<CRLFile>>>,
+    pub crl_list: Option<Arc<Mutex<Vec<CertificateRevocationListDer<'static>>>>>,
     pub session_resumption: bool,
     pub alpn_protocols: Vec<Vec<u8>>,
 }
@@ -262,8 +264,8 @@ impl TlsServerConfigBuilder {
 
     /// Build a TLS client verifier
     fn build_client_cert_verifier(&self) -> Result<Arc<dyn ClientCertVerifier>, AppError> {
-        let crl_list = match &self.crl_file {
-            Some(crl_file) => crl_file.lock().unwrap().crl_list()?,
+        let crl_list: Vec<CertificateRevocationListDer<'static>> = match &self.crl_list {
+            Some(crl_list) => crl_list.clone().lock().unwrap().to_vec(),
             None => vec![],
         };
 
@@ -281,6 +283,7 @@ pub struct AppConfig {
     pub server_mode: ServerMode,
     pub server_port: u16,
     pub tls_server_config_builder: TlsServerConfigBuilder,
+    pub crl_reloader_loading: Arc<Mutex<bool>>,
     pub verbose_logging: bool,
     pub access_repo: Arc<Mutex<dyn AccessRepository>>,
     pub service_repo: Arc<Mutex<dyn ServiceRepository>>,
@@ -319,16 +322,13 @@ impl AppConfig {
         let certs = load_certificates(config_args.cert_file.clone()).unwrap();
         let key = load_private_key(config_args.key_file.clone()).unwrap();
 
-        let crl_file = match &config_args.crl_file {
+        let crl_reloader_loading = Arc::new(Mutex::new(false));
+        let crl_list = match &config_args.crl_file {
             Some(filepath) => {
-                let crl_file = CRLFile::new(filepath.as_str());
-                crl_file.spawn_list_reloader(
-                    None,
-                    Some(Box::new(|err| {
-                        panic!("Error during CRL reload, exiting: err={:?}", &err);
-                    })),
-                );
-                Some(Arc::new(Mutex::new(crl_file)))
+                let crl_list = Arc::new(Mutex::new(vec![]));
+                let crl_file = CRLFile::new(filepath.as_str(), &crl_list, &crl_reloader_loading)?;
+                <CRLFile as ReloadableFile>::spawn_reloader(crl_file, None);
+                Some(crl_list)
             }
             None => None,
         };
@@ -358,7 +358,7 @@ impl AppConfig {
             cipher_suites,
             protocol_versions,
             auth_root_certs,
-            crl_file,
+            crl_list,
             session_resumption,
             alpn_protocols,
         };
@@ -375,6 +375,7 @@ impl AppConfig {
             server_mode: config_args.mode.unwrap_or_default(),
             server_port: config_args.port,
             tls_server_config_builder,
+            crl_reloader_loading,
             verbose_logging: config_args.verbose,
             access_repo: repositories.0,
             service_repo: repositories.1,
@@ -518,7 +519,7 @@ pub mod tests {
             cipher_suites,
             protocol_versions,
             auth_root_certs,
-            crl_file: None,
+            crl_list: None,
             session_resumption,
             alpn_protocols,
         };
@@ -527,6 +528,7 @@ pub mod tests {
             server_mode: ServerMode::ControlPlane,
             server_port: 2000,
             tls_server_config_builder,
+            crl_reloader_loading: Arc::new(Mutex::new(false)),
             verbose_logging: false,
             access_repo,
             service_repo,
@@ -601,7 +603,7 @@ pub mod tests {
             cipher_suites: rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec(),
             protocol_versions: rustls::ALL_VERSIONS.to_vec(),
             auth_root_certs,
-            crl_file: None,
+            crl_list: None,
             session_resumption: true,
             alpn_protocols: vec![alpn::Protocol::ControlPlane.to_string().into_bytes()],
         };

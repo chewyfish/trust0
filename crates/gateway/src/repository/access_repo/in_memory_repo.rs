@@ -1,20 +1,31 @@
 use std::collections::HashMap;
 use std::fs;
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::repository::access_repo::AccessRepository;
 use trust0_common::error::AppError;
+use trust0_common::file::{ReloadableFile, ReloadableTextFile};
+use trust0_common::logging::error;
 use trust0_common::model::access::ServiceAccess;
+use trust0_common::target;
 
 pub struct InMemAccessRepo {
     accesses: RwLock<HashMap<(u64, u64), ServiceAccess>>,
+    source_file: Option<String>,
+    reloader_loading: Arc<Mutex<bool>>,
+    reloader_new_data: Arc<Mutex<String>>,
 }
 
 impl InMemAccessRepo {
     /// Creates a new in-memory service access store.
     pub fn new() -> InMemAccessRepo {
+        let reloader_loading = Arc::new(Mutex::new(false));
+        let reloader_new_data = Arc::new(Mutex::new(String::new()));
         InMemAccessRepo {
             accesses: RwLock::new(HashMap::new()),
+            source_file: None,
+            reloader_loading,
+            reloader_new_data,
         }
     }
 
@@ -22,6 +33,12 @@ impl InMemAccessRepo {
     fn access_data_for_write(
         &self,
     ) -> Result<RwLockWriteGuard<HashMap<(u64, u64), ServiceAccess>>, AppError> {
+        if let Err(err) = self.process_source_data_updates() {
+            error(
+                &target!(),
+                &format!("Error processing updates: err={:?}", &err),
+            );
+        }
         self.accesses.write().map_err(|err| {
             AppError::General(format!("Failed to access write lock to DB: err={}", err))
         })
@@ -31,14 +48,63 @@ impl InMemAccessRepo {
     fn access_data_for_read(
         &self,
     ) -> Result<RwLockReadGuard<HashMap<(u64, u64), ServiceAccess>>, AppError> {
+        if let Err(err) = self.process_source_data_updates() {
+            error(
+                &target!(),
+                &format!("Error processing updates: err={:?}", &err),
+            );
+        }
         self.accesses.read().map_err(|err| {
             AppError::General(format!("Failed to access read lock to DB: err={}", err))
         })
+    }
+
+    /// If new (unparsed JSON) data has been queued by the reloader, replace DB accordingly
+    fn process_source_data_updates(&self) -> Result<(), AppError> {
+        // Check if new data is pending
+        if self.reloader_new_data.lock().unwrap().is_empty() {
+            return Ok(());
+        }
+
+        // Parse new (JSON) data
+        let accesses: Vec<ServiceAccess> = serde_json::from_str(
+            self.reloader_new_data.lock().unwrap().as_str(),
+        )
+        .map_err(|err| {
+            AppError::GenWithMsgAndErr(
+                format!(
+                    "Failed to parse JSON: path={}",
+                    &self.source_file.as_ref().unwrap()
+                ),
+                Box::new(err),
+            )
+        })?;
+
+        // Update database
+        let mut data = self.accesses.write().map_err(|err| {
+            AppError::General(format!(
+                "Failed to access write lock to DB: path={}, err={}",
+                self.source_file.as_ref().unwrap(),
+                err
+            ))
+        })?;
+
+        data.clear();
+        for access in accesses.iter().as_ref() {
+            data.insert((access.user_id, access.service_id), access.clone());
+        }
+
+        self.reloader_new_data.lock().unwrap().clear();
+
+        Ok(())
     }
 }
 
 impl AccessRepository for InMemAccessRepo {
     fn connect_to_datasource(&mut self, connect_spec: &str) -> Result<(), AppError> {
+        // Load DB from JSON file
+        self.source_file = Some(connect_spec.to_string());
+
         let data = fs::read_to_string(connect_spec).map_err(|err| {
             AppError::GenWithMsgAndErr(
                 format!("Failed to read file: path={}", connect_spec),
@@ -55,6 +121,15 @@ impl AccessRepository for InMemAccessRepo {
         for access in accesses.iter().as_ref() {
             self.put(access.clone())?;
         }
+
+        // Spawn DB reload thread
+        let reloadable_file = ReloadableTextFile::new(
+            connect_spec,
+            &self.reloader_new_data,
+            &self.reloader_loading,
+        )?;
+
+        <ReloadableTextFile as ReloadableFile>::spawn_reloader(reloadable_file, None);
 
         Ok(())
     }
@@ -181,6 +256,92 @@ mod tests {
                 .count(),
             0
         );
+
+        *access_repo.reloader_loading.lock().unwrap() = false;
+    }
+
+    #[test]
+    fn inmemaccessrepo_process_source_data_updates_when_valid_json() {
+        let valid_access_db_path: PathBuf = VALID_ACCESS_DB_FILE_PATHPARTS.iter().collect();
+        let valid_access_db_pathstr = valid_access_db_path.to_str().unwrap();
+
+        let mut access_repo = InMemAccessRepo::new();
+
+        if let Err(err) = access_repo.connect_to_datasource(valid_access_db_pathstr) {
+            panic!(
+                "Unexpected result: file={}, err={:?}",
+                valid_access_db_pathstr, &err
+            );
+        }
+
+        assert_eq!(access_repo.accesses.read().unwrap().len(), 5);
+
+        *access_repo.reloader_new_data.lock().unwrap() =
+            "[{\"userId\": 800, \"serviceId\": 900}]".to_string();
+
+        if let Err(err) = access_repo.process_source_data_updates() {
+            panic!("Unexpected process updates result: err={:?}", &err);
+        }
+
+        let expected_access_db_map: HashMap<(u64, u64), ServiceAccess> = HashMap::from([(
+            (800, 900),
+            ServiceAccess {
+                user_id: 100,
+                service_id: 200,
+            },
+        )]);
+
+        let actual_access_db_map: HashMap<(u64, u64), ServiceAccess> = HashMap::from_iter(
+            access_repo
+                .accesses
+                .into_inner()
+                .unwrap()
+                .iter()
+                .map(|e| (e.0.clone(), e.1.clone()))
+                .collect::<Vec<((u64, u64), ServiceAccess)>>(),
+        );
+
+        assert_eq!(actual_access_db_map.len(), expected_access_db_map.len());
+        assert_eq!(
+            actual_access_db_map
+                .iter()
+                .filter(|entry| !expected_access_db_map.contains_key(entry.0))
+                .count(),
+            0
+        );
+
+        *access_repo.reloader_loading.lock().unwrap() = false;
+    }
+
+    #[test]
+    fn inmemaccessrepo_process_source_data_updates_when_invalid_json() {
+        let valid_access_db_path: PathBuf = VALID_ACCESS_DB_FILE_PATHPARTS.iter().collect();
+        let valid_access_db_pathstr = valid_access_db_path.to_str().unwrap();
+
+        let mut access_repo = InMemAccessRepo::new();
+
+        if let Err(err) = access_repo.connect_to_datasource(valid_access_db_pathstr) {
+            panic!(
+                "Unexpected result: file={}, err={:?}",
+                valid_access_db_pathstr, &err
+            );
+        }
+
+        assert_eq!(access_repo.accesses.read().unwrap().len(), 5);
+
+        *access_repo.reloader_new_data.lock().unwrap() =
+            "[{\"userId\": 800, \"serviceId\": 900}".to_string();
+
+        if let Ok(()) = access_repo.process_source_data_updates() {
+            panic!(
+                "Unexpected successfule process updates result: file={}",
+                valid_access_db_pathstr
+            );
+        }
+
+        assert_eq!(access_repo.accesses.read().unwrap().len(), 5);
+
+        *access_repo.reloader_loading.lock().unwrap() = false;
     }
 
     #[test]

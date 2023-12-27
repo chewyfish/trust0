@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::io;
 
+/// Sanctioned error type used across workspace
 #[derive(Debug)]
 pub enum AppError {
     AddrParse(std::net::AddrParseError),
@@ -96,6 +97,10 @@ mod test {
         assert_eq!(error.get_code().unwrap(), code);
     }
 
+    fn assert_formatted_debug(error: &AppError, expected_str: &str) {
+        assert_eq!(format!("{:?}", &error), expected_str.to_string());
+    }
+
     #[test]
     fn apperror_get_code() {
         let bad_addr_parse: Result<std::net::IpAddr, std::net::AddrParseError> =
@@ -142,78 +147,57 @@ mod test {
     }
 
     #[test]
-    fn apperror_display() {
+    fn apperror_formatted_debug() {
         let bad_addr_parse: Result<std::net::IpAddr, std::net::AddrParseError> =
             "127.0.0.1:8080".parse();
         let addr_parse_err = bad_addr_parse.err().unwrap();
-        assert_eq!(
-            format!("{:?}", &AE::AddrParse(addr_parse_err.clone())),
-            "AddrParse(AddrParseError(Ip))".to_string()
+        assert_formatted_debug(
+            &AE::AddrParse(addr_parse_err.clone()),
+            "AddrParse(AddrParseError(Ip))",
         );
-        assert_eq!(
-            format!("{:?}", &AE::General("g1".to_string())),
-            "General(\"g1\")".to_string()
+        assert_formatted_debug(&AE::General("g1".to_string()), "General(\"g1\")");
+        assert_formatted_debug(&AE::GenWithCode(111), "GenWithCode(111)");
+        assert_formatted_debug(
+            &AE::GenWithCodeAndErr(112, Box::new(addr_parse_err.clone())),
+            "GenWithCodeAndErr(112, AddrParseError(Ip))",
         );
-        assert_eq!(
-            format!("{:?}", &AE::GenWithCode(111)),
-            "GenWithCode(111)".to_string()
+        assert_formatted_debug(
+            &AE::GenWithCodeAndMsg(113, "gwcam1".to_string()),
+            "GenWithCodeAndMsg(113, \"gwcam1\")",
         );
-        assert_eq!(
-            format!(
-                "{:?}",
-                &AE::GenWithCodeAndErr(112, Box::new(addr_parse_err.clone()))
+        assert_formatted_debug(
+            &AE::GenWithCodeAndMsgAndErr(
+                114,
+                "gwcamae1".to_string(),
+                Box::new(addr_parse_err.clone()),
             ),
-            "GenWithCodeAndErr(112, AddrParseError(Ip))".to_string()
+            "GenWithCodeAndMsgAndErr(114, \"gwcamae1\", AddrParseError(Ip))",
         );
-        assert_eq!(
-            format!("{:?}", &AE::GenWithCodeAndMsg(113, "gwcam1".to_string())),
-            "GenWithCodeAndMsg(113, \"gwcam1\")".to_string()
+        assert_formatted_debug(
+            &AE::GenWithErr(Box::new(addr_parse_err.clone())),
+            "GenWithErr(AddrParseError(Ip))",
         );
-        assert_eq!(
-            format!(
-                "{:?}",
-                &AE::GenWithCodeAndMsgAndErr(
-                    114,
-                    "gwcamae1".to_string(),
-                    Box::new(addr_parse_err.clone())
-                )
+        assert_formatted_debug(
+            &AE::GenWithMsgAndErr("gwmae1".to_string(), Box::new(addr_parse_err.clone())),
+            "GenWithMsgAndErr(\"gwmae1\", AddrParseError(Ip))",
+        );
+        assert_formatted_debug(
+            &AE::Io(io::Error::new(io::ErrorKind::Other, "ioe1")),
+            "Io(Custom { kind: Other, error: \"ioe1\" })",
+        );
+        assert_formatted_debug(
+            &AE::IoWithMsg(
+                "iwm1".to_string(),
+                io::Error::new(io::ErrorKind::Other, "ioe2"),
             ),
-            "GenWithCodeAndMsgAndErr(114, \"gwcamae1\", AddrParseError(Ip))".to_string()
+            "IoWithMsg(\"iwm1\", Custom { kind: Other, error: \"ioe2\" })",
         );
-        assert_eq!(
-            format!("{:?}", &AE::GenWithErr(Box::new(addr_parse_err.clone()))),
-            "GenWithErr(AddrParseError(Ip))".to_string()
+        assert_formatted_debug(
+            &AE::Tls(rustls::Error::General("re1".to_string())),
+            "Tls(General(\"re1\"))",
         );
-        assert_eq!(
-            format!(
-                "{:?}",
-                &AE::GenWithMsgAndErr("gwmae1".to_string(), Box::new(addr_parse_err.clone()))
-            ),
-            "GenWithMsgAndErr(\"gwmae1\", AddrParseError(Ip))".to_string()
-        );
-        assert_eq!(
-            format!(
-                "{:?}",
-                &AE::Io(io::Error::new(io::ErrorKind::Other, "ioe1"))
-            ),
-            "Io(Custom { kind: Other, error: \"ioe1\" })".to_string()
-        );
-        assert_eq!(
-            format!(
-                "{:?}",
-                &AE::IoWithMsg(
-                    "iwm1".to_string(),
-                    io::Error::new(io::ErrorKind::Other, "ioe2")
-                )
-            ),
-            "IoWithMsg(\"iwm1\", Custom { kind: Other, error: \"ioe2\" })".to_string()
-        );
-        assert_eq!(
-            format!("{:?}", &AE::Tls(rustls::Error::General("re1".to_string()))),
-            "Tls(General(\"re1\"))".to_string()
-        );
-        assert_eq!(format!("{:?}", &AE::WouldBlock), "WouldBlock".to_string());
-        assert_eq!(format!("{:?}", &AE::StreamEOF), "StreamEOF".to_string());
+        assert_formatted_debug(&AE::WouldBlock, "WouldBlock");
+        assert_formatted_debug(&AE::StreamEOF, "StreamEOF");
     }
 
     #[test]
