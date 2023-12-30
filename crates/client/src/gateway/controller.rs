@@ -61,7 +61,7 @@ impl ControlPlane {
     ) -> Result<(), AppError> {
         let proxy_container =
             response::Proxy::from_serde_value(gateway_response.data.as_ref().unwrap())?;
-        let proxy = proxy_container.get(0).unwrap();
+        let proxy = proxy_container.first().unwrap();
 
         let _ = service_mgr.lock().unwrap().startup(
             &proxy.service.clone().into(),

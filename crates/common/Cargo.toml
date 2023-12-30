@@ -28,6 +28,8 @@ serde_derive = "*"
 serde_json = { version = "*", features = ["arbitrary_precision"] }
 shlex = "1.2.0"
 webpki-roots = "0.26.0"
+winapi = { version = "0.3.9", features = ["winnt"] }
+windows-acl = "0.3.0"
 x509-parser = "0.15.1"
 
 [dev-dependencies]
