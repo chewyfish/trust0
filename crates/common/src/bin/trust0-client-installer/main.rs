@@ -109,6 +109,7 @@ pub mod tests {
         let dest_client_key_file_path;
         let dest_client_cert_file_path;
         let dest_client_config_file_path;
+        let result;
         {
             let mutex = testutils::TEST_MUTEX.clone();
             let _lock = mutex.lock().unwrap();
@@ -120,9 +121,11 @@ pub mod tests {
             dest_client_key_file_path = AppInstallFile::ClientKey.pathspec();
             dest_client_cert_file_path = AppInstallFile::ClientCertificate.pathspec();
             dest_client_config_file_path = AppInstallFile::ClientConfig.pathspec();
+
+            result = process_runner();
         }
 
-        if let Err(err) = process_runner() {
+        if let Err(err) = result {
             panic!("Unexpected result: err={:?}", &err);
         }
 
