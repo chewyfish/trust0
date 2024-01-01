@@ -1,15 +1,21 @@
 use crate::error::AppError;
 use crate::net::tls_client::conn_std::ConnectionEvent;
 use once_cell::sync::Lazy;
-use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;
 use std::sync::{mpsc, Arc, Mutex};
-use std::{env, fs, io};
+use std::{env, io};
 
 pub static TEST_MUTEX: Lazy<Arc<Mutex<bool>>> = Lazy::new(|| Arc::new(Mutex::new(true)));
 
-pub const XDG_ROOT_DIR_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "target", "xdgroot"];
+pub const XDG_ROOT_DIR_PATHPARTS: [&str; 6] = [
+    env!("CARGO_MANIFEST_DIR"),
+    "..",
+    "..",
+    "target",
+    "test-common",
+    "xdgroot",
+];
 
 pub struct ChannelWriter {
     pub channel_sender: mpsc::Sender<Vec<u8>>,
@@ -62,14 +68,6 @@ pub fn gather_rcvd_connection_channel_data(
 
 pub fn setup_xdg_vars() -> Result<(), AppError> {
     let xdg_root_dir: PathBuf = XDG_ROOT_DIR_PATHPARTS.iter().collect();
-    if let Err(err) = fs::remove_dir_all(xdg_root_dir.as_path()) {
-        if err.kind() != ErrorKind::NotFound {
-            return Err(AppError::IoWithMsg(
-                format!("Error removing XDG root: path={:?}", &xdg_root_dir),
-                err,
-            ));
-        }
-    }
 
     env::set_var(
         "XDG_DATA_HOME",

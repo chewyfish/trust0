@@ -7,6 +7,7 @@ use rustls::{RootCertStore, SupportedCipherSuite};
 
 use crate::console::ShellOutputWriter;
 use trust0_common::crypto::file::{load_certificates, load_private_key};
+use trust0_common::distro::AppInstallFile;
 use trust0_common::error::AppError;
 
 /// Connects to the Trust0 gateway server at HOSTNAME:PORT (default PORT is 443).
@@ -100,11 +101,12 @@ impl AppConfig {
     pub fn new() -> Result<Self, AppError> {
         // Populate environment w/given config file (if provided)
         let mut config_file = env::var_os("CONFIG_FILE");
-        if config_file.is_none()
-            && (env::args_os().len() >= 3)
-            && env::args_os().nth(1).unwrap().eq("-f")
-        {
-            config_file = env::args_os().nth(2);
+        if config_file.is_none() {
+            if (env::args_os().len() >= 3) && env::args_os().nth(1).unwrap().eq("-f") {
+                config_file = env::args_os().nth(2);
+            } else if AppInstallFile::ClientConfig.pathspec().exists() {
+                config_file = Some(AppInstallFile::ClientConfig.pathspec().into_os_string());
+            }
         }
 
         if let Some(config_filename) = config_file {

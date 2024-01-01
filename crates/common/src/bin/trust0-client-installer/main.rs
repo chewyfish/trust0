@@ -75,6 +75,11 @@ fn process_runner() -> Result<(), AppError> {
         &client_config_install.pathspec().to_str().unwrap()
     );
 
+    println!(
+        "Installation complete! Consider adding '{:?}' to the executable search path.",
+        &AppInstallFile::ClientBinary.pathspec().parent().unwrap()
+    );
+
     Ok(())
 }
 
