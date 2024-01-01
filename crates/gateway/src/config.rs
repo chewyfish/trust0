@@ -145,15 +145,15 @@ pub struct AppConfigArgs {
     #[arg(required=false, long="crl-file", env, value_parser=trust0_common::crypto::file::verify_crl_list)]
     pub crl_file: Option<String>,
 
-    /// Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead
+    /// Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead. Provided value is a comma-separated list of versions.
     #[arg(required=false, long="protocol-version", env, value_parser=trust0_common::crypto::tls::lookup_version, value_delimiter=',')]
     pub protocol_version: Option<Vec<&'static rustls::SupportedProtocolVersion>>,
 
-    /// Disable default cipher suite list, and use <CIPHER_SUITE(s)> instead
+    /// Disable default cipher suite list, and use <CIPHER_SUITE(s)> instead. Provided value is a comma-separated list of suites.
     #[arg(required=false, long="cipher-suite", env, value_parser=trust0_common::crypto::tls::lookup_suite, value_delimiter=',')]
     pub cipher_suite: Option<Vec<rustls::SupportedCipherSuite>>,
 
-    /// Negotiate ALPN using <ALPN_PROTOCOL(s)>
+    /// Negotiate ALPN using <ALPN_PROTOCOL(s)>. Provided value is a comma-separated list of protocols.
     #[arg(required=false, long="alpn-protocol", env, value_parser=trust0_common::crypto::tls::parse_alpn_protocol, value_delimiter=',')]
     pub alpn_protocol: Option<Vec<Vec<u8>>>,
 

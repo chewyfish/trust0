@@ -5,7 +5,7 @@ use clap::Parser;
 
 use trust0_common::error::AppError;
 
-/// Represents the client configuration, used to create and stage the files appropriately for client installation.
+/// Installs the core Trust0 Client files in a well-known user installation path structure appropriate for the target OS platform.
 #[derive(Parser, Debug)]
 #[command(author, version, long_about)]
 pub struct AppConfigArgs {
@@ -53,11 +53,11 @@ pub struct AppConfigArgs {
     #[arg(required=true, short='r', long="ca-root-cert-file", env, value_parser=trust0_common::crypto::file::verify_certificates)]
     pub ca_root_cert_file: String,
 
-    /// Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead
+    /// Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead. Provided value is a comma-separated list of versions.
     #[arg(required=false, long="protocol-version", env, value_parser=trust0_common::crypto::tls::verify_version, value_delimiter=',')]
     pub protocol_version: Option<Vec<String>>,
 
-    /// Disable default cipher suite list, and use <CIPHER_SUITE(s)> instead
+    /// Disable default cipher suite list, and use <CIPHER_SUITE(s)> instead. Provided value is a comma-separated list of suites.
     #[arg(required=false, long="cipher-suite", env, value_parser=trust0_common::crypto::tls::verify_suite, value_delimiter=',')]
     pub cipher_suite: Option<Vec<String>>,
 

@@ -55,11 +55,11 @@ pub struct AppConfigArgs {
     #[arg(required=true, short='r', long="ca-root-cert-file", env, value_parser=trust0_common::crypto::file::verify_certificates)]
     pub ca_root_cert_file: String,
 
-    /// Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead
+    /// Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead. Provided value is a comma-separated list of versions.
     #[arg(required=false, long="protocol-version", env, value_parser=trust0_common::crypto::tls::lookup_version, value_delimiter=',')]
     pub protocol_version: Option<Vec<&'static rustls::SupportedProtocolVersion>>,
 
-    /// Disable default cipher suite list, and use <CIPHER_SUITE(s)> instead
+    /// Disable default cipher suite list, and use <CIPHER_SUITE(s)> instead. Provided value is a comma-separated list of suites.
     #[arg(required=false, long="cipher-suite", env, value_parser=trust0_common::crypto::tls::lookup_suite, value_delimiter=',')]
     pub cipher_suite: Option<Vec<SupportedCipherSuite>>,
 
