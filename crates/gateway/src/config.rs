@@ -146,15 +146,15 @@ pub struct AppConfigArgs {
     pub crl_file: Option<String>,
 
     /// Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead
-    #[arg(required=false, long="protocol-version", env, value_parser=trust0_common::crypto::tls::lookup_version)]
+    #[arg(required=false, long="protocol-version", env, value_parser=trust0_common::crypto::tls::lookup_version, value_delimiter=',')]
     pub protocol_version: Option<Vec<&'static rustls::SupportedProtocolVersion>>,
 
     /// Disable default cipher suite list, and use <CIPHER_SUITE(s)> instead
-    #[arg(required=false, long="cipher-suite", env, value_parser=trust0_common::crypto::tls::lookup_suite)]
+    #[arg(required=false, long="cipher-suite", env, value_parser=trust0_common::crypto::tls::lookup_suite, value_delimiter=',')]
     pub cipher_suite: Option<Vec<rustls::SupportedCipherSuite>>,
 
     /// Negotiate ALPN using <ALPN_PROTOCOL(s)>
-    #[arg(required=false, long="alpn-protocol", env, value_parser=trust0_common::crypto::tls::parse_alpn_protocol)]
+    #[arg(required=false, long="alpn-protocol", env, value_parser=trust0_common::crypto::tls::parse_alpn_protocol, value_delimiter=',')]
     pub alpn_protocol: Option<Vec<Vec<u8>>>,
 
     /// Support session resumption
@@ -365,9 +365,20 @@ impl AppConfig {
         };
 
         // Miscellaneous
-        let dns_client = DNSClient::new_with_system_resolvers().map_err(|err| {
-            AppError::GenWithMsgAndErr("Error instantiating DNSClient".to_string(), Box::new(err))
-        })?;
+        let dns_client;
+        #[cfg(unix)]
+        {
+            dns_client = DNSClient::new_with_system_resolvers().map_err(|err| {
+                AppError::GenWithMsgAndErr(
+                    "Error instantiating DNSClient".to_string(),
+                    Box::new(err),
+                )
+            })?;
+        }
+        #[cfg(windows)]
+        {
+            dns_client = DNSClient::new(vec![]);
+        }
 
         // Instantiate AppConfig
         Ok(AppConfig {
@@ -487,6 +498,7 @@ pub mod tests {
     use crate::repository::user_repo::tests::MockUserRepo;
     use crate::repository::user_repo::UserRepository;
     use mockall::predicate;
+    use once_cell::sync::Lazy;
     use std::env;
     use std::path::PathBuf;
 
@@ -506,6 +518,8 @@ pub mod tests {
     const DB_SERVICE_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "db-service.json"];
     const DB_USER_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "db-user.json"];
+
+    static TEST_MUTEX: Lazy<Arc<Mutex<bool>>> = Lazy::new(|| Arc::new(Mutex::new(true)));
 
     // utils
     // =====
@@ -538,6 +552,21 @@ pub mod tests {
             alpn_protocols,
         };
 
+        let dns_client;
+        #[cfg(unix)]
+        {
+            dns_client = DNSClient::new_with_system_resolvers().map_err(|err| {
+                AppError::GenWithMsgAndErr(
+                    "Error instantiating DNSClient".to_string(),
+                    Box::new(err),
+                )
+            })?;
+        }
+        #[cfg(windows)]
+        {
+            dns_client = DNSClient::new(vec![]);
+        }
+
         Ok(AppConfig {
             server_port: 2000,
             tls_server_config_builder,
@@ -550,21 +579,36 @@ pub mod tests {
             gateway_service_ports: None,
             gateway_service_reply_host: "".to_string(),
             mask_addresses: false,
-            dns_client: DNSClient::new_with_system_resolvers().map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    "Error instantiating DNSClient".to_string(),
-                    Box::new(err),
-                )
-            })?,
+            dns_client,
         })
+    }
+
+    fn clear_env_vars() {
+        env::remove_var("CONFIG_FILE");
+        env::remove_var("PORT");
+        env::remove_var("KEY_FILE");
+        env::remove_var("CERT_FILE");
+        env::remove_var("AUTH_CERT_FILE");
+        env::remove_var("PROTOCOL_VERSION");
+        env::remove_var("CIPHER_SUITE");
+        env::remove_var("SESSION_RESUMPTION");
+        env::remove_var("ICKETS");
+        env::remove_var("GATEWAY_SERVICE_HOST");
+        env::remove_var("GATEWAY_SERVICE_PORTS");
+        env::remove_var("GATEWAY_SERVICE_REPLY_HOST");
+        env::remove_var("NO_MASK_ADDRESSES");
+        env::remove_var("MODE");
+        env::remove_var("DATASOURCE");
+        env::remove_var("ACCESS_DB_CONNECT");
+        env::remove_var("SERVICE_DB_CONNECT");
+        env::remove_var("USER_DB_CONNECT");
+        env::remove_var("VERBOSE");
     }
 
     // tests
     // =====
 
-    // Environment contention for the tests utilizing env vars. Disabling this test for now.
     #[test]
-    #[ignore]
     fn appcfg_new_when_all_supplied_and_valid() {
         let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_key_file_str = gateway_key_file.to_str().unwrap();
@@ -576,26 +620,33 @@ pub mod tests {
         let service_db_file_str = service_db_file.to_str().unwrap();
         let user_db_file: PathBuf = DB_USER_PATHPARTS.iter().collect();
         let user_db_file_str = user_db_file.to_str().unwrap();
-        env::set_var("PORT", "8000");
-        env::set_var("KEY_FILE", gateway_key_file_str);
-        env::set_var("CERT_FILE", gateway_cert_file_str);
-        env::set_var("AUTH_CERT_FILE", gateway_cert_file_str);
-        env::set_var("PROTOCOL_VERSION", "1.3");
-        env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
-        env::set_var("SESSION_RESUMPTION", "true");
-        env::set_var("ICKETS", "true");
-        env::set_var("GATEWAY_SERVICE_HOST", "gwhost1");
-        env::set_var("GATEWAY_SERVICE_PORTS", "8000-8010");
-        env::set_var("GATEWAY_SERVICE_REPLY_HOST", "gwhost2");
-        env::set_var("NO_MASK_ADDRESSES", "true");
-        env::set_var("MODE", "control-plane");
-        env::set_var("DATASOURCE", "in-memory-db");
-        env::set_var("ACCESS_DB_CONNECT", access_db_file_str);
-        env::set_var("SERVICE_DB_CONNECT", service_db_file_str);
-        env::set_var("USER_DB_CONNECT", user_db_file_str);
-        env::set_var("VERBOSE", "true");
+        let result;
+        {
+            let mutex = TEST_MUTEX.clone();
+            let _lock = mutex.lock().unwrap();
+            clear_env_vars();
+            env::set_var("PORT", "8000");
+            env::set_var("KEY_FILE", gateway_key_file_str);
+            env::set_var("CERT_FILE", gateway_cert_file_str);
+            env::set_var("AUTH_CERT_FILE", gateway_cert_file_str);
+            env::set_var("PROTOCOL_VERSION", "1.3");
+            env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
+            env::set_var("SESSION_RESUMPTION", "true");
+            env::set_var("ICKETS", "true");
+            env::set_var("GATEWAY_SERVICE_HOST", "gwhost1");
+            env::set_var("GATEWAY_SERVICE_PORTS", "8000-8010");
+            env::set_var("GATEWAY_SERVICE_REPLY_HOST", "gwhost2");
+            env::set_var("NO_MASK_ADDRESSES", "true");
+            env::set_var("MODE", "control-plane");
+            env::set_var("DATASOURCE", "in-memory-db");
+            env::set_var("ACCESS_DB_CONNECT", access_db_file_str);
+            env::set_var("SERVICE_DB_CONNECT", service_db_file_str);
+            env::set_var("USER_DB_CONNECT", user_db_file_str);
+            env::set_var("VERBOSE", "true");
 
-        let result = AppConfig::new();
+            result = AppConfig::new();
+        }
+
         if let Err(err) = result {
             panic!("Unexpected result: err={:?}", &err);
         }
@@ -625,25 +676,31 @@ pub mod tests {
         let service_db_file_str = service_db_file.to_str().unwrap();
         let user_db_file: PathBuf = DB_USER_PATHPARTS.iter().collect();
         let user_db_file_str = user_db_file.to_str().unwrap();
-        env::set_var("CONFIG_FILE", config_file_str);
-        env::set_var("KEY_FILE", gateway_key_file_str);
-        env::set_var("CERT_FILE", gateway_cert_file_str);
-        env::set_var("AUTH_CERT_FILE", gateway_cert_file_str);
-        env::set_var("PROTOCOL_VERSION", "1.3");
-        env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
-        env::set_var("SESSION_RESUMPTION", "true");
-        env::set_var("ICKETS", "true");
-        env::set_var("GATEWAY_SERVICE_PORTS", "8000-8010");
-        env::set_var("GATEWAY_SERVICE_REPLY_HOST", "gwhost2");
-        env::set_var("NO_MASK_ADDRESSES", "true");
-        env::set_var("MODE", "control-plane");
-        env::set_var("DATASOURCE", "in-memory-db");
-        env::set_var("ACCESS_DB_CONNECT", access_db_file_str);
-        env::set_var("SERVICE_DB_CONNECT", service_db_file_str);
-        env::set_var("USER_DB_CONNECT", user_db_file_str);
-        env::set_var("VERBOSE", "true");
+        let result;
+        {
+            let mutex = TEST_MUTEX.clone();
+            let _lock = mutex.lock().unwrap();
+            clear_env_vars();
+            env::set_var("CONFIG_FILE", config_file_str);
+            env::set_var("KEY_FILE", gateway_key_file_str);
+            env::set_var("CERT_FILE", gateway_cert_file_str);
+            env::set_var("AUTH_CERT_FILE", gateway_cert_file_str);
+            env::set_var("PROTOCOL_VERSION", "1.3");
+            env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
+            env::set_var("SESSION_RESUMPTION", "true");
+            env::set_var("ICKETS", "true");
+            env::set_var("GATEWAY_SERVICE_PORTS", "8000-8010");
+            env::set_var("GATEWAY_SERVICE_REPLY_HOST", "gwhost2");
+            env::set_var("NO_MASK_ADDRESSES", "true");
+            env::set_var("MODE", "control-plane");
+            env::set_var("DATASOURCE", "in-memory-db");
+            env::set_var("ACCESS_DB_CONNECT", access_db_file_str);
+            env::set_var("SERVICE_DB_CONNECT", service_db_file_str);
+            env::set_var("USER_DB_CONNECT", user_db_file_str);
+            env::set_var("VERBOSE", "true");
 
-        let result = AppConfig::new();
+            result = AppConfig::new();
+        }
         if let Err(err) = result {
             panic!("Unexpected result: err={:?}", &err);
         }
