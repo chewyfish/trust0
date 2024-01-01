@@ -127,6 +127,7 @@ impl AppInstallDir {
 /// Application file types
 #[derive(Clone, Debug)]
 pub enum AppInstallFile {
+    CARootCertificate,
     ClientConfig,
     ClientBinary,
     ClientCertificate,
@@ -142,6 +143,9 @@ impl AppInstallFile {
     /// File pathspec
     pub fn pathspec(&self) -> PathBuf {
         match self {
+            AppInstallFile::CARootCertificate => {
+                AppInstallDir::Pki.pathspec().join("ca-root.cert.pem")
+            }
             AppInstallFile::ClientConfig => {
                 AppInstallDir::Config.pathspec().join("trust0-client.conf")
             }
@@ -177,14 +181,15 @@ impl AppInstallFile {
     /// File permissions
     fn permissions(&self) -> u32 {
         match self {
+            AppInstallFile::CARootCertificate => 0o600,
             AppInstallFile::ClientConfig => 0o600,
-            AppInstallFile::ClientBinary => 0o500,
-            AppInstallFile::ClientCertificate => 0o400,
-            AppInstallFile::ClientKey => 0o400,
+            AppInstallFile::ClientBinary => 0o700,
+            AppInstallFile::ClientCertificate => 0o600,
+            AppInstallFile::ClientKey => 0o600,
             AppInstallFile::GatewayConfig => 0o600,
-            AppInstallFile::GatewayBinary => 0o500,
-            AppInstallFile::GatewayCertificate => 0o400,
-            AppInstallFile::GatewayKey => 0o400,
+            AppInstallFile::GatewayBinary => 0o700,
+            AppInstallFile::GatewayCertificate => 0o600,
+            AppInstallFile::GatewayKey => 0o600,
             AppInstallFile::Custom(_, _, mode) => *mode,
         }
     }
@@ -326,36 +331,17 @@ impl AppInstallFile {
 
 /// Unit tests
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
+    use crate::testutils;
     use std::io::Read;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
-    use std::sync::{Arc, Mutex};
 
-    const XDG_ROOT_DIR_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "target", "xdgroot"];
     const EXISTING_FILE_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "invalid.crl.pem"];
     const NONEXISTENT_FILE_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "NON-EXISTENT.txt"];
-
-    static TEST_MUTEX: Lazy<Arc<Mutex<bool>>> = Lazy::new(|| Arc::new(Mutex::new(true)));
-
-    fn setup_xdg_vars() {
-        let xdg_root_dir: PathBuf = XDG_ROOT_DIR_PATHPARTS.iter().collect();
-        env::set_var(
-            "XDG_DATA_HOME",
-            xdg_root_dir.clone().join("data").to_str().unwrap(),
-        );
-        env::set_var(
-            "XDG_CONFIG_HOME",
-            xdg_root_dir.clone().join("config").to_str().unwrap(),
-        );
-        env::set_var(
-            "XDG_CACHE_HOME",
-            xdg_root_dir.clone().join("cache").to_str().unwrap(),
-        );
-    }
 
     #[cfg(windows)]
     fn acl_entry_exists(
@@ -386,10 +372,10 @@ mod tests {
         let config_home_path;
         let cache_home_path;
         {
-            let mutex = TEST_MUTEX.clone();
+            let mutex = testutils::TEST_MUTEX.clone();
             let _lock = mutex.lock().unwrap();
-            setup_xdg_vars();
-            let xdg_root_dir: PathBuf = XDG_ROOT_DIR_PATHPARTS.iter().collect();
+            testutils::setup_xdg_vars().unwrap();
+            let xdg_root_dir: PathBuf = testutils::XDG_ROOT_DIR_PATHPARTS.iter().collect();
             expected_data_home_path = xdg_root_dir.clone().join("data").join(APP_BASE_FILENAME);
             expected_config_home_path = xdg_root_dir.clone().join("config").join(APP_BASE_FILENAME);
             expected_cache_home_path = xdg_root_dir.clone().join("cache").join(APP_BASE_FILENAME);
@@ -412,7 +398,7 @@ mod tests {
         let config_home_path;
         let cache_home_path;
         {
-            let mutex = TEST_MUTEX.clone();
+            let mutex = testutils::TEST_MUTEX.clone();
             let _lock = mutex.lock().unwrap();
             env::set_var("HOME", "home");
             env::remove_var("XDG_DATA_HOME");
@@ -447,7 +433,7 @@ mod tests {
         let config_home_path;
         let cache_home_path;
         {
-            let mutex = TEST_MUTEX.clone();
+            let mutex = testutils::TEST_MUTEX.clone();
             let _lock = mutex.lock().unwrap();
             env::set_var("APPDATA", "appdata");
             env::remove_var("XDG_DATA_HOME");
@@ -482,10 +468,10 @@ mod tests {
         let pki_home_path;
         let transient_home_path;
         {
-            let mutex = TEST_MUTEX.clone();
+            let mutex = testutils::TEST_MUTEX.clone();
             let _lock = mutex.lock().unwrap();
-            setup_xdg_vars();
-            let xdg_root_dir: PathBuf = XDG_ROOT_DIR_PATHPARTS.iter().collect();
+            testutils::setup_xdg_vars().unwrap();
+            let xdg_root_dir: PathBuf = testutils::XDG_ROOT_DIR_PATHPARTS.iter().collect();
             expected_data_home_path = xdg_root_dir.clone().join("data").join(APP_BASE_FILENAME);
             expected_config_home_path = xdg_root_dir.clone().join("config").join(APP_BASE_FILENAME);
             expected_cache_home_path = xdg_root_dir.clone().join("cache").join(APP_BASE_FILENAME);
@@ -520,6 +506,7 @@ mod tests {
     fn appinstallfile_pathspec() {
         let expected_data_home_path;
         let expected_config_home_path;
+        let ca_root_file_path;
         let client_config_file_path;
         let client_binary_file_path;
         let client_cert_file_path;
@@ -530,12 +517,13 @@ mod tests {
         let gateway_key_file_path;
         let custom_file_path;
         {
-            let mutex = TEST_MUTEX.clone();
+            let mutex = testutils::TEST_MUTEX.clone();
             let _lock = mutex.lock().unwrap();
-            setup_xdg_vars();
-            let xdg_root_dir: PathBuf = XDG_ROOT_DIR_PATHPARTS.iter().collect();
+            testutils::setup_xdg_vars().unwrap();
+            let xdg_root_dir: PathBuf = testutils::XDG_ROOT_DIR_PATHPARTS.iter().collect();
             expected_data_home_path = xdg_root_dir.clone().join("data").join(APP_BASE_FILENAME);
             expected_config_home_path = xdg_root_dir.clone().join("config").join(APP_BASE_FILENAME);
+            ca_root_file_path = AppInstallFile::CARootCertificate.pathspec();
             client_config_file_path = AppInstallFile::ClientConfig.pathspec();
             client_binary_file_path = AppInstallFile::ClientBinary.pathspec();
             client_cert_file_path = AppInstallFile::ClientCertificate.pathspec();
@@ -548,6 +536,13 @@ mod tests {
                 AppInstallFile::Custom(AppInstallDir::Home, "file123.txt".into(), 0o700).pathspec();
         }
 
+        assert_eq!(
+            ca_root_file_path,
+            expected_data_home_path
+                .clone()
+                .join("pki")
+                .join("ca-root.cert.pem")
+        );
         assert_eq!(
             client_config_file_path,
             expected_config_home_path.clone().join("trust0-client.conf")
@@ -608,6 +603,7 @@ mod tests {
 
     #[test]
     fn appinstallfile_permissions() {
+        let ca_root_file_perms;
         let client_config_file_perms;
         let client_binary_file_perms;
         let client_cert_file_perms;
@@ -618,9 +614,10 @@ mod tests {
         let gateway_key_file_perms;
         let custom_file_perms;
         {
-            let mutex = TEST_MUTEX.clone();
+            let mutex = testutils::TEST_MUTEX.clone();
             let _lock = mutex.lock().unwrap();
-            setup_xdg_vars();
+            testutils::setup_xdg_vars().unwrap();
+            ca_root_file_perms = AppInstallFile::CARootCertificate.permissions();
             client_config_file_perms = AppInstallFile::ClientConfig.permissions();
             client_binary_file_perms = AppInstallFile::ClientBinary.permissions();
             client_cert_file_perms = AppInstallFile::ClientCertificate.permissions();
@@ -634,14 +631,15 @@ mod tests {
                     .permissions();
         }
 
+        assert_eq!(ca_root_file_perms, 0o600);
         assert_eq!(client_config_file_perms, 0o600);
-        assert_eq!(client_binary_file_perms, 0o500);
-        assert_eq!(client_cert_file_perms, 0o400);
-        assert_eq!(client_key_file_perms, 0o400);
+        assert_eq!(client_binary_file_perms, 0o700);
+        assert_eq!(client_cert_file_perms, 0o600);
+        assert_eq!(client_key_file_perms, 0o600);
         assert_eq!(gateway_config_file_perms, 0o600);
-        assert_eq!(gateway_binary_file_perms, 0o500);
-        assert_eq!(gateway_cert_file_perms, 0o400);
-        assert_eq!(gateway_key_file_perms, 0o400);
+        assert_eq!(gateway_binary_file_perms, 0o700);
+        assert_eq!(gateway_cert_file_perms, 0o600);
+        assert_eq!(gateway_key_file_perms, 0o600);
         assert_eq!(custom_file_perms, 0o700);
     }
 
@@ -650,9 +648,9 @@ mod tests {
         let non_existent_file: PathBuf;
         let install_file;
         {
-            let mutex = TEST_MUTEX.clone();
+            let mutex = testutils::TEST_MUTEX.clone();
             let _lock = mutex.lock().unwrap();
-            setup_xdg_vars();
+            testutils::setup_xdg_vars().unwrap();
             non_existent_file = NONEXISTENT_FILE_PATHPARTS.iter().collect();
             install_file = AppInstallFile::Custom(AppInstallDir::Home, "file123.txt".into(), 0o700);
         }
@@ -668,9 +666,9 @@ mod tests {
         let existing_file: PathBuf;
         let install_file;
         {
-            let mutex = TEST_MUTEX.clone();
+            let mutex = testutils::TEST_MUTEX.clone();
             let _lock = mutex.lock().unwrap();
-            setup_xdg_vars();
+            testutils::setup_xdg_vars().unwrap();
             existing_file = EXISTING_FILE_PATHPARTS.iter().collect();
             install_file = AppInstallFile::Custom(AppInstallDir::Home, "file123.txt".into(), 0o700);
         }
@@ -697,8 +695,8 @@ mod tests {
                 &created_file, &err
             );
         }
-        assert_eq!(file_data.replace(" ", ""),
-                   "-----BEGINX509CRL-----\nWRONG1\n-----ENDX509CRL-----\n-----BEGINX509CRL-----\nWRONG2\n-----ENDX509CRL-----\n".to_string());
+        assert_eq!(file_data.replace(&[' ', '\t', '\r', '\n'], ""),
+                   "-----BEGINX509CRL-----WRONG1-----ENDX509CRL----------BEGINX509CRL-----WRONG2-----ENDX509CRL-----".to_string());
     }
 
     #[cfg(windows)]
@@ -707,9 +705,9 @@ mod tests {
         let existing_file: PathBuf;
         let install_file;
         {
-            let mutex = TEST_MUTEX.clone();
+            let mutex = testutils::TEST_MUTEX.clone();
             let _lock = mutex.lock().unwrap();
-            setup_xdg_vars();
+            testutils::setup_xdg_vars().unwrap();
             existing_file = EXISTING_FILE_PATHPARTS.iter().collect();
             install_file = AppInstallFile::Custom(AppInstallDir::Home, "file123.txt".into(), 0o700);
         }

@@ -1926,6 +1926,7 @@ dependencies = [
  "log",
  "log4rs",
  "mockall",
+ "once_cell",
  "rcgen",
  "ring 0.17.7",
  "rustls",
@@ -1945,6 +1946,7 @@ version = "0.3.0-alpha"
 dependencies = [
  "anyhow",
  "clap",
+ "dotenvy",
  "futures-util",
  "log",
  "log4rs",
@@ -1985,6 +1987,7 @@ dependencies = [
  "log",
  "log4rs",
  "mockall",
+ "once_cell",
  "rcgen",
  "regex",
  "ring 0.17.7",
