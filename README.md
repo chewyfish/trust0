@@ -28,7 +28,6 @@ This is very early alpha, use with care.
 * Build (more) testing: unit, integration, performance, ...
 * Strategize non-name resolution (DNS/hosts file/...) approach to handle client TLS hostname verification for service connections
 * Supply more comprehensive source commenting
-* Develop tool: Trust0 client installer (dotfiles/... location for binary and supporting files)
 * Consider supporting UDP multicast services
 * Consider gateway-to-gateway service proxy routing (reasons of proximity, security, ...)
 * Consider gateway load-balancing, via client redirect (reasons of load, rollout deployment, ...)
