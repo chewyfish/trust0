@@ -341,7 +341,6 @@ pub mod tests {
     use std::io::Read;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
-    use winapi::um::winnt::PSID;
 
     const EXISTING_FILE_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "invalid.crl.pem"];
@@ -744,7 +743,7 @@ pub mod tests {
         let curr_user_sid = windows_acl::helper::sid_to_string(
             windows_acl::helper::name_to_sid(&curr_user_name.as_str(), None)
                 .unwrap_or(vec![])
-                .as_ptr() as PSID,
+                .as_ptr() as winapi::um::winnt::PSID,
         )
         .unwrap_or(String::new());
 
