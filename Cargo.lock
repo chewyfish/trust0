@@ -1915,7 +1915,7 @@ checksum = "c06d3da6113f116aaee68e4d601191614c9053067f9ab7f6edbcb161237daa54"
 
 [[package]]
 name = "trust0-client"
-version = "0.3.0-alpha"
+version = "0.4.0-alpha"
 dependencies = [
  "anyhow",
  "clap",
@@ -1942,7 +1942,7 @@ dependencies = [
 
 [[package]]
 name = "trust0-common"
-version = "0.3.0-alpha"
+version = "0.4.0-alpha"
 dependencies = [
  "anyhow",
  "clap",
@@ -1973,7 +1973,7 @@ dependencies = [
 
 [[package]]
 name = "trust0-gateway"
-version = "0.3.0-alpha"
+version = "0.4.0-alpha"
 dependencies = [
  "anyhow",
  "clap",
