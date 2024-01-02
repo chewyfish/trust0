@@ -40,7 +40,7 @@ impl AppInstallDir {
     fn parent_dir() -> PathBuf {
         #[cfg(windows)]
         {
-            if let Some(data_dir) = env::var("APPDATA").or_else(|| env::var("CSIDL_APPDATA")) {
+            if let Ok(data_dir) = env::var("APPDATA").or_else(|_| env::var("CSIDL_APPDATA")) {
                 Path::new(&data_dir).to_path_buf()
             } else {
                 panic!("Unable to determine user data directory. Please ensure 'APPDATA' environment variable is provided.");
@@ -83,7 +83,7 @@ impl AppInstallDir {
             Err(_) => {
                 #[cfg(windows)]
                 {
-                    APP_HOME_DIR.join("config")
+                    Self::home_dir().join("config")
                 }
                 #[cfg(unix)]
                 {
@@ -100,7 +100,7 @@ impl AppInstallDir {
             Err(_) => {
                 #[cfg(windows)]
                 {
-                    APP_HOME_DIR.join("cache")
+                    Self::home_dir().join("cache")
                 }
                 #[cfg(unix)]
                 {
@@ -280,9 +280,11 @@ impl AppInstallFile {
                 err,
             )
         })?;
+        File::create(path).map_err(|err| {
+            AppError::IoWithMsg(format!("Error creating file: path={:?}", path), err)
+        })?;
         let file = OpenOptions::new()
-            .create(true)
-            .access_mode(winapi::um::winnt::GENERIC_READ | winapi::um::winnt::WRITE_DAC)
+            .access_mode(winapi::um::winnt::GENERIC_READ | winapi::um::winnt::GENERIC_WRITE | winapi::um::winnt::WRITE_DAC)
             .open(path)
             .map_err(|err| {
                 AppError::IoWithMsg(
@@ -323,9 +325,7 @@ impl AppInstallFile {
                 ))
             })?;
 
-        File::create(path).map_err(|err| {
-            AppError::IoWithMsg(format!("Error creating file: path={:?}", path), err)
-        })
+        Ok(file)
     }
 }
 
@@ -337,6 +337,7 @@ pub mod tests {
     use std::io::Read;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    use winapi::um::winnt::PSID;
 
     const EXISTING_FILE_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "invalid.crl.pem"];
@@ -547,12 +548,15 @@ pub mod tests {
             client_config_file_path,
             expected_config_home_path.clone().join("trust0-client.conf")
         );
-        assert_eq!(
-            client_binary_file_path,
+        let mut expected_client_binary_file_path =
             expected_data_home_path
                 .clone()
                 .join("bin")
-                .join("trust0-client")
+                .join("trust0-client");
+        expected_client_binary_file_path.set_extension(env::consts::EXE_EXTENSION);
+        assert_eq!(
+            client_binary_file_path,
+            expected_client_binary_file_path
         );
         assert_eq!(
             client_cert_file_path,
@@ -574,12 +578,15 @@ pub mod tests {
                 .clone()
                 .join("trust0-gateway.conf")
         );
-        assert_eq!(
-            gateway_binary_file_path,
+        let mut expected_gateway_binary_file_path =
             expected_data_home_path
                 .clone()
                 .join("bin")
-                .join("trust0-gateway")
+                .join("trust0-gateway");
+        expected_gateway_binary_file_path.set_extension(env::consts::EXE_EXTENSION);
+        assert_eq!(
+            gateway_binary_file_path,
+            expected_gateway_binary_file_path
         );
         assert_eq!(
             gateway_cert_file_path,
@@ -735,28 +742,29 @@ pub mod tests {
 
         let curr_user_name = windows_acl::helper::current_user().ok_or(AppError::General(
             "Unable to retrieve current username".to_string(),
-        ))?;
+        )).unwrap();
+        let curr_user_sid = windows_acl::helper::sid_to_string(windows_acl::helper::name_to_sid(&curr_user_name.as_str(), None).unwrap_or(vec![]).as_ptr() as PSID).unwrap_or(String::new());
 
         let mut expected_acl = windows_acl::acl::ACLEntry::new();
         expected_acl.entry_type = windows_acl::acl::AceType::AccessAllow;
-        expected_acl.string_sid = curr_user_name;
+        expected_acl.string_sid = curr_user_sid;
         expected_acl.flags = 0;
         expected_acl.mask = winapi::um::winnt::FILE_GENERIC_READ
             | winapi::um::winnt::FILE_GENERIC_WRITE
             | winapi::um::winnt::FILE_GENERIC_EXECUTE;
 
-        if None = acl_entry_exists(&acl_entries, &expected_acl) {
+        if let None = acl_entry_exists(&acl_entries, &expected_acl) {
             panic!("ACL entry not found: file={:?}", &created_file);
         }
 
-        let mut file_data;
+        let mut file_data = String::new();
         if let Err(err) = created_file.read_to_string(&mut file_data) {
             panic!(
                 "Error reading file contents: file={:?}, err={:?}",
                 &created_file, &err
             );
         }
-        assert_eq!(file_data.replace(" ", ""),
-                   "-----BEGINX509CRL-----\nWRONG1\n-----ENDX509CRL-----\n-----BEGINX509CRL-----\nWRONG2\n-----ENDX509CRL-----\n".to_string());
+        assert_eq!(file_data.replace(&[' ', '\t', '\r', '\n'], ""),
+                   "-----BEGINX509CRL-----WRONG1-----ENDX509CRL----------BEGINX509CRL-----WRONG2-----ENDX509CRL-----".to_string());
     }
 }
