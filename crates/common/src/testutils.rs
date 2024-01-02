@@ -1,7 +1,21 @@
+use crate::error::AppError;
 use crate::net::tls_client::conn_std::ConnectionEvent;
-use std::io;
-use std::sync::mpsc;
+use once_cell::sync::Lazy;
+use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;
+use std::sync::{mpsc, Arc, Mutex};
+use std::{env, io};
+
+pub static TEST_MUTEX: Lazy<Arc<Mutex<bool>>> = Lazy::new(|| Arc::new(Mutex::new(true)));
+
+pub const XDG_ROOT_DIR_PATHPARTS: [&str; 6] = [
+    env!("CARGO_MANIFEST_DIR"),
+    "..",
+    "..",
+    "target",
+    "test-common",
+    "xdgroot",
+];
 
 pub struct ChannelWriter {
     pub channel_sender: mpsc::Sender<Vec<u8>>,
@@ -50,4 +64,23 @@ pub fn gather_rcvd_connection_channel_data(
         rcvd_data.push(rcvd_result.unwrap());
     }
     rcvd_data
+}
+
+pub fn setup_xdg_vars() -> Result<(), AppError> {
+    let xdg_root_dir: PathBuf = XDG_ROOT_DIR_PATHPARTS.iter().collect();
+
+    env::set_var(
+        "XDG_DATA_HOME",
+        xdg_root_dir.clone().join("data").to_str().unwrap(),
+    );
+    env::set_var(
+        "XDG_CONFIG_HOME",
+        xdg_root_dir.clone().join("config").to_str().unwrap(),
+    );
+    env::set_var(
+        "XDG_CACHE_HOME",
+        xdg_root_dir.clone().join("cache").to_str().unwrap(),
+    );
+
+    Ok(())
 }

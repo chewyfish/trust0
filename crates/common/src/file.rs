@@ -541,8 +541,8 @@ mod reload_tests {
         assert_eq!(was_reloaded, true);
         assert_ne!(text_file.last_mtime, saved_last_mtime);
         assert!(!text_data.lock().unwrap().is_empty());
-        assert_eq!(text_data.lock().unwrap().to_string().replace(" ", ""),
-                   "-----BEGINX509CRL-----\nWRONG1\n-----ENDX509CRL-----\n-----BEGINX509CRL-----\nWRONG2\n-----ENDX509CRL-----\n".to_string());
+        assert_eq!(text_data.lock().unwrap().to_string().replace(&[' ', '\t', '\r', '\n'], ""),
+                   "-----BEGINX509CRL-----WRONG1-----ENDX509CRL----------BEGINX509CRL-----WRONG2-----ENDX509CRL-----".to_string());
     }
 
     #[test]

@@ -1,6 +1,7 @@
 pub mod config;
 pub mod control;
 pub mod crypto;
+pub mod distro;
 pub mod error;
 pub mod file;
 pub mod logging;

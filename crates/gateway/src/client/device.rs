@@ -65,7 +65,7 @@ impl Device {
                 .group::<HashMap<_, Vec<_>>>();
 
             if let Some(uri_value) = cert_alt_subj.get("URI") {
-                cert_access_context = serde_json::from_str(uri_value.get(0).unwrap().as_str())
+                cert_access_context = serde_json::from_str(uri_value.first().unwrap().as_str())
                     .map_err(|err| {
                         AppError::GenWithMsgAndErr(
                             "Invalid Certificate Context JSON".to_string(),
@@ -101,7 +101,7 @@ impl Device {
     fn device_cert<'a>(
         cert_chain: &'a [CertificateDer<'a>],
     ) -> Result<X509Certificate<'a>, AppError> {
-        match cert_chain.get(0) {
+        match cert_chain.first() {
             Some(cert) => Ok(parse_x509_certificate(cert.as_bytes())
                 .map_err(|err| {
                     AppError::GenWithMsgAndErr(

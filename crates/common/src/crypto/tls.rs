@@ -35,6 +35,12 @@ pub fn lookup_suite(name: &str) -> Result<rustls::SupportedCipherSuite, AppError
     )))
 }
 
+/// Verify a ciphersuite with the given name
+pub fn verify_suite(name: &str) -> Result<String, AppError> {
+    lookup_suite(name)?;
+    Ok(name.to_string())
+}
+
 /// Make a vector of protocol versions named in `versions`
 pub fn lookup_versions(
     version_names: &[String],
@@ -60,6 +66,12 @@ pub fn lookup_version(
             version
         ))),
     }
+}
+
+/// Verify protocol version
+pub fn verify_version(version: &str) -> Result<String, AppError> {
+    lookup_version(version)?;
+    Ok(version.to_string())
 }
 
 /// Convert ALPN protocol list to byte vectors
@@ -118,6 +130,38 @@ mod crl_tests {
         assert!(suites.contains(query_suites.get(0).unwrap()));
         assert!(suites.contains(query_suites.get(1).unwrap()));
     }
+
+    #[test]
+    fn tls_verify_suite_when_no_match() {
+        let query_suite_str = "INVALID1";
+
+        let result = verify_suite(query_suite_str);
+
+        if let Ok(suite_str) = result {
+            panic!("Unexpected successful result: suite={}", &suite_str);
+        }
+    }
+
+    #[test]
+    fn tls_verify_suite_when_match() {
+        let all_suites = rustls::crypto::ring::ALL_CIPHER_SUITES;
+        assert!(all_suites.len() >= 2);
+
+        let query_suites: Vec<&SupportedCipherSuite> = all_suites.iter().take(1).collect();
+        let query_suite_str: String =
+            format!("{:?}", query_suites.first().unwrap().suite()).to_lowercase();
+
+        let result = verify_suite(query_suite_str.as_str());
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        let suite_str = result.unwrap();
+
+        assert_eq!(suite_str, query_suite_str);
+    }
+
     #[test]
     fn tls_lookup_versions_when_no_match() {
         let query_version_strs = vec!["INVALID1".to_string(), "INVALID2".to_string()];
@@ -146,6 +190,31 @@ mod crl_tests {
 
         assert!(versions.contains(query_versions.get(0).unwrap()));
         assert!(versions.contains(query_versions.get(1).unwrap()));
+    }
+
+    #[test]
+    fn tls_verify_version_when_no_match() {
+        let query_version_str = "INVALID1";
+
+        let result = verify_version(query_version_str);
+
+        if let Ok(version_str) = result {
+            panic!("Unexpected successful result: version={}", &version_str);
+        }
+    }
+
+    #[test]
+    fn tls_verify_version_when_match() {
+        let query_version_str = "1.2";
+
+        let result = verify_version(query_version_str);
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        let version_str = result.unwrap();
+        assert_eq!(version_str, query_version_str);
     }
 
     #[test]

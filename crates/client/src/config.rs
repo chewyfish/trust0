@@ -7,6 +7,7 @@ use rustls::{RootCertStore, SupportedCipherSuite};
 
 use crate::console::ShellOutputWriter;
 use trust0_common::crypto::file::{load_certificates, load_private_key};
+use trust0_common::distro::AppInstallFile;
 use trust0_common::error::AppError;
 
 /// Connects to the Trust0 gateway server at HOSTNAME:PORT (default PORT is 443).
@@ -54,12 +55,12 @@ pub struct AppConfigArgs {
     #[arg(required=true, short='r', long="ca-root-cert-file", env, value_parser=trust0_common::crypto::file::verify_certificates)]
     pub ca_root_cert_file: String,
 
-    /// Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead
-    #[arg(required=false, long="protocol-version", env, value_parser=trust0_common::crypto::tls::lookup_version)]
+    /// Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead. Provided value is a comma-separated list of versions.
+    #[arg(required=false, long="protocol-version", env, value_parser=trust0_common::crypto::tls::lookup_version, value_delimiter=',')]
     pub protocol_version: Option<Vec<&'static rustls::SupportedProtocolVersion>>,
 
-    /// Disable default cipher suite list, and use <CIPHER_SUITE(s)> instead
-    #[arg(required=false, long="cipher-suite", env, value_parser=trust0_common::crypto::tls::lookup_suite)]
+    /// Disable default cipher suite list, and use <CIPHER_SUITE(s)> instead. Provided value is a comma-separated list of suites.
+    #[arg(required=false, long="cipher-suite", env, value_parser=trust0_common::crypto::tls::lookup_suite, value_delimiter=',')]
     pub cipher_suite: Option<Vec<SupportedCipherSuite>>,
 
     /// Limit outgoing messages to <MAX_FRAG_SIZE> bytes
@@ -100,11 +101,12 @@ impl AppConfig {
     pub fn new() -> Result<Self, AppError> {
         // Populate environment w/given config file (if provided)
         let mut config_file = env::var_os("CONFIG_FILE");
-        if config_file.is_none()
-            && (env::args_os().len() >= 3)
-            && env::args_os().nth(1).unwrap().eq("-f")
-        {
-            config_file = env::args_os().nth(2);
+        if config_file.is_none() {
+            if (env::args_os().len() >= 3) && env::args_os().nth(1).unwrap().eq("-f") {
+                config_file = env::args_os().nth(2);
+            } else if AppInstallFile::ClientConfig.pathspec().exists() {
+                config_file = Some(AppInstallFile::ClientConfig.pathspec().into_os_string());
+            }
         }
 
         if let Some(config_filename) = config_file {
@@ -258,6 +260,7 @@ mod danger {
 pub mod tests {
     use super::*;
     use crate::config::danger::NoCertificateVerification;
+    use once_cell::sync::Lazy;
     use pki_types::{ServerName, UnixTime};
     use rustls::client::danger::ServerCertVerifier;
     use std::env;
@@ -278,8 +281,11 @@ pub mod tests {
         "client-uid100.key.pem",
     ];
 
+    static TEST_MUTEX: Lazy<Arc<Mutex<bool>>> = Lazy::new(|| Arc::new(Mutex::new(true)));
+
     // utils
     // =====
+
     pub fn create_app_config(
         shell_output_writer: Option<ShellOutputWriter>,
     ) -> Result<AppConfig, AppError> {
@@ -319,12 +325,27 @@ pub mod tests {
         })
     }
 
+    fn clear_env_vars() {
+        env::remove_var("CONFIG_FILE");
+        env::remove_var("GATEWAY_HOST");
+        env::remove_var("GATEWAY_PORT");
+        env::remove_var("AUTH_KEY_FILE");
+        env::remove_var("AUTH_CERT_FILE");
+        env::remove_var("CA_ROOT_CERT_FILE");
+        env::remove_var("PROTOCOL_VERSION");
+        env::remove_var("CIPHER_SUITE");
+        env::remove_var("MAX_FRAG_SIZE");
+        env::remove_var("SESSION_RESUMPTION");
+        env::remove_var("NO_TICKETS");
+        env::remove_var("NO_SNI");
+        env::remove_var("INSECURE");
+        env::remove_var("VERBOSE")
+    }
+
     // tests
     // =====
 
-    // Environment contention for the tests utilizing env vars. Disabling this test for now.
     #[test]
-    #[ignore]
     fn appcfg_new_when_all_supplied_and_valid() {
         let ca_root_cert_file: PathBuf = CERTFILE_ROOT_CA_PATHPARTS.iter().collect();
         let ca_root_cert_file_str = ca_root_cert_file.to_str().unwrap();
@@ -332,21 +353,28 @@ pub mod tests {
         let client_key_file_str = client_key_file.to_str().unwrap();
         let client_cert_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let client_cert_file_str = client_cert_file.to_str().unwrap();
-        env::set_var("GATEWAY_HOST", "gwhost1");
-        env::set_var("GATEWAY_PORT", "8000");
-        env::set_var("AUTH_KEY_FILE", client_key_file_str);
-        env::set_var("AUTH_CERT_FILE", client_cert_file_str);
-        env::set_var("CA_ROOT_CERT_FILE", ca_root_cert_file_str);
-        env::set_var("PROTOCOL_VERSION", "1.3");
-        env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
-        env::set_var("MAX_FRAG_SIZE", "1024");
-        env::set_var("SESSION_RESUMPTION", "true");
-        env::set_var("NO_TICKETS", "true");
-        env::set_var("NO_SNI", "true");
-        env::set_var("INSECURE", "true");
-        env::set_var("VERBOSE", "true");
+        let result;
+        {
+            let mutex = TEST_MUTEX.clone();
+            let _lock = mutex.lock().unwrap();
+            clear_env_vars();
+            env::set_var("GATEWAY_HOST", "gwhost1");
+            env::set_var("GATEWAY_PORT", "8000");
+            env::set_var("AUTH_KEY_FILE", client_key_file_str);
+            env::set_var("AUTH_CERT_FILE", client_cert_file_str);
+            env::set_var("CA_ROOT_CERT_FILE", ca_root_cert_file_str);
+            env::set_var("PROTOCOL_VERSION", "1.3");
+            env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
+            env::set_var("MAX_FRAG_SIZE", "1024");
+            env::set_var("SESSION_RESUMPTION", "true");
+            env::set_var("NO_TICKETS", "true");
+            env::set_var("NO_SNI", "true");
+            env::set_var("INSECURE", "true");
+            env::set_var("VERBOSE", "true");
 
-        let result = AppConfig::new();
+            result = AppConfig::new();
+        }
+
         if let Err(err) = result {
             panic!("Unexpected result: err={:?}", &err);
         }
@@ -379,20 +407,27 @@ pub mod tests {
         let client_key_file_str = client_key_file.to_str().unwrap();
         let client_cert_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let client_cert_file_str = client_cert_file.to_str().unwrap();
-        env::set_var("CONFIG_FILE", config_file_str);
-        env::set_var("GATEWAY_HOST", "gwhost1");
-        env::set_var("AUTH_KEY_FILE", client_key_file_str);
-        env::set_var("AUTH_CERT_FILE", client_cert_file_str);
-        env::set_var("CA_ROOT_CERT_FILE", ca_root_cert_file_str);
-        env::set_var("PROTOCOL_VERSION", "1.3");
-        env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
-        env::set_var("SESSION_RESUMPTION", "true");
-        env::set_var("NO_TICKETS", "true");
-        env::set_var("NO_SNI", "true");
-        env::set_var("INSECURE", "true");
-        env::set_var("VERBOSE", "true");
+        let result;
+        {
+            let mutex = TEST_MUTEX.clone();
+            let _lock = mutex.lock().unwrap();
+            clear_env_vars();
+            env::set_var("CONFIG_FILE", config_file_str);
+            env::set_var("GATEWAY_HOST", "gwhost1");
+            env::set_var("AUTH_KEY_FILE", client_key_file_str);
+            env::set_var("AUTH_CERT_FILE", client_cert_file_str);
+            env::set_var("CA_ROOT_CERT_FILE", ca_root_cert_file_str);
+            env::set_var("PROTOCOL_VERSION", "1.3");
+            env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
+            env::set_var("SESSION_RESUMPTION", "true");
+            env::set_var("NO_TICKETS", "true");
+            env::set_var("NO_SNI", "true");
+            env::set_var("INSECURE", "true");
+            env::set_var("VERBOSE", "true");
 
-        let result = AppConfig::new();
+            result = AppConfig::new();
+        }
+
         if let Err(err) = result {
             panic!("Unexpected result: err={:?}", &err);
         }
