@@ -284,7 +284,11 @@ impl AppInstallFile {
             AppError::IoWithMsg(format!("Error creating file: path={:?}", path), err)
         })?;
         let file = OpenOptions::new()
-            .access_mode(winapi::um::winnt::GENERIC_READ | winapi::um::winnt::GENERIC_WRITE | winapi::um::winnt::WRITE_DAC)
+            .access_mode(
+                winapi::um::winnt::GENERIC_READ
+                    | winapi::um::winnt::GENERIC_WRITE
+                    | winapi::um::winnt::WRITE_DAC,
+            )
             .open(path)
             .map_err(|err| {
                 AppError::IoWithMsg(
@@ -548,16 +552,12 @@ pub mod tests {
             client_config_file_path,
             expected_config_home_path.clone().join("trust0-client.conf")
         );
-        let mut expected_client_binary_file_path =
-            expected_data_home_path
-                .clone()
-                .join("bin")
-                .join("trust0-client");
+        let mut expected_client_binary_file_path = expected_data_home_path
+            .clone()
+            .join("bin")
+            .join("trust0-client");
         expected_client_binary_file_path.set_extension(env::consts::EXE_EXTENSION);
-        assert_eq!(
-            client_binary_file_path,
-            expected_client_binary_file_path
-        );
+        assert_eq!(client_binary_file_path, expected_client_binary_file_path);
         assert_eq!(
             client_cert_file_path,
             expected_data_home_path
@@ -578,16 +578,12 @@ pub mod tests {
                 .clone()
                 .join("trust0-gateway.conf")
         );
-        let mut expected_gateway_binary_file_path =
-            expected_data_home_path
-                .clone()
-                .join("bin")
-                .join("trust0-gateway");
+        let mut expected_gateway_binary_file_path = expected_data_home_path
+            .clone()
+            .join("bin")
+            .join("trust0-gateway");
         expected_gateway_binary_file_path.set_extension(env::consts::EXE_EXTENSION);
-        assert_eq!(
-            gateway_binary_file_path,
-            expected_gateway_binary_file_path
-        );
+        assert_eq!(gateway_binary_file_path, expected_gateway_binary_file_path);
         assert_eq!(
             gateway_cert_file_path,
             expected_data_home_path
@@ -740,10 +736,17 @@ pub mod tests {
         let acl_entries = acl.all().unwrap_or(Vec::new());
         assert!(!acl_entries.is_empty());
 
-        let curr_user_name = windows_acl::helper::current_user().ok_or(AppError::General(
-            "Unable to retrieve current username".to_string(),
-        )).unwrap();
-        let curr_user_sid = windows_acl::helper::sid_to_string(windows_acl::helper::name_to_sid(&curr_user_name.as_str(), None).unwrap_or(vec![]).as_ptr() as PSID).unwrap_or(String::new());
+        let curr_user_name = windows_acl::helper::current_user()
+            .ok_or(AppError::General(
+                "Unable to retrieve current username".to_string(),
+            ))
+            .unwrap();
+        let curr_user_sid = windows_acl::helper::sid_to_string(
+            windows_acl::helper::name_to_sid(&curr_user_name.as_str(), None)
+                .unwrap_or(vec![])
+                .as_ptr() as PSID,
+        )
+        .unwrap_or(String::new());
 
         let mut expected_acl = windows_acl::acl::ACLEntry::new();
         expected_acl.entry_type = windows_acl::acl::AceType::AccessAllow;
