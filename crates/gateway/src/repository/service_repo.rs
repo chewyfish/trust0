@@ -43,10 +43,10 @@ pub mod tests {
         pub ServiceRepo {}
         impl ServiceRepository for ServiceRepo {
             fn connect_to_datasource(&mut self, connect_spec: &str) -> Result<(), AppError>;
-            fn put(&self, service: Service) -> std::result::Result<Option<Service>, AppError>;
-            fn get(&self, service_id: u64) -> std::result::Result<Option<Service>, AppError>;
-            fn get_all(&self) -> std::result::Result<Vec<Service>, AppError>;
-            fn delete(&self, service_id: u64) -> std::result::Result<Option<Service>, AppError>;
+            fn put(&self, service: Service) -> Result<Option<Service>, AppError>;
+            fn get(&self, service_id: u64) -> Result<Option<Service>, AppError>;
+            fn get_all(&self) -> Result<Vec<Service>, AppError>;
+            fn delete(&self, service_id: u64) -> Result<Option<Service>, AppError>;
         }
     }
 }

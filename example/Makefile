@@ -76,6 +76,7 @@ TRUST0_CLIENT__BINARY_FILE=${PROJECT_DIR}/target/debug/${TRUST0_CLIENT__BINARY_N
 
 DATASOURCE_INMEMDB_ACCESS_FILE=${EXAMPLE_BUILD_DIR}/example-db-access.json
 DATASOURCE_INMEMDB_SERVICE_FILE=${EXAMPLE_BUILD_DIR}/example-db-service.json
+DATASOURCE_INMEMDB_ROLE_FILE=${EXAMPLE_BUILD_DIR}/example-db-role.json
 DATASOURCE_INMEMDB_USER_FILE=${EXAMPLE_BUILD_DIR}/example-db-user.json
 
 # Params - CRL
@@ -117,6 +118,7 @@ clean-all:
 	@rm -f ${ROOT_CA__PKI_CRLNUMBER_FILE}.*
 	@rm -f ${DATASOURCE_INMEMDB_ACCESS_FILE}
 	@rm -f ${DATASOURCE_INMEMDB_SERVICE_FILE}
+	@rm -f ${DATASOURCE_INMEMDB_ROLE_FILE}
 	@rm -f ${DATASOURCE_INMEMDB_USER_FILE}
 	@rm -f ${CRLSUPPORT__PKI_GATEWAY_CONFIGURED_FILE}
 	@rm -f ${CRLSUPPORT__PKI_REVOKE_CLIENT_FILE}
@@ -174,10 +176,10 @@ trust0-gateway:
 	${CARGO_CMD} build --color=always --bin trust0-gateway --manifest-path ${PROJECT_DIR}/crates/gateway/Cargo.toml ${CARGOBUILD_EXTRA_ARGS}
 
 run-trust0-gateway: gateway-server-pki trust0-gateway
-	${TRUST0_GATEWAY__BINARY_FILE} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource in-memory-db --access-db-connect ${DATASOURCE_INMEMDB_ACCESS_FILE} --service-db-connect ${DATASOURCE_INMEMDB_SERVICE_FILE} --user-db-connect ${DATASOURCE_INMEMDB_USER_FILE}
+	${TRUST0_GATEWAY__BINARY_FILE} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource in-memory-db --access-db-connect ${DATASOURCE_INMEMDB_ACCESS_FILE} --service-db-connect ${DATASOURCE_INMEMDB_SERVICE_FILE} --role-db-connect ${DATASOURCE_INMEMDB_ROLE_FILE} --user-db-connect ${DATASOURCE_INMEMDB_USER_FILE}
 
 run-trust0-gateway-nodeps:
-	${TRUST0_GATEWAY__BINARY_FILE} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource in-memory-db --access-db-connect ${DATASOURCE_INMEMDB_ACCESS_FILE} --service-db-connect ${DATASOURCE_INMEMDB_SERVICE_FILE} --user-db-connect ${DATASOURCE_INMEMDB_USER_FILE}
+	${TRUST0_GATEWAY__BINARY_FILE} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource in-memory-db --access-db-connect ${DATASOURCE_INMEMDB_ACCESS_FILE} --service-db-connect ${DATASOURCE_INMEMDB_SERVICE_FILE} --role-db-connect ${DATASOURCE_INMEMDB_ROLE_FILE} --user-db-connect ${DATASOURCE_INMEMDB_USER_FILE}
 
 # Targets - Trust Client
 

@@ -359,6 +359,7 @@ impl GatewayServiceProxyVisitor for TcpGatewayProxyServerVisitor {
 pub mod tests {
     use super::*;
     use crate::repository::access_repo::tests::MockAccessRepo;
+    use crate::repository::role_repo::tests::MockRoleRepo;
     use crate::repository::service_repo::tests::MockServiceRepo;
     use crate::repository::user_repo::tests::MockUserRepo;
     use crate::{config, service};
@@ -371,6 +372,7 @@ pub mod tests {
             config::tests::create_app_config_with_repos(
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
+                Arc::new(Mutex::new(MockRoleRepo::new())),
                 Arc::new(Mutex::new(MockAccessRepo::new())),
             )
             .unwrap(),
@@ -405,6 +407,7 @@ pub mod tests {
             config::tests::create_app_config_with_repos(
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
+                Arc::new(Mutex::new(MockRoleRepo::new())),
                 Arc::new(Mutex::new(MockAccessRepo::new())),
             )
             .unwrap(),

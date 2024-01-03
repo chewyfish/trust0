@@ -7,8 +7,13 @@
     * [Control Plane](#control-plane)
     * [Service Proxy](#service-proxy)
     * [Client Auth](#client-auth)
+      * [mTLS Authentication](#mtls-authentication)
+      * [User Connections](#user-connections)
+      * [RBAC Authorization](#rbac-authorization)
+      * [Certificate Revocation](#certificate-revocation)
     * [Database](#database)
       * [User Table](#user-table)
+      * [Role Table](#role-table)
       * [Service Table](#service-table)
       * [Access Table](#access-table)
 <!-- TOC -->
@@ -91,6 +96,8 @@ To recap, 3 total connections make up the virtual connection to a service:
 
 ### Client Auth
 
+#### mTLS Authentication
+
 Trust0 connections use TLS client (and server) authentication, which allows the gateway to confirm the legitimacy of the client. It accomplishes this by verifying the client certificate using a CA certificate, which is used for signing client certificates.
 
 Certificates/keys required by Trust0 Client/Gateway execution
@@ -110,9 +117,13 @@ Additionally, client (X.509) certificates are created w/a subject alternative na
 URI = {"userId": <USER_ID>, "platform": <DEVICE_PLATFORM>"}
 ```
 
-This allows the gateway to identify the user by their "userId" value (currently platform is not used). Subsequently, the gateway can enforce the appropriate authorization for their session. For instance it will check the respective [User Table](#user-table) record for the current status (values: `Active`, `Inactive`). Additionally if they are making a service proxy connection, it will validate the service and if the user has appropriate access by looking up the appropriate records in the [Service Table](#service-table) and [Access Table](#access-table).
+This allows the gateway to identify the user by their "userId" value (currently platform is not used).
 
-All connections use the same gateway port. The gateway knows the kind of connection based on the TLS application-layer protocol negotiation (ALPN) value given by the Trust0 client. The types of values are as follows:
+Subsequently, it will check the respective [User Table](#user-table) record for the current status (values: `active`, `inactive`) and allow or prohibit the user connection accordingly.
+
+#### User Connections
+
+All user connections use the same gateway port. The gateway knows the kind of connection based on the TLS application-layer protocol negotiation (ALPN) value given by the Trust0 client. The types of values are as follows:
 
 | Pattern       | Description                                                              |
 |---------------|--------------------------------------------------------------------------|
@@ -120,6 +131,12 @@ All connections use the same gateway port. The gateway knows the kind of connect
 | T0SRV<SVC_ID> | Service Proxy (for service denoted by service ID (u64 value) `<SVC_ID>`) |
 
 Note - A future Trust0 may accommodate gateway-to-gateway service proxy routing. In this case, gateway's will also use TLS client authentication in the same manner as clients (albeit they will have a different SAN field JSON structure to denote themselves as gateways).
+
+#### RBAC Authorization
+
+The gateway can enforce the appropriate authorization for their session for all service proxy connection requests. It will validate the service and whether the user has appropriate access for the service. It does this by looking up the appropriate records in the [Service Table](#service-table) and [Access Table](#access-table). The access table can contain entries for service accessibility either directly by user ID or indirectly by role ID. User records can be associated to roles (refer to [User Table](#user-table) for how that is specified).
+
+#### Certificate Revocation
 
 Trust0 supports Certificate Revocation List (CRL). A file containing the CRL list can be supplied to the gateway. Periodically it will be scanned for changes (revoked or un-revoked certificates) and will reload accordingly and will be available for scrutiny on the next client to gateway TLS connection.
 
@@ -144,7 +161,17 @@ User table contains records for each user account.
 |---------|------------------------------------------------------------|
 | user ID | A unique integer serving as the primary key for the record |
 | name    | Personal name for user                                     |
-| status  | Account status field. Values are: 'Inactive', 'Active      |
+| status  | Account status field. Values are: 'inactive', 'active      |
+| roles   | List of RBAC role IDs assigned to this user                |
+
+#### Role Table
+
+Role table contains RBAC authorization role records
+
+| Field   | Description                                                |
+|---------|------------------------------------------------------------|
+| role ID | A unique integer serving as the primary key for the record |
+| name    | Short title name for role                                  |
 
 #### Service Table
 
@@ -160,10 +187,11 @@ Service lists all the details for all services the Trust0 framework can access f
 
 #### Access Table
 
-Access is a join table linking users to services. This serves as the authority on service authorization for a user.
+Access is a join table linking users or roles to services. This serves as the authority on service authorization.
 
-| Field      | Description                           |
-|------------|---------------------------------------|
-| user ID    | User authorized for service           |
-| service ID | Service in question for authorization |
+| Field       | Description                                                              |
+|-------------|--------------------------------------------------------------------------|
+| service ID  | Service in question for authorization                                    |
+| entity type | Type of entity granted access to the service. Values are: 'role', 'user' |
+| entity ID   | The identifier key for the granted entity (either role ID or user ID)    |
 
