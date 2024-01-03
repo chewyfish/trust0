@@ -19,12 +19,12 @@ pub enum Status {
 
 impl User {
     /// User constructor
-    pub fn new(user_id: u64, name: &str, status: Status, roles: &Vec<u64>) -> Self {
+    pub fn new(user_id: u64, name: &str, status: Status, roles: &[u64]) -> Self {
         Self {
             user_id,
             name: name.to_string(),
             status,
-            roles: roles.clone(),
+            roles: roles.to_owned(),
         }
     }
 }
