@@ -202,6 +202,7 @@ mod tests {
                     user_id: 100,
                     name: "User100".to_string(),
                     status: Status::Active,
+                    roles: vec![60, 61],
                 },
             ),
             (
@@ -210,6 +211,7 @@ mod tests {
                     user_id: 101,
                     name: "User101".to_string(),
                     status: Status::Active,
+                    roles: vec![],
                 },
             ),
         ]);
@@ -253,7 +255,7 @@ mod tests {
         assert_eq!(user_repo.users.read().unwrap().len(), 2);
 
         *user_repo.reloader_new_data.lock().unwrap() =
-            "[{\"userId\": 800, \"name\": \"User800\", \"status\":  \"inactive\"}]".to_string();
+            "[{\"userId\": 800, \"name\": \"User800\", \"status\": \"inactive\", \"roles\": [600]}]".to_string();
 
         if let Err(err) = user_repo.process_source_data_updates() {
             panic!("Unexpected process updates result: err={:?}", &err);
@@ -265,6 +267,7 @@ mod tests {
                 user_id: 800,
                 name: "User800".to_string(),
                 status: Status::Inactive,
+                roles: vec![600],
             },
         )]);
 
@@ -307,7 +310,8 @@ mod tests {
         assert_eq!(user_repo.users.read().unwrap().len(), 2);
 
         *user_repo.reloader_new_data.lock().unwrap() =
-            "[{\"userId\": 800, \"name\": \"User800\", \"status\":  \"inactive\"}".to_string();
+            "[{\"userId\": 800, \"name\": \"User800\", \"status\": \"inactive\", \"roles\": [600]}"
+                .to_string();
 
         if let Ok(()) = user_repo.process_source_data_updates() {
             panic!(
@@ -329,6 +333,7 @@ mod tests {
             user_id: 1,
             name: "user1".to_string(),
             status: Status::Active,
+            roles: vec![60, 61],
         };
 
         if let Err(err) = user_repo.put(user.clone()) {
@@ -350,6 +355,7 @@ mod tests {
             user_id: 1,
             name: "user1".to_string(),
             status: Status::Active,
+            roles: vec![60, 61],
         };
 
         user_repo.users.write().unwrap().insert(user_key, user);
@@ -372,16 +378,19 @@ mod tests {
                 user_id: 1,
                 name: "user1".to_string(),
                 status: Status::Active,
+                roles: vec![60],
             },
             User {
                 user_id: 2,
                 name: "user2".to_string(),
                 status: Status::Active,
+                roles: vec![],
             },
             User {
                 user_id: 3,
                 name: "user3".to_string(),
                 status: Status::Inactive,
+                roles: vec![61, 62],
             },
         ];
 
@@ -422,16 +431,19 @@ mod tests {
                 user_id: 1,
                 name: "user1".to_string(),
                 status: Status::Active,
+                roles: vec![60],
             },
             User {
                 user_id: 2,
                 name: "user2".to_string(),
                 status: Status::Active,
+                roles: vec![],
             },
             User {
                 user_id: 3,
                 name: "user3".to_string(),
                 status: Status::Inactive,
+                roles: vec![61, 62],
             },
         ];
 
@@ -467,6 +479,7 @@ mod tests {
                     user_id: 1,
                     name: "user1".to_string(),
                     status: Status::Active,
+                    roles: vec![60],
                 },
             ),
             (
@@ -475,6 +488,7 @@ mod tests {
                     user_id: 2,
                     name: "user2".to_string(),
                     status: Status::Active,
+                    roles: vec![],
                 },
             ),
             (
@@ -483,6 +497,7 @@ mod tests {
                     user_id: 3,
                     name: "user3".to_string(),
                     status: Status::Inactive,
+                    roles: vec![61, 62],
                 },
             ),
         ]);
@@ -504,6 +519,7 @@ mod tests {
             user_id: 1,
             name: "user1".to_string(),
             status: Status::Active,
+            roles: vec![],
         };
 
         user_repo.users.write().unwrap().insert(user_key, user);
@@ -525,6 +541,7 @@ mod tests {
             user_id: 1,
             name: "user1".to_string(),
             status: Status::Active,
+            roles: vec![60, 61],
         };
 
         user_repo

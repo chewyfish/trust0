@@ -146,7 +146,7 @@ impl ControlPlane {
             .access_repo
             .lock()
             .unwrap()
-            .get_all_for_user(self.user.user_id)?
+            .get_all_for_user(&self.user)?
             .iter()
             .map(|access| access.service_id)
             .collect();
@@ -190,7 +190,7 @@ impl ControlPlane {
             .access_repo
             .lock()
             .unwrap()
-            .get_all_for_user(self.user.user_id)?
+            .get_all_for_user(&self.user)?
             .iter()
             .filter_map(|access| self.services_by_id.get(&access.service_id))
             .map(|service| {
@@ -227,7 +227,7 @@ impl ControlPlane {
             .access_repo
             .lock()
             .unwrap()
-            .get(self.user.user_id, service.service_id)?
+            .get_for_user(service.service_id, &self.user)?
             .is_none()
         {
             return Err(AppError::GenWithCodeAndMsg(
@@ -547,6 +547,7 @@ mod tests {
     use crate::client::controller::RequestProcessor;
     use crate::config;
     use crate::repository::access_repo::tests::MockAccessRepo;
+    use crate::repository::role_repo::tests::MockRoleRepo;
     use crate::repository::service_repo::tests::MockServiceRepo;
     use crate::repository::user_repo::tests::MockUserRepo;
     use crate::service::manager::tests::MockSvcMgr;
@@ -555,7 +556,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::mpsc;
     use trust0_common::crypto::file::load_certificates;
-    use trust0_common::model::access::ServiceAccess;
+    use trust0_common::model::access::{EntityType, ServiceAccess};
 
     const CERTFILE_CLIENT_UID100_PATHPARTS: [&str; 3] = [
         env!("CARGO_MANIFEST_DIR"),
@@ -574,25 +575,28 @@ mod tests {
             user_id: 100,
             name: "user100".to_string(),
             status: model::user::Status::Active,
+            roles: vec![50, 51],
         }
     }
 
     fn create_repos(
         expect_user_get: bool,
         expect_access_get_all_for_user: bool,
-        expect_access_get: bool,
+        expect_access_get_for_user: bool,
     ) -> (
         Arc<Mutex<dyn UserRepository>>,
         Arc<Mutex<dyn ServiceRepository>>,
         Arc<Mutex<dyn AccessRepository>>,
     ) {
         let mut user_repo = MockUserRepo::new();
+        let user = create_user();
+        let user_copy = user.clone();
         if expect_user_get {
             user_repo
                 .expect_get()
                 .with(predicate::eq(100))
                 .times(1)
-                .return_once(move |_| Ok(Some(create_user())));
+                .return_once(move |_| Ok(Some(user_copy)));
         }
 
         let mut service_repo = MockServiceRepo::new();
@@ -640,41 +644,47 @@ mod tests {
         if expect_access_get_all_for_user {
             access_repo
                 .expect_get_all_for_user()
-                .with(predicate::eq(100))
+                .with(predicate::eq(user.clone()))
                 .times(1)
                 .return_once(move |_| {
                     Ok(vec![
                         ServiceAccess {
-                            user_id: 100,
                             service_id: 200,
+                            entity_type: EntityType::User,
+                            entity_id: 100,
                         },
                         ServiceAccess {
-                            user_id: 100,
                             service_id: 203,
+                            entity_type: EntityType::Role,
+                            entity_id: 50,
                         },
                         ServiceAccess {
-                            user_id: 100,
                             service_id: 204,
+                            entity_type: EntityType::Role,
+                            entity_id: 51,
                         },
                         ServiceAccess {
-                            user_id: 101,
                             service_id: 202,
+                            entity_type: EntityType::User,
+                            entity_id: 101,
                         },
                         ServiceAccess {
-                            user_id: 101,
                             service_id: 203,
+                            entity_type: EntityType::User,
+                            entity_id: 101,
                         },
                     ])
                 });
         }
-        if expect_access_get {
+        if expect_access_get_for_user {
             access_repo
-                .expect_get()
-                .with(predicate::eq(100), predicate::eq(200))
+                .expect_get_for_user()
+                .with(predicate::eq(200), predicate::eq(user))
                 .return_once(move |_, _| {
                     Ok(Some(ServiceAccess {
-                        user_id: 100,
                         service_id: 200,
+                        entity_type: EntityType::User,
+                        entity_id: 100,
                     }))
                 });
         }
@@ -771,6 +781,7 @@ mod tests {
         let app_config = Arc::new(config::tests::create_app_config_with_repos(
             user_repo.clone(),
             service_repo.clone(),
+            Arc::new(Mutex::new(MockRoleRepo::new())),
             access_repo.clone(),
         )?);
 

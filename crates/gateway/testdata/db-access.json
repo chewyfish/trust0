@@ -1,7 +1,7 @@
 [
-    {"userId": 100, "serviceId": 200},
-    {"userId": 100, "serviceId": 203},
-    {"userId": 100, "serviceId": 204},
-    {"userId": 101, "serviceId": 202},
-    {"userId": 101, "serviceId": 203}
+    {"serviceId": 200, "entityType": "user", "entityId":  100},
+    {"serviceId": 203, "entityType": "role", "entityId":  50},
+    {"serviceId": 204, "entityType": "role", "entityId":  50},
+    {"serviceId": 202, "entityType": "user", "entityId":  101},
+    {"serviceId": 203, "entityType": "user", "entityId":  101}
 ]

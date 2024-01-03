@@ -12,6 +12,8 @@ use pki_types::{
 
 use crate::repository::access_repo::in_memory_repo::InMemAccessRepo;
 use crate::repository::access_repo::AccessRepository;
+use crate::repository::role_repo::in_memory_repo::InMemRoleRepo;
+use crate::repository::role_repo::RoleRepository;
 use crate::repository::service_repo::in_memory_repo::InMemServiceRepo;
 use crate::repository::service_repo::ServiceRepository;
 use crate::repository::user_repo::in_memory_repo::InMemUserRepo;
@@ -90,11 +92,13 @@ impl DataSource {
     ) -> (
         Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
         Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,
+        Box<dyn Fn() -> Arc<Mutex<dyn RoleRepository>>>,
         Box<dyn Fn() -> Arc<Mutex<dyn UserRepository>>>,
     ) {
         (
             Box::new(|| Arc::new(Mutex::new(InMemAccessRepo::new()))),
             Box::new(|| Arc::new(Mutex::new(InMemServiceRepo::new()))),
+            Box::new(|| Arc::new(Mutex::new(InMemRoleRepo::new()))),
             Box::new(|| Arc::new(Mutex::new(InMemUserRepo::new()))),
         )
     }
@@ -197,6 +201,10 @@ pub struct AppConfigArgs {
     #[arg(required = false, long = "service-db-connect", env)]
     pub service_db_connect: Option<String>,
 
+    /// Role entity store connect specifier string
+    #[arg(required = false, long = "role-db-connect", env)]
+    pub role_db_connect: Option<String>,
+
     /// User entity store connect specifier string
     #[arg(required = false, long = "user-db-connect", env)]
     pub user_db_connect: Option<String>,
@@ -282,6 +290,7 @@ pub struct AppConfig {
     pub verbose_logging: bool,
     pub access_repo: Arc<Mutex<dyn AccessRepository>>,
     pub service_repo: Arc<Mutex<dyn ServiceRepository>>,
+    pub role_repo: Arc<Mutex<dyn RoleRepository>>,
     pub user_repo: Arc<Mutex<dyn UserRepository>>,
     pub gateway_service_host: Option<String>,
     pub gateway_service_ports: Option<(u16, u16)>,
@@ -314,6 +323,7 @@ impl AppConfig {
             &config_args.datasource,
             &config_args.access_db_connect,
             &config_args.service_db_connect,
+            &config_args.role_db_connect,
             &config_args.user_db_connect,
             &config_args.datasource.repository_factories(),
         )?;
@@ -388,7 +398,8 @@ impl AppConfig {
             verbose_logging: config_args.verbose,
             access_repo: repositories.0,
             service_repo: repositories.1,
-            user_repo: repositories.2,
+            role_repo: repositories.2,
+            user_repo: repositories.3,
             gateway_service_host: config_args.gateway_service_host,
             gateway_service_ports: config_args.gateway_service_ports,
             gateway_service_reply_host: config_args
@@ -400,28 +411,32 @@ impl AppConfig {
     }
 
     #[allow(clippy::type_complexity)]
-    /// Instantiate main repositories based on datasource config. Returns tuple of access, service and user repositories.
+    /// Instantiate main repositories based on datasource config. Returns tuple of access, service, role and user repositories.
     fn create_datasource_repositories(
         datasource: &DataSource,
         access_db_connect: &Option<String>,
         service_db_connect: &Option<String>,
+        role_db_connect: &Option<String>,
         user_db_connect: &Option<String>,
         repo_factories: &(
             Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
             Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,
+            Box<dyn Fn() -> Arc<Mutex<dyn RoleRepository>>>,
             Box<dyn Fn() -> Arc<Mutex<dyn UserRepository>>>,
         ),
     ) -> Result<
         (
             Arc<Mutex<dyn AccessRepository>>,
             Arc<Mutex<dyn ServiceRepository>>,
+            Arc<Mutex<dyn RoleRepository>>,
             Arc<Mutex<dyn UserRepository>>,
         ),
         AppError,
     > {
         let access_repository = repo_factories.0();
         let service_repository = repo_factories.1();
-        let user_repository = repo_factories.2();
+        let role_repository = repo_factories.2();
+        let user_repository = repo_factories.3();
 
         if let DataSource::InMemoryDb = datasource {
             if access_db_connect.is_some() {
@@ -436,6 +451,12 @@ impl AppConfig {
                     .unwrap()
                     .connect_to_datasource(service_db_connect.as_ref().unwrap().as_str())?;
             }
+            if role_db_connect.is_some() {
+                role_repository
+                    .lock()
+                    .unwrap()
+                    .connect_to_datasource(role_db_connect.as_ref().unwrap().as_str())?;
+            }
             if user_db_connect.is_some() {
                 user_repository
                     .lock()
@@ -444,7 +465,12 @@ impl AppConfig {
             }
         }
 
-        Ok((access_repository, service_repository, user_repository))
+        Ok((
+            access_repository,
+            service_repository,
+            role_repository,
+            user_repository,
+        ))
     }
 
     /// Parse service port range (format "{port_start:u16}-{port_end:u16}")
@@ -493,6 +519,8 @@ pub mod tests {
     use super::*;
     use crate::repository::access_repo::tests::MockAccessRepo;
     use crate::repository::access_repo::AccessRepository;
+    use crate::repository::role_repo::tests::MockRoleRepo;
+    use crate::repository::role_repo::RoleRepository;
     use crate::repository::service_repo::tests::MockServiceRepo;
     use crate::repository::service_repo::ServiceRepository;
     use crate::repository::user_repo::tests::MockUserRepo;
@@ -517,6 +545,7 @@ pub mod tests {
         [env!("CARGO_MANIFEST_DIR"), "testdata", "db-access.json"];
     const DB_SERVICE_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "db-service.json"];
+    const DB_ROLE_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "db-role.json"];
     const DB_USER_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "db-user.json"];
 
     static TEST_MUTEX: Lazy<Arc<Mutex<bool>>> = Lazy::new(|| Arc::new(Mutex::new(true)));
@@ -527,6 +556,7 @@ pub mod tests {
     pub fn create_app_config_with_repos(
         user_repo: Arc<Mutex<dyn UserRepository>>,
         service_repo: Arc<Mutex<dyn ServiceRepository>>,
+        role_repo: Arc<Mutex<dyn RoleRepository>>,
         access_repo: Arc<Mutex<dyn AccessRepository>>,
     ) -> Result<AppConfig, AppError> {
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
@@ -574,6 +604,7 @@ pub mod tests {
             verbose_logging: false,
             access_repo,
             service_repo,
+            role_repo,
             user_repo,
             gateway_service_host: None,
             gateway_service_ports: None,
@@ -601,6 +632,7 @@ pub mod tests {
         env::remove_var("DATASOURCE");
         env::remove_var("ACCESS_DB_CONNECT");
         env::remove_var("SERVICE_DB_CONNECT");
+        env::remove_var("ROLE_DB_CONNECT");
         env::remove_var("USER_DB_CONNECT");
         env::remove_var("VERBOSE");
     }
@@ -618,6 +650,8 @@ pub mod tests {
         let access_db_file_str = access_db_file.to_str().unwrap();
         let service_db_file: PathBuf = DB_SERVICE_PATHPARTS.iter().collect();
         let service_db_file_str = service_db_file.to_str().unwrap();
+        let role_db_file: PathBuf = DB_ROLE_PATHPARTS.iter().collect();
+        let role_db_file_str = role_db_file.to_str().unwrap();
         let user_db_file: PathBuf = DB_USER_PATHPARTS.iter().collect();
         let user_db_file_str = user_db_file.to_str().unwrap();
         let result;
@@ -641,6 +675,7 @@ pub mod tests {
             env::set_var("DATASOURCE", "in-memory-db");
             env::set_var("ACCESS_DB_CONNECT", access_db_file_str);
             env::set_var("SERVICE_DB_CONNECT", service_db_file_str);
+            env::set_var("ROLE_DB_CONNECT", role_db_file_str);
             env::set_var("USER_DB_CONNECT", user_db_file_str);
             env::set_var("VERBOSE", "true");
 
@@ -674,6 +709,8 @@ pub mod tests {
         let access_db_file_str = access_db_file.to_str().unwrap();
         let service_db_file: PathBuf = DB_SERVICE_PATHPARTS.iter().collect();
         let service_db_file_str = service_db_file.to_str().unwrap();
+        let role_db_file: PathBuf = DB_ROLE_PATHPARTS.iter().collect();
+        let role_db_file_str = role_db_file.to_str().unwrap();
         let user_db_file: PathBuf = DB_USER_PATHPARTS.iter().collect();
         let user_db_file_str = user_db_file.to_str().unwrap();
         let result;
@@ -696,6 +733,7 @@ pub mod tests {
             env::set_var("DATASOURCE", "in-memory-db");
             env::set_var("ACCESS_DB_CONNECT", access_db_file_str);
             env::set_var("SERVICE_DB_CONNECT", service_db_file_str);
+            env::set_var("ROLE_DB_CONNECT", role_db_file_str);
             env::set_var("USER_DB_CONNECT", user_db_file_str);
             env::set_var("VERBOSE", "true");
 
@@ -768,15 +806,19 @@ pub mod tests {
         let access_db_file_str = access_db_file.to_str().unwrap().to_string();
         let service_db_file: PathBuf = DB_SERVICE_PATHPARTS.iter().collect();
         let service_db_file_str = service_db_file.to_str().unwrap().to_string();
+        let role_db_file: PathBuf = DB_ROLE_PATHPARTS.iter().collect();
+        let role_db_file_str = role_db_file.to_str().unwrap().to_string();
         let user_db_file: PathBuf = DB_USER_PATHPARTS.iter().collect();
         let user_db_file_str = user_db_file.to_str().unwrap().to_string();
 
         let access_db_file_str_copy = access_db_file_str.clone();
         let service_db_file_str_copy = service_db_file_str.clone();
+        let role_db_file_str_copy = role_db_file_str.clone();
         let user_db_file_str_copy = user_db_file_str.clone();
         let repo_factories: (
             Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
             Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,
+            Box<dyn Fn() -> Arc<Mutex<dyn RoleRepository>>>,
             Box<dyn Fn() -> Arc<Mutex<dyn UserRepository>>>,
         ) = (
             Box::new(move || {
@@ -798,6 +840,15 @@ pub mod tests {
                 Arc::new(Mutex::new(service_repo))
             }),
             Box::new(move || {
+                let mut role_repo = MockRoleRepo::new();
+                role_repo
+                    .expect_connect_to_datasource()
+                    .with(predicate::eq(role_db_file_str_copy.to_owned()))
+                    .times(1)
+                    .return_once(move |_| Ok(()));
+                Arc::new(Mutex::new(role_repo))
+            }),
+            Box::new(move || {
                 let mut user_repo = MockUserRepo::new();
                 user_repo
                     .expect_connect_to_datasource()
@@ -812,6 +863,7 @@ pub mod tests {
             &datasource,
             &Some(access_db_file_str),
             &Some(service_db_file_str),
+            &Some(role_db_file_str),
             &Some(user_db_file_str),
             &repo_factories,
         );
@@ -826,6 +878,7 @@ pub mod tests {
         let repo_factories: (
             Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
             Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,
+            Box<dyn Fn() -> Arc<Mutex<dyn RoleRepository>>>,
             Box<dyn Fn() -> Arc<Mutex<dyn UserRepository>>>,
         ) = (
             Box::new(move || {
@@ -839,6 +892,11 @@ pub mod tests {
                 Arc::new(Mutex::new(service_repo))
             }),
             Box::new(move || {
+                let mut role_repo = MockRoleRepo::new();
+                role_repo.expect_connect_to_datasource().never();
+                Arc::new(Mutex::new(role_repo))
+            }),
+            Box::new(move || {
                 let mut user_repo = MockUserRepo::new();
                 user_repo.expect_connect_to_datasource().never();
                 Arc::new(Mutex::new(user_repo))
@@ -849,6 +907,7 @@ pub mod tests {
 
         let result = AppConfig::create_datasource_repositories(
             &datasource,
+            &None,
             &None,
             &None,
             &None,

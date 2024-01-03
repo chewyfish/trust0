@@ -135,7 +135,7 @@ impl ClientConnVisitor {
                 .access_repo
                 .lock()
                 .unwrap()
-                .get(user_id, service_id)?
+                .get_for_user(service_id, &user)?
                 .is_none()
             {
                 return Err(AppError::GenWithCodeAndMsg(
@@ -282,6 +282,8 @@ unsafe impl Send for ClientConnVisitor {}
 mod tests {
     use super::*;
     use crate::repository::access_repo::tests::MockAccessRepo;
+    use crate::repository::role_repo::tests::MockRoleRepo;
+    use crate::repository::role_repo::RoleRepository;
     use crate::repository::service_repo::tests::MockServiceRepo;
     use crate::repository::user_repo::tests::MockUserRepo;
     use crate::service::manager::GatewayServiceMgr;
@@ -290,7 +292,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::mpsc;
     use trust0_common::crypto::file::load_certificates;
-    use trust0_common::model::access::ServiceAccess;
+    use trust0_common::model::access::{EntityType, ServiceAccess};
     use trust0_common::proxy::event::ProxyEvent;
     use trust0_common::proxy::executor::ProxyExecutorEvent;
 
@@ -308,11 +310,13 @@ mod tests {
     fn create_cliconnvis(
         user_repo: Arc<Mutex<dyn UserRepository>>,
         service_repo: Arc<Mutex<dyn ServiceRepository>>,
+        role_repo: Arc<Mutex<dyn RoleRepository>>,
         access_repo: Arc<Mutex<dyn AccessRepository>>,
     ) -> Result<ClientConnVisitor, AppError> {
         let app_config = Arc::new(config::tests::create_app_config_with_repos(
             user_repo,
             service_repo,
+            role_repo,
             access_repo,
         )?);
         let proxy_tasks_sender: Sender<ProxyExecutorEvent> = mpsc::channel().0;
@@ -352,16 +356,19 @@ mod tests {
                     user_id: 100,
                     name: "".to_string(),
                     status: Status::Active,
+                    roles: vec![],
                 }))
             });
         let mut access_repo = MockAccessRepo::new();
         access_repo.expect_get().never();
         let mut service_repo = MockServiceRepo::new();
         service_repo.expect_get().never();
+        let role_repo = MockRoleRepo::new();
 
         let mut cli_conn_visitor = create_cliconnvis(
             Arc::new(Mutex::new(user_repo)),
             Arc::new(Mutex::new(service_repo)),
+            Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
         )?;
 
@@ -394,35 +401,40 @@ mod tests {
             .times(1)
             .return_once(move || Some(alpn_proto));
 
+        let user = User {
+            user_id: 100,
+            name: "".to_string(),
+            status: Status::Active,
+            roles: vec![],
+        };
+
         let mut user_repo = MockUserRepo::new();
+        let user_copy = user.clone();
         user_repo
             .expect_get()
             .with(predicate::eq(100))
             .times(1)
-            .return_once(move |_| {
-                Ok(Some(User {
-                    user_id: 100,
-                    name: "".to_string(),
-                    status: Status::Active,
-                }))
-            });
+            .return_once(move |_| Ok(Some(user_copy)));
         let mut access_repo = MockAccessRepo::new();
         access_repo
-            .expect_get()
-            .with(predicate::eq(100), predicate::eq(200))
+            .expect_get_for_user()
+            .with(predicate::eq(200), predicate::eq(user.clone()))
             .times(1)
             .return_once(move |_, _| {
                 Ok(Some(ServiceAccess {
-                    user_id: 100,
                     service_id: 200,
+                    entity_type: EntityType::User,
+                    entity_id: 100,
                 }))
             });
         let mut service_repo = MockServiceRepo::new();
         service_repo.expect_get().never();
+        let role_repo = MockRoleRepo::new();
 
         let mut cli_conn_visitor = create_cliconnvis(
             Arc::new(Mutex::new(user_repo)),
             Arc::new(Mutex::new(service_repo)),
+            Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
         )?;
 
@@ -457,29 +469,33 @@ mod tests {
             .times(1)
             .return_once(move || Some(alpn_proto));
 
+        let user = User {
+            user_id: 100,
+            name: "".to_string(),
+            status: Status::Active,
+            roles: vec![],
+        };
+
         let mut user_repo = MockUserRepo::new();
+        let user_copy = user.clone();
         user_repo
             .expect_get()
             .with(predicate::eq(100))
             .times(1)
-            .return_once(move |_| {
-                Ok(Some(User {
-                    user_id: 100,
-                    name: "".to_string(),
-                    status: Status::Active,
-                }))
-            });
+            .return_once(move |_| Ok(Some(user_copy)));
         let mut access_repo = MockAccessRepo::new();
         access_repo
-            .expect_get()
-            .with(predicate::eq(100), predicate::eq(200))
+            .expect_get_for_user()
+            .with(predicate::eq(200), predicate::eq(user.clone()))
             .never();
         let mut service_repo = MockServiceRepo::new();
         service_repo.expect_get().never();
+        let role_repo = MockRoleRepo::new();
 
         let mut cli_conn_visitor = create_cliconnvis(
             Arc::new(Mutex::new(user_repo)),
             Arc::new(Mutex::new(service_repo)),
+            Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
         )?;
 
@@ -512,26 +528,29 @@ mod tests {
             .times(1)
             .return_once(move || Some(alpn_proto));
 
+        let user = User {
+            user_id: 100,
+            name: "".to_string(),
+            status: Status::Active,
+            roles: vec![],
+        };
+
         let mut user_repo = MockUserRepo::new();
         user_repo
             .expect_get()
             .with(predicate::eq(100))
             .times(1)
-            .return_once(move |_| {
-                Ok(Some(User {
-                    user_id: 100,
-                    name: "".to_string(),
-                    status: Status::Active,
-                }))
-            });
+            .return_once(move |_| Ok(Some(user)));
         let mut access_repo = MockAccessRepo::new();
         access_repo.expect_get().never();
         let mut service_repo = MockServiceRepo::new();
         service_repo.expect_get().never();
+        let role_repo = MockRoleRepo::new();
 
         let mut cli_conn_visitor = create_cliconnvis(
             Arc::new(Mutex::new(user_repo)),
             Arc::new(Mutex::new(service_repo)),
+            Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
         )?;
 
@@ -565,10 +584,12 @@ mod tests {
         access_repo.expect_get().never();
         let mut service_repo = MockServiceRepo::new();
         service_repo.expect_get().never();
+        let role_repo = MockRoleRepo::new();
 
         let mut cli_conn_visitor = create_cliconnvis(
             Arc::new(Mutex::new(user_repo)),
             Arc::new(Mutex::new(service_repo)),
+            Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
         )?;
 
@@ -606,10 +627,12 @@ mod tests {
         access_repo.expect_get().never();
         let mut service_repo = MockServiceRepo::new();
         service_repo.expect_get().never();
+        let role_repo = MockRoleRepo::new();
 
         let mut cli_conn_visitor = create_cliconnvis(
             Arc::new(Mutex::new(user_repo)),
             Arc::new(Mutex::new(service_repo)),
+            Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
         )?;
 
@@ -637,26 +660,29 @@ mod tests {
             .return_once(move || Some(peer_certs));
         tls_conn.expect_alpn_protocol().never();
 
+        let user = User {
+            user_id: 100,
+            name: "".to_string(),
+            status: Status::Inactive,
+            roles: vec![],
+        };
+
         let mut user_repo = MockUserRepo::new();
         user_repo
             .expect_get()
             .with(predicate::eq(100))
             .times(1)
-            .return_once(move |_| {
-                Ok(Some(User {
-                    user_id: 100,
-                    name: "".to_string(),
-                    status: Status::Inactive,
-                }))
-            });
+            .return_once(move |_| Ok(Some(user)));
         let mut access_repo = MockAccessRepo::new();
         access_repo.expect_get().never();
         let mut service_repo = MockServiceRepo::new();
         service_repo.expect_get().never();
+        let role_repo = MockRoleRepo::new();
 
         let mut cli_conn_visitor = create_cliconnvis(
             Arc::new(Mutex::new(user_repo)),
             Arc::new(Mutex::new(service_repo)),
+            Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
         )?;
 
