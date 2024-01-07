@@ -24,6 +24,7 @@ ring = "0.17.7"
 rustls = { version = "0.22.1", features = [ "logging", "read_buf" ] }
 rustls-pemfile = "2.0.0"
 sct = "0.7"
+scram = "0.6.0"
 serde = { version = "*", features = ["derive"] }
 serde_derive = "*"
 serde_json = { version = "*", features = ["arbitrary_precision"] }
