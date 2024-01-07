@@ -1,5 +1,6 @@
 use std::io::{self, BufRead, Write};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::{Arc, Mutex};
 
 use trust0_common::error::AppError;
 
@@ -72,6 +73,7 @@ impl Write for ShellOutputWriter {
 
 /// Handles REPL shell's input
 pub struct ShellInputReader {
+    disable_tty_echo: Arc<Mutex<bool>>,
     channel_send: Sender<io::Result<String>>,
     channel_recv: Receiver<io::Result<String>>,
 }
@@ -82,27 +84,54 @@ impl ShellInputReader {
         let (send, recv) = mpsc::channel();
 
         ShellInputReader {
+            disable_tty_echo: Arc::new(Mutex::new(false)),
             channel_send: send,
             channel_recv: recv,
         }
     }
 
+    /// Return copy of TTY echo disable state (to be able to control whether keyed input is shown on the terminal - next line only)
+    pub fn clone_disable_tty_echo(&self) -> Arc<Mutex<bool>> {
+        self.disable_tty_echo.clone()
+    }
+
     /// Spawn a thread to perform (blocking) STDIN reads (queue resulting lines)
-    pub(crate) fn spawn_line_reader(channel_send: Sender<io::Result<String>>) {
-        std::thread::spawn(move || {
-            Self::lines_connector_processor(io::stdin().lock(), &channel_send);
+    pub fn spawn_line_reader(&self) {
+        let disable_tty_echo = self.disable_tty_echo.clone();
+        let channel_send = self.channel_send.clone();
+        std::thread::spawn(move || loop {
+            let is_password_input = match *disable_tty_echo.lock().unwrap() {
+                false => false,
+                true => {
+                    *disable_tty_echo.lock().unwrap() = false;
+                    true
+                }
+            };
+            Self::process_next_line(io::stdin().lock(), is_password_input, &channel_send);
         });
     }
 
-    /// Source, sink connector for input lines to be sent to channel for processing
-    fn lines_connector_processor(
-        reader: impl BufRead,
+    /// Blocking read for next input line, which will be sent to channel for processing
+    fn process_next_line(
+        mut reader: impl BufRead,
+        is_password_input: bool,
         channel_sender: &Sender<io::Result<String>>,
     ) {
-        let lines = reader.lines();
-        for line in lines {
-            if channel_sender.send(line).is_err() {
-                return;
+        let read_result = match is_password_input {
+            true => rpassword::read_password_from_bufread(&mut reader),
+            false => {
+                let mut line: String = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(_) => Ok(line.trim_end().to_string()),
+                    Err(err) => Err(err),
+                }
+            }
+        };
+        match &read_result {
+            Ok(line) if line.is_empty() => (),
+            Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => (),
+            _ => {
+                let _ = channel_sender.send(read_result);
             }
         }
     }
@@ -232,11 +261,31 @@ pub mod tests {
     }
 
     #[test]
-    fn shellinp_lines_connector_processor_when_no_lines() {
+    fn shellinp_new() {
+        let input_reader = ShellInputReader::new();
+
+        let disable_tty_echo = input_reader.clone_disable_tty_echo();
+        assert!(!*disable_tty_echo.lock().unwrap());
+
+        let channel_sender = input_reader.clone_channel_sender();
+        let channel_receiver = &input_reader.channel_recv;
+        if let Err(err) = channel_sender.send(Ok("hi".to_string())) {
+            panic!("Unexpected channel send result: err={:?}", &err);
+        }
+        match channel_receiver.try_recv() {
+            Ok(msg_result) => match msg_result {
+                Ok(msg) => assert_eq!(msg, "hi"),
+                Err(err) => panic!("Unexpected channel recv message result: err={:?}", &err),
+            },
+            Err(err) => panic!("Unexpected channel recv result: err={:?}", &err),
+        }
+    }
+
+    fn shellinp_process_next_line_when_no_lines(is_password_input: bool) {
         let cursor = Cursor::new(vec![]);
         let lines_channel = mpsc::channel();
 
-        ShellInputReader::lines_connector_processor(cursor, &lines_channel.0);
+        ShellInputReader::process_next_line(cursor, is_password_input, &lines_channel.0);
 
         let mut actual_lines = vec![];
         loop {
@@ -263,11 +312,21 @@ pub mod tests {
     }
 
     #[test]
-    fn shellinp_lines_connector_processor_when_2_lines() {
-        let cursor = Cursor::new("line1\nline2\n".as_bytes().to_vec());
+    fn shellinp_process_next_line_when_pwd_input_and_no_lines() {
+        shellinp_process_next_line_when_no_lines(true);
+    }
+
+    #[test]
+    fn shellinp_process_next_line_when_non_pwd_input_and_no_lines() {
+        shellinp_process_next_line_when_no_lines(false);
+    }
+
+    fn shellinp_process_next_line_when_2_lines(is_password_input: bool) {
+        let mut cursor = Cursor::new("line1\nline2\n".as_bytes().to_vec());
         let lines_channel = mpsc::channel();
 
-        ShellInputReader::lines_connector_processor(cursor, &lines_channel.0);
+        ShellInputReader::process_next_line(&mut cursor, is_password_input, &lines_channel.0);
+        ShellInputReader::process_next_line(&mut cursor, is_password_input, &lines_channel.0);
 
         let mut actual_lines = vec![];
         loop {
@@ -292,6 +351,16 @@ pub mod tests {
 
         assert_eq!(actual_lines.len(), 2);
         assert_eq!(actual_lines, vec!["line1", "line2"]);
+    }
+
+    #[test]
+    fn shellinp_process_next_line_when_pwd_input_and_2_lines() {
+        shellinp_process_next_line_when_2_lines(true);
+    }
+
+    #[test]
+    fn shellinp_process_next_line_when_non_pwd_input_and_2_lines() {
+        shellinp_process_next_line_when_2_lines(false);
     }
 
     #[test]

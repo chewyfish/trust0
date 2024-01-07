@@ -523,6 +523,11 @@ impl server_std::ServerVisitor for ControlPlaneServerVisitor {
 
         let alpn_protocol = conn_visitor.process_authorization(&tls_conn, None)?;
 
+        // TODO
+        // .... authenticate_cert
+        // .... authenticate_mfa
+        // .... authorize_service
+
         let connection =
             conn_std::Connection::new(Box::new(conn_visitor), tls_conn, alpn_protocol)?;
 

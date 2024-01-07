@@ -2,6 +2,8 @@ use crate::authn::authenticator::{AuthenticatorClient, AuthenticatorServer, Auth
 use crate::error::AppError;
 use scram::AuthenticationStatus;
 use std::sync::mpsc;
+#[cfg(test)]
+use std::sync::{Arc, Mutex};
 
 /// Handle processing error
 fn process_error(
@@ -362,6 +364,8 @@ where
 mod test {
     use super::*;
     use crate::authn::authenticator::AuthnMessage;
+    use ring::digest::SHA256_OUTPUT_LEN;
+    use std::num::NonZeroU32;
     use std::sync::mpsc::TryRecvError;
     use std::sync::{Arc, Mutex};
     use std::thread;
@@ -503,7 +507,7 @@ mod test {
             _server_to_tester_send,
         ) = start_auth_flow("unameX", "pass1");
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(20));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -528,7 +532,7 @@ mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(20));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -553,7 +557,7 @@ mod test {
         };
         tester_to_client_send.send(s2c_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(20));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -589,7 +593,7 @@ mod test {
             _server_to_tester_send,
         ) = start_auth_flow("uname1", "passX");
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(20));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -614,7 +618,7 @@ mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(20));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -642,7 +646,7 @@ mod test {
         };
         tester_to_client_send.send(s2c_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(20));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientResponseSent
@@ -670,7 +674,7 @@ mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(20));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientResponseSent
@@ -698,7 +702,7 @@ mod test {
         };
         tester_to_client_send.send(s2c_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(20));
         match client_to_tester_recv.try_recv() {
             Ok(msg) => panic!("Unexpected client to server msg (#3): msg={:?}", &msg),
             Err(err) if TryRecvError::Disconnected == err => panic!(
@@ -725,7 +729,7 @@ mod test {
             _server_to_tester_send,
         ) = start_auth_flow("uname1", "pass1");
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(20));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -750,7 +754,7 @@ mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(20));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -778,7 +782,7 @@ mod test {
         };
         tester_to_client_send.send(s2c_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(20));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientResponseSent
@@ -806,7 +810,7 @@ mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(20));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientResponseSent
@@ -834,7 +838,7 @@ mod test {
         };
         tester_to_client_send.send(s2c_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(20));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ServerFinalRecvd
@@ -870,7 +874,7 @@ mod test {
             _server_to_tester_send,
         ) = start_auth_flow("uname1", "pass1");
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(20));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -897,7 +901,7 @@ mod test {
             .send(AuthnMessage::Error("wrong".to_string()))
             .unwrap();
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(20));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent

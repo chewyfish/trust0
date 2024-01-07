@@ -48,7 +48,7 @@ impl conn_std::ConnectionVisitor for ServerConnVisitor {
             .unwrap()
             .write_shell_prompt(true)?;
         let stdin_connector = ShellInputReader::new();
-        ShellInputReader::spawn_line_reader(stdin_connector.clone_channel_sender());
+        stdin_connector.spawn_line_reader();
         self.stdin_connector = Some(Box::new(stdin_connector));
         Ok(())
     }
