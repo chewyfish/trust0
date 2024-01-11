@@ -414,6 +414,27 @@ impl ControlPlane {
         )
     }
 
+    /// Protected (authenticated) resource guard
+    fn assert_authenticated(&self) -> Result<(), AppError> {
+        if self
+            .authn_context
+            .lock()
+            .unwrap()
+            .authenticator
+            .is_authenticated()
+        {
+            Ok(())
+        } else {
+            Err(AppError::GenWithCodeAndMsg(
+                response::CODE_FORBIDDEN,
+                format!(
+                    "Not authenticated, please perform the '{}' request flow first",
+                    request::PROTOCOL_REQUEST_LOGIN
+                ),
+            ))
+        }
+    }
+
     /// Convert model service to response service
     fn prepare_response_service(
         service: &model::service::Service,
@@ -476,7 +497,9 @@ impl RequestProcessor for ControlPlane {
             }
             Ok(request::Request::Connections) => {
                 client_request = request::Request::Connections;
-                client_response = self.process_cmd_connections(service_mgr);
+                client_response = self
+                    .assert_authenticated()
+                    .and(self.process_cmd_connections(service_mgr));
             }
             Ok(request::Request::Ignore) => return Ok(request::Request::Ignore),
             Ok(request::Request::Login) => {
@@ -500,11 +523,13 @@ impl RequestProcessor for ControlPlane {
             }
             Ok(request::Request::Proxies) => {
                 client_request = request::Request::Proxies;
-                client_response = self.process_cmd_proxies(service_mgr);
+                client_response = self
+                    .assert_authenticated()
+                    .and(self.process_cmd_proxies(service_mgr));
             }
             Ok(request::Request::Services) => {
                 client_request = request::Request::Services;
-                client_response = self.process_cmd_services();
+                client_response = self.assert_authenticated().and(self.process_cmd_services());
             }
             Ok(request::Request::Start {
                 service_name,
@@ -514,13 +539,19 @@ impl RequestProcessor for ControlPlane {
                     service_name: service_name.clone(),
                     local_port,
                 };
-                client_response = self.process_cmd_start(service_mgr, &service_name, local_port);
+                client_response = self.assert_authenticated().and(self.process_cmd_start(
+                    service_mgr,
+                    &service_name,
+                    local_port,
+                ));
             }
             Ok(request::Request::Stop { service_name }) => {
                 client_request = request::Request::Stop {
                     service_name: service_name.clone(),
                 };
-                client_response = self.process_cmd_stop(service_mgr, &service_name);
+                client_response = self
+                    .assert_authenticated()
+                    .and(self.process_cmd_stop(service_mgr, &service_name));
             }
             Ok(request::Request::Quit) => {
                 client_request = request::Request::Quit;
