@@ -350,9 +350,9 @@ checksum = "9e1b586273c5702936fe7b7d6896644d8be71e6314cfe09d3167c95f712589e8"
 
 [[package]]
 name = "base64"
-version = "0.21.5"
+version = "0.21.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35636a1494ede3b646cc98f74f8e62c773a38a659ebc777a2cf26b9b74171df9"
+checksum = "c79fed4cdb43e993fcdadc7e58a09fd0e3e649c4436fa11da71c9f1f3ee7feb9"
 
 [[package]]
 name = "bitflags"
@@ -1343,7 +1343,7 @@ version = "3.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b8fcc794035347fb64beda2d3b462595dd2753e3f268d89c5aae77e8cf2c310"
 dependencies = [
- "base64 0.21.5",
+ "base64 0.21.6",
  "serde",
 ]
 
@@ -1653,7 +1653,7 @@ version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35e4980fa29e4c4b212ffb3db068a564cbf560e51d3944b7c88bd8bf5bec64f4"
 dependencies = [
- "base64 0.21.5",
+ "base64 0.21.6",
  "rustls-pki-types",
 ]
 
@@ -1956,6 +1956,7 @@ name = "trust0-client"
 version = "0.4.0-alpha"
 dependencies = [
  "anyhow",
+ "base64 0.21.6",
  "clap",
  "ctrlc",
  "derive_builder",
@@ -1966,11 +1967,13 @@ dependencies = [
  "mockall",
  "once_cell",
  "rcgen",
+ "regex",
  "ring 0.17.7",
  "rpassword",
  "rustls",
  "rustls-pemfile",
  "rustls-pki-types",
+ "scram",
  "sct",
  "serde",
  "serde_derive",
@@ -1984,6 +1987,7 @@ name = "trust0-common"
 version = "0.4.0-alpha"
 dependencies = [
  "anyhow",
+ "base64 0.21.6",
  "clap",
  "dotenvy",
  "futures-util",
@@ -2033,6 +2037,7 @@ dependencies = [
  "ring 0.17.7",
  "rustls",
  "rustls-pki-types",
+ "scram",
  "sct",
  "serde",
  "serde_derive",

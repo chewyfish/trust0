@@ -354,6 +354,8 @@ mod tests {
             .return_once(move |_| {
                 Ok(Some(User {
                     user_id: 100,
+                    user_name: Some("user1".to_string()),
+                    password: Some("pass1".to_string()),
                     name: "".to_string(),
                     status: Status::Active,
                     roles: vec![],
@@ -403,6 +405,8 @@ mod tests {
 
         let user = User {
             user_id: 100,
+            user_name: Some("user1".to_string()),
+            password: Some("pass1".to_string()),
             name: "".to_string(),
             status: Status::Active,
             roles: vec![],
@@ -471,6 +475,8 @@ mod tests {
 
         let user = User {
             user_id: 100,
+            user_name: Some("user1".to_string()),
+            password: Some("pass1".to_string()),
             name: "".to_string(),
             status: Status::Active,
             roles: vec![],
@@ -530,6 +536,8 @@ mod tests {
 
         let user = User {
             user_id: 100,
+            user_name: Some("user1".to_string()),
+            password: Some("pass1".to_string()),
             name: "".to_string(),
             status: Status::Active,
             roles: vec![],
@@ -662,6 +670,8 @@ mod tests {
 
         let user = User {
             user_id: 100,
+            user_name: Some("user1".to_string()),
+            password: Some("pass1".to_string()),
             name: "".to_string(),
             status: Status::Inactive,
             roles: vec![],

@@ -22,6 +22,7 @@ use regex::Regex;
 use rustls::crypto::CryptoProvider;
 use rustls::server::danger::ClientCertVerifier;
 use rustls::server::WebPkiClientVerifier;
+use trust0_common::authn::authenticator::AuthnType;
 use trust0_common::crypto::alpn;
 use trust0_common::crypto::file::CRLFile;
 use trust0_common::crypto::file::{load_certificates, load_private_key};
@@ -181,6 +182,10 @@ pub struct AppConfigArgs {
     #[arg(required = false, long = "gateway-service-reply-host", env)]
     pub gateway_service_reply_host: Option<String>,
 
+    /// Secondary authentication mechanism
+    #[arg(required = false, long = "mfa-scheme", default_value_t = trust0_common::authn::authenticator::AuthnType::Insecure, env)]
+    pub mfa_scheme: AuthnType,
+
     /// Enable verbose logging
     #[arg(required = false, long = "verbose", env)]
     pub verbose: bool,
@@ -287,6 +292,7 @@ pub struct AppConfig {
     pub server_port: u16,
     pub tls_server_config_builder: TlsServerConfigBuilder,
     pub crl_reloader_loading: Arc<Mutex<bool>>,
+    pub mfa_scheme: AuthnType,
     pub verbose_logging: bool,
     pub access_repo: Arc<Mutex<dyn AccessRepository>>,
     pub service_repo: Arc<Mutex<dyn ServiceRepository>>,
@@ -395,6 +401,7 @@ impl AppConfig {
             server_port: config_args.port,
             tls_server_config_builder,
             crl_reloader_loading,
+            mfa_scheme: config_args.mfa_scheme,
             verbose_logging: config_args.verbose,
             access_repo: repositories.0,
             service_repo: repositories.1,
@@ -601,6 +608,7 @@ pub mod tests {
             server_port: 2000,
             tls_server_config_builder,
             crl_reloader_loading: Arc::new(Mutex::new(false)),
+            mfa_scheme: AuthnType::Insecure,
             verbose_logging: false,
             access_repo,
             service_repo,

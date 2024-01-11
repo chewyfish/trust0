@@ -31,4 +31,7 @@ trust0-common = { version = "0.4.0-alpha", path = "../common" }
 webpki-roots = "0.25"
 
 [dev-dependencies]
+base64 = "0.21.6"
 mockall = { version = "0.12.1" }
+regex = "1.10.2"
+scram = "0.6.0"

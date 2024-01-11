@@ -7,7 +7,12 @@ use trust0_common::error::AppError;
 const SHELL_MSG_APP_TITLE: &str = "Trust0 SDP Platform";
 const SHELL_MSG_APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 const SHELL_MSG_APP_HELP: &str = "(enter 'help' for commands)";
-const SHELL_PROMPT: &str = "> ";
+pub const SHELL_PROMPT: &str = "> ";
+
+#[cfg(windows)]
+pub const LINE_ENDING: &'static str = "\r\n";
+#[cfg(not(windows))]
+pub const LINE_ENDING: &str = "\n";
 
 /// Used by logger after lines are displayed
 pub fn write_shell_prompt(include_welcome: bool) -> Result<(), AppError> {
@@ -95,22 +100,6 @@ impl ShellInputReader {
         self.disable_tty_echo.clone()
     }
 
-    /// Spawn a thread to perform (blocking) STDIN reads (queue resulting lines)
-    pub fn spawn_line_reader(&self) {
-        let disable_tty_echo = self.disable_tty_echo.clone();
-        let channel_send = self.channel_send.clone();
-        std::thread::spawn(move || loop {
-            let is_password_input = match *disable_tty_echo.lock().unwrap() {
-                false => false,
-                true => {
-                    *disable_tty_echo.lock().unwrap() = false;
-                    true
-                }
-            };
-            Self::process_next_line(io::stdin().lock(), is_password_input, &channel_send);
-        });
-    }
-
     /// Blocking read for next input line, which will be sent to channel for processing
     fn process_next_line(
         mut reader: impl BufRead,
@@ -118,7 +107,7 @@ impl ShellInputReader {
         channel_sender: &Sender<io::Result<String>>,
     ) {
         let read_result = match is_password_input {
-            true => rpassword::read_password_from_bufread(&mut reader),
+            true => rpassword::read_password(),
             false => {
                 let mut line: String = String::new();
                 match reader.read_line(&mut line) {
@@ -139,14 +128,26 @@ impl ShellInputReader {
 
 /// Connect an IO source to a channel sink for textual content transfer
 impl InputTextStreamConnector for ShellInputReader {
-    /// Clone message channel sender
     fn clone_channel_sender(&self) -> Sender<io::Result<String>> {
         self.channel_send.clone()
     }
 
-    /// Non-blocking call to retrieve next queued input line
-    ///
-    /// Returns `Ok(None)` if no lines queued
+    fn spawn_line_reader(&self) {
+        let disable_tty_echo = self.disable_tty_echo.clone();
+        let channel_send = self.channel_send.clone();
+        std::thread::spawn(move || loop {
+            let disable_tty_echo_val = *disable_tty_echo.lock().unwrap();
+            let is_password_input = match disable_tty_echo_val {
+                false => false,
+                true => {
+                    *disable_tty_echo.lock().unwrap() = false;
+                    true
+                }
+            };
+            Self::process_next_line(io::stdin().lock(), is_password_input, &channel_send);
+        });
+    }
+
     fn next_line(&mut self) -> Result<Option<String>, AppError> {
         match self.channel_recv.try_recv() {
             Ok(result) => match result {
@@ -167,6 +168,9 @@ impl InputTextStreamConnector for ShellInputReader {
 pub trait InputTextStreamConnector {
     /// Clone message channel sender
     fn clone_channel_sender(&self) -> Sender<io::Result<String>>;
+
+    /// Spawn a thread to perform (blocking) STDIN reads (queue resulting lines)
+    fn spawn_line_reader(&self) {}
 
     /// Non-blocking call to retrieve next queued input line
     ///
@@ -312,11 +316,6 @@ pub mod tests {
     }
 
     #[test]
-    fn shellinp_process_next_line_when_pwd_input_and_no_lines() {
-        shellinp_process_next_line_when_no_lines(true);
-    }
-
-    #[test]
     fn shellinp_process_next_line_when_non_pwd_input_and_no_lines() {
         shellinp_process_next_line_when_no_lines(false);
     }
@@ -351,11 +350,6 @@ pub mod tests {
 
         assert_eq!(actual_lines.len(), 2);
         assert_eq!(actual_lines, vec!["line1", "line2"]);
-    }
-
-    #[test]
-    fn shellinp_process_next_line_when_pwd_input_and_2_lines() {
-        shellinp_process_next_line_when_2_lines(true);
     }
 
     #[test]

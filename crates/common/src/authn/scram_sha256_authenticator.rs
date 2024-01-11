@@ -1,13 +1,19 @@
 use crate::authn::authenticator::{AuthenticatorClient, AuthenticatorServer, AuthnMessage};
 use crate::error::AppError;
+use crate::model;
+use base64::prelude::*;
+use log::error;
 use scram::AuthenticationStatus;
 use std::sync::mpsc;
-#[cfg(test)]
+use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::thread::JoinHandle;
+use std::time::Duration;
 
 /// Handle processing error
 fn process_error(
-    response_sender: Option<&mpsc::Sender<AuthnMessage>>,
+    response_sender: &Option<mpsc::Sender<AuthnMessage>>,
     app_error: Option<AppError>,
     scram_error: Option<scram::Error>,
 ) -> Result<AuthnMessage, AppError> {
@@ -35,6 +41,7 @@ fn process_error(
 
     if response_sender.is_some() {
         response_sender
+            .as_ref()
             .unwrap()
             .send(authn_msg.clone())
             .map_err(|err| {
@@ -61,27 +68,32 @@ enum ClientStateFlow {
 
 /// Client authenticator utilizing SCRAM SHA256 SASL authentication
 pub struct ScramSha256AuthenticatorClient {
-    client_response_sender: mpsc::Sender<AuthnMessage>,
-    server_response_receiver: mpsc::Receiver<AuthnMessage>,
+    client_response_sender: Option<mpsc::Sender<AuthnMessage>>,
+    client_response_receiver: Option<mpsc::Receiver<AuthnMessage>>,
+    server_response_sender: Option<mpsc::Sender<AuthnMessage>>,
+    server_response_receiver: Option<mpsc::Receiver<AuthnMessage>>,
     username: String,
     password: String,
+    channel_timeout: Duration,
+    authenticated: Arc<Mutex<bool>>,
     #[cfg(test)]
     state: Arc<Mutex<ClientStateFlow>>,
 }
 
 impl ScramSha256AuthenticatorClient {
     /// ScramSha256AuthenticatorClient constructor
-    pub fn new(
-        client_response_sender: mpsc::Sender<AuthnMessage>,
-        server_response_receiver: mpsc::Receiver<AuthnMessage>,
-        username: &str,
-        password: &str,
-    ) -> Self {
+    pub fn new(username: &str, password: &str, channel_timeout: Duration) -> Self {
+        let client_response_channel = mpsc::channel();
+        let server_response_channel = mpsc::channel();
         Self {
-            client_response_sender,
-            server_response_receiver,
+            client_response_sender: Some(client_response_channel.0),
+            client_response_receiver: Some(client_response_channel.1),
+            server_response_sender: Some(server_response_channel.0),
+            server_response_receiver: Some(server_response_channel.1),
             username: username.to_string(),
             password: password.to_string(),
+            channel_timeout,
+            authenticated: Arc::new(Mutex::new(false)),
             #[cfg(test)]
             state: Arc::new(Mutex::new(ClientStateFlow::New)),
         }
@@ -89,6 +101,23 @@ impl ScramSha256AuthenticatorClient {
 }
 
 impl AuthenticatorClient for ScramSha256AuthenticatorClient {
+    fn spawn_authentication(&mut self) -> Option<JoinHandle<Result<AuthnMessage, AppError>>> {
+        let mut auth_client = ScramSha256AuthenticatorClient {
+            client_response_sender: self.client_response_sender.take(),
+            client_response_receiver: None,
+            server_response_sender: None,
+            server_response_receiver: self.server_response_receiver.take(),
+            username: self.username.clone(),
+            password: self.password.clone(),
+            channel_timeout: self.channel_timeout,
+            authenticated: self.authenticated.clone(),
+            #[cfg(test)]
+            state: self.state.clone(),
+        };
+
+        Some(thread::spawn(move || auth_client.authenticate()))
+    }
+
     fn authenticate(&mut self) -> Result<AuthnMessage, AppError> {
         // Process (build/send) client first auth message
         let client_request_processor =
@@ -96,6 +125,8 @@ impl AuthenticatorClient for ScramSha256AuthenticatorClient {
         let (server_response_handler, client_first_msg) = client_request_processor.client_first();
 
         self.client_response_sender
+            .as_ref()
+            .unwrap()
             .send(AuthnMessage::Payload(client_first_msg.clone()))
             .map_err(|err| {
                 AppError::GenWithMsgAndErr(
@@ -113,14 +144,24 @@ impl AuthenticatorClient for ScramSha256AuthenticatorClient {
         }
 
         // Process (recv/parse) server first response
-        let server_first_msg = match self.server_response_receiver.recv() {
+        let server_first_msg = match self
+            .server_response_receiver
+            .as_ref()
+            .unwrap()
+            .recv_timeout(self.channel_timeout)
+        {
             Ok(auth_msg) => match auth_msg {
                 AuthnMessage::Payload(msg) => msg,
-                _ => return Ok(auth_msg),
+                _ => {
+                    if AuthnMessage::Authenticated == auth_msg {
+                        *self.authenticated.lock().unwrap() = true;
+                    }
+                    return Ok(auth_msg);
+                }
             },
             Err(err) => {
                 return process_error(
-                    Some(&self.client_response_sender),
+                    &self.client_response_sender,
                     Some(AppError::GenWithMsgAndErr(
                         format!(
                             "Error receiving SCRAM SHA256 server first message: user={}",
@@ -138,17 +179,18 @@ impl AuthenticatorClient for ScramSha256AuthenticatorClient {
             *self.state.lock().unwrap() = ClientStateFlow::ServerChallengeRecvd;
         }
 
-        let client_response_processor = match server_response_handler
-            .handle_server_first(&server_first_msg)
-        {
-            Ok(processor) => processor,
-            Err(err) => return process_error(Some(&self.client_response_sender), None, Some(err)),
-        };
+        let client_response_processor =
+            match server_response_handler.handle_server_first(&server_first_msg) {
+                Ok(processor) => processor,
+                Err(err) => return process_error(&self.client_response_sender, None, Some(err)),
+            };
 
         // Process (build/send) client final auth message
         let (server_response_handler, client_final_msg) = client_response_processor.client_final();
 
         self.client_response_sender
+            .as_ref()
+            .unwrap()
             .send(AuthnMessage::Payload(client_final_msg.clone()))
             .map_err(|err| {
                 AppError::GenWithMsgAndErr(
@@ -166,14 +208,24 @@ impl AuthenticatorClient for ScramSha256AuthenticatorClient {
         }
 
         // Process (recv/parse) server final response
-        let server_final_msg = match self.server_response_receiver.recv() {
+        let server_final_msg = match self
+            .server_response_receiver
+            .as_ref()
+            .unwrap()
+            .recv_timeout(self.channel_timeout)
+        {
             Ok(auth_msg) => match auth_msg {
                 AuthnMessage::Payload(msg) => msg,
-                _ => return Ok(auth_msg),
+                _ => {
+                    if AuthnMessage::Authenticated == auth_msg {
+                        *self.authenticated.lock().unwrap() = true;
+                    }
+                    return Ok(auth_msg);
+                }
             },
             Err(err) => {
                 return process_error(
-                    None,
+                    &None,
                     Some(AppError::GenWithMsgAndErr(
                         format!(
                             "Error receiving SCRAM SHA256 server final message: user={}",
@@ -192,9 +244,47 @@ impl AuthenticatorClient for ScramSha256AuthenticatorClient {
         }
 
         match server_response_handler.handle_server_final(&server_final_msg) {
-            Ok(()) => Ok(AuthnMessage::Authenticated),
-            Err(err) => process_error(None, None, Some(err)),
+            Ok(()) => {
+                *self.authenticated.lock().unwrap() = true;
+                Ok(AuthnMessage::Authenticated)
+            }
+            Err(err) => process_error(&None, None, Some(err)),
         }
+    }
+
+    fn exchange_messages(
+        &mut self,
+        inbound_msg: Option<AuthnMessage>,
+    ) -> Result<Option<AuthnMessage>, AppError> {
+        if inbound_msg.is_some() {
+            self.server_response_sender
+                .as_ref()
+                .unwrap()
+                .send(inbound_msg.unwrap())
+                .map_err(|err| {
+                    AppError::GenWithMsgAndErr(
+                        "Error sending SCRAM SHA256 client inbound message".to_string(),
+                        Box::new(err),
+                    )
+                })?;
+        }
+
+        match self
+            .client_response_receiver
+            .as_ref()
+            .unwrap()
+            .recv_timeout(Duration::from_millis(100))
+        {
+            Ok(msg) => return Ok(Some(msg)),
+            Err(RecvTimeoutError::Disconnected) => return Ok(None),
+            _ => {}
+        }
+
+        Ok(None)
+    }
+
+    fn is_authenticated(&self) -> bool {
+        *self.authenticated.lock().unwrap()
     }
 }
 
@@ -214,27 +304,33 @@ pub struct ScramSha256AuthenticatorServer<P>
 where
     P: scram::AuthenticationProvider + Sized,
 {
-    server_response_sender: mpsc::Sender<AuthnMessage>,
-    client_response_receiver: mpsc::Receiver<AuthnMessage>,
+    server_response_sender: Option<mpsc::Sender<AuthnMessage>>,
+    server_response_receiver: Option<mpsc::Receiver<AuthnMessage>>,
+    client_response_sender: Option<mpsc::Sender<AuthnMessage>>,
+    client_response_receiver: Option<mpsc::Receiver<AuthnMessage>>,
     auth_provider: Option<Box<P>>,
+    channel_timeout: Duration,
+    authenticated: Arc<Mutex<bool>>,
     #[cfg(test)]
     state: Arc<Mutex<ServerStateFlow>>,
 }
 
 impl<P> ScramSha256AuthenticatorServer<P>
 where
-    P: scram::AuthenticationProvider + Sized,
+    P: scram::AuthenticationProvider + Send + Sized + 'static,
 {
     /// ScramSha256AuthenticatorServer constructor
-    pub fn new(
-        server_response_sender: mpsc::Sender<AuthnMessage>,
-        client_response_receiver: mpsc::Receiver<AuthnMessage>,
-        auth_provider: P,
-    ) -> Self {
+    pub fn new(auth_provider: P, channel_timeout: Duration) -> Self {
+        let server_response_channel = mpsc::channel();
+        let client_response_channel = mpsc::channel();
         Self {
-            server_response_sender,
-            client_response_receiver,
+            server_response_sender: Some(server_response_channel.0),
+            server_response_receiver: Some(server_response_channel.1),
+            client_response_sender: Some(client_response_channel.0),
+            client_response_receiver: Some(client_response_channel.1),
             auth_provider: Some(Box::new(auth_provider)),
+            channel_timeout,
+            authenticated: Arc::new(Mutex::new(false)),
             #[cfg(test)]
             state: Arc::new(Mutex::new(ServerStateFlow::New)),
         }
@@ -243,18 +339,48 @@ where
 
 impl<P> AuthenticatorServer for ScramSha256AuthenticatorServer<P>
 where
-    P: scram::AuthenticationProvider + Sized,
+    P: scram::AuthenticationProvider + Send + Sized + 'static,
 {
+    fn spawn_authentication(&mut self) -> Option<JoinHandle<Result<AuthnMessage, AppError>>> {
+        let mut auth_server = ScramSha256AuthenticatorServer {
+            server_response_sender: self.server_response_sender.take(),
+            server_response_receiver: None,
+            client_response_sender: None,
+            client_response_receiver: self.client_response_receiver.take(),
+            auth_provider: self.auth_provider.take(),
+            channel_timeout: self.channel_timeout,
+            authenticated: self.authenticated.clone(),
+            #[cfg(test)]
+            state: self.state.clone(),
+        };
+
+        Some(thread::spawn(move || auth_server.authenticate()))
+    }
+
     fn authenticate(&mut self) -> Result<AuthnMessage, AppError> {
         // Process (recv/parse) client first auth message
-        let client_first_msg = match self.client_response_receiver.recv() {
+        let client_first_msg = match self
+            .client_response_receiver
+            .as_ref()
+            .unwrap()
+            .recv_timeout(self.channel_timeout)
+        {
             Ok(auth_msg) => match auth_msg {
                 AuthnMessage::Payload(msg) => msg,
-                _ => return Ok(auth_msg),
+                _ => {
+                    return process_error(
+                        &self.server_response_sender,
+                        Some(AppError::General(format!(
+                            "Unexpected SCRAM SHA256 client first message: msg={:?}",
+                            &auth_msg
+                        ))),
+                        None,
+                    )
+                }
             },
             Err(err) => {
                 return process_error(
-                    Some(&self.server_response_sender),
+                    &self.server_response_sender,
                     Some(AppError::GenWithMsgAndErr(
                         "Error receiving SCRAM SHA256 client first message".to_string(),
                         Box::new(err),
@@ -270,17 +396,18 @@ where
         }
 
         let client_response_handler = scram::ScramServer::new(*self.auth_provider.take().unwrap());
-        let server_response_processor = match client_response_handler
-            .handle_client_first(&client_first_msg)
-        {
-            Ok(processor) => processor,
-            Err(err) => return process_error(Some(&self.server_response_sender), None, Some(err)),
-        };
+        let server_response_processor =
+            match client_response_handler.handle_client_first(&client_first_msg) {
+                Ok(processor) => processor,
+                Err(err) => return process_error(&self.server_response_sender, None, Some(err)),
+            };
 
         // Process (build/send) server first (challenge) message
         let (client_response_handler, server_first_msg) = server_response_processor.server_first();
 
         self.server_response_sender
+            .as_ref()
+            .unwrap()
             .send(AuthnMessage::Payload(server_first_msg.clone()))
             .map_err(|err| {
                 AppError::GenWithMsgAndErr(
@@ -298,14 +425,28 @@ where
         }
 
         // Process (recv/parse) client final response to auth challenge
-        let client_final_msg = match self.client_response_receiver.recv() {
+        let client_final_msg = match self
+            .client_response_receiver
+            .as_ref()
+            .unwrap()
+            .recv_timeout(self.channel_timeout)
+        {
             Ok(auth_msg) => match auth_msg {
                 AuthnMessage::Payload(msg) => msg,
-                _ => return Ok(auth_msg),
+                _ => {
+                    return process_error(
+                        &self.server_response_sender,
+                        Some(AppError::General(format!(
+                            "Unexpected SCRAM SHA256 client final message: msg={:?}",
+                            &auth_msg
+                        ))),
+                        None,
+                    )
+                }
             },
             Err(err) => {
                 return process_error(
-                    Some(&self.server_response_sender),
+                    &self.server_response_sender,
                     Some(AppError::GenWithMsgAndErr(
                         "Error receiving SCRAM SHA256 client final message".to_string(),
                         Box::new(err),
@@ -320,17 +461,18 @@ where
             *self.state.lock().unwrap() = ServerStateFlow::ClientResponseRecvd;
         }
 
-        let server_response_processor = match client_response_handler
-            .handle_client_final(&client_final_msg)
-        {
-            Ok(processor) => processor,
-            Err(err) => return process_error(Some(&self.server_response_sender), None, Some(err)),
-        };
+        let server_response_processor =
+            match client_response_handler.handle_client_final(&client_final_msg) {
+                Ok(processor) => processor,
+                Err(err) => return process_error(&self.server_response_sender, None, Some(err)),
+            };
 
         // Process (build/send) server final message
         let (auth_status, server_final_msg) = server_response_processor.server_final();
 
         self.server_response_sender
+            .as_ref()
+            .unwrap()
             .send(AuthnMessage::Payload(server_final_msg.clone()))
             .map_err(|err| {
                 AppError::GenWithMsgAndErr(
@@ -348,7 +490,10 @@ where
         }
 
         match auth_status {
-            AuthenticationStatus::Authenticated => Ok(AuthnMessage::Authenticated),
+            AuthenticationStatus::Authenticated => {
+                *self.authenticated.lock().unwrap() = true;
+                Ok(AuthnMessage::Authenticated)
+            }
             AuthenticationStatus::NotAuthenticated => Ok(AuthnMessage::Unauthenticated(
                 "Not authenticated".to_string(),
             )),
@@ -357,15 +502,78 @@ where
             }
         }
     }
+
+    fn exchange_messages(
+        &mut self,
+        inbound_msg: Option<AuthnMessage>,
+    ) -> Result<Option<AuthnMessage>, AppError> {
+        if inbound_msg.is_some() {
+            self.client_response_sender
+                .as_ref()
+                .unwrap()
+                .send(inbound_msg.unwrap())
+                .map_err(|err| {
+                    AppError::GenWithMsgAndErr(
+                        "Error sending SCRAM SHA256 server inbound message".to_string(),
+                        Box::new(err),
+                    )
+                })?;
+        }
+
+        match self
+            .server_response_receiver
+            .as_ref()
+            .unwrap()
+            .recv_timeout(Duration::from_millis(100))
+        {
+            Ok(msg) => return Ok(Some(msg)),
+            Err(RecvTimeoutError::Disconnected) => return Ok(None),
+            _ => {}
+        }
+
+        Ok(None)
+    }
+
+    fn is_authenticated(&self) -> bool {
+        *self.authenticated.lock().unwrap()
+    }
+}
+
+/// SCRAM SHA256 authentication credentials provider implementaiton for User model
+impl scram::AuthenticationProvider for model::user::User {
+    fn get_password_for(&self, user_name: &str) -> Option<scram::server::PasswordInfo> {
+        if self.user_name.is_none() || self.password.is_none() {
+            None
+        } else if self.user_name.as_ref().unwrap() == user_name {
+            match BASE64_URL_SAFE.decode(self.password.as_ref().unwrap().as_bytes()) {
+                Err(err) => {
+                    error!(
+                        "Error Base64 decoding user password: user={}, err={:?}",
+                        &user_name, &err
+                    );
+                    None
+                }
+                Ok(decoded_password) => Some(scram::server::PasswordInfo::new(
+                    decoded_password,
+                    4096,
+                    user_name.bytes().collect(),
+                )),
+            }
+        } else {
+            None
+        }
+    }
 }
 
 /// Unit tests
 #[cfg(test)]
-mod test {
+pub mod test {
     use super::*;
     use crate::authn::authenticator::AuthnMessage;
     use ring::digest::SHA256_OUTPUT_LEN;
+    use scram::AuthenticationProvider;
     use std::num::NonZeroU32;
+    use std::ops::Add;
     use std::sync::mpsc::TryRecvError;
     use std::sync::{Arc, Mutex};
     use std::thread;
@@ -373,25 +581,25 @@ mod test {
 
     // mocks/dummies
 
-    struct ExampleProvider {
-        uname1_password: [u8; SHA256_OUTPUT_LEN],
+    pub struct ExampleProvider {
+        user1_password: [u8; SHA256_OUTPUT_LEN],
     }
 
     impl ExampleProvider {
         pub fn new() -> Self {
             let pwd_iterations = NonZeroU32::new(4096).unwrap();
-            let uname1_password = scram::hash_password("pass1", pwd_iterations, b"salt");
-            ExampleProvider { uname1_password }
+            let user1_password = scram::hash_password("pass1", pwd_iterations, b"user1");
+            ExampleProvider { user1_password }
         }
     }
 
     impl scram::AuthenticationProvider for ExampleProvider {
         fn get_password_for(&self, username: &str) -> Option<scram::server::PasswordInfo> {
             match username {
-                "uname1" => Some(scram::server::PasswordInfo::new(
-                    self.uname1_password.to_vec(),
+                "user1" => Some(scram::server::PasswordInfo::new(
+                    self.user1_password.to_vec(),
                     4096,
-                    "salt".bytes().collect(),
+                    "user1".bytes().collect(),
                 )),
                 _ => None,
             }
@@ -404,6 +612,8 @@ mod test {
         request_username: &str,
         request_password: &str,
     ) -> (
+        Arc<Mutex<bool>>,
+        Arc<Mutex<bool>>,
         Arc<Mutex<ClientStateFlow>>,
         Arc<Mutex<ServerStateFlow>>,
         mpsc::Sender<AuthnMessage>,
@@ -414,15 +624,15 @@ mod test {
         mpsc::Sender<AuthnMessage>,
     ) {
         // Spawn client thread
-        let (tester_to_client_send, tester_to_client_recv) = mpsc::channel();
-        let (client_to_tester_send, client_to_tester_recv) = mpsc::channel();
-        let client_to_tester_send_copy = client_to_tester_send.clone();
         let mut auth_client = ScramSha256AuthenticatorClient::new(
-            client_to_tester_send_copy,
-            tester_to_client_recv,
             &request_username,
             &request_password,
+            Duration::from_millis(100),
         );
+        let client_authenticated = auth_client.authenticated.clone();
+        let tester_to_client_send = auth_client.server_response_sender.take().unwrap();
+        let client_to_tester_recv = auth_client.client_response_receiver.take().unwrap();
+        let client_to_tester_send = auth_client.client_response_sender.as_ref().unwrap().clone();
         let client_state_flow = auth_client.state.clone();
         thread::spawn(move || match auth_client.authenticate() {
             Ok(msg) => println!("Auth client thread result: msg={:?}", &msg),
@@ -430,14 +640,12 @@ mod test {
         });
 
         // Spawn server thread
-        let (tester_to_server_send, tester_to_server_recv) = mpsc::channel();
-        let (server_to_tester_send, server_to_tester_recv) = mpsc::channel();
-        let server_to_tester_send_copy = server_to_tester_send.clone();
-        let mut auth_server = ScramSha256AuthenticatorServer::new(
-            server_to_tester_send_copy,
-            tester_to_server_recv,
-            ExampleProvider::new(),
-        );
+        let mut auth_server =
+            ScramSha256AuthenticatorServer::new(ExampleProvider::new(), Duration::from_millis(100));
+        let server_authenticated = auth_server.authenticated.clone();
+        let tester_to_server_send = auth_server.client_response_sender.take().unwrap();
+        let server_to_tester_recv = auth_server.server_response_receiver.take().unwrap();
+        let server_to_tester_send = auth_server.server_response_sender.as_ref().unwrap().clone();
         let server_state_flow = auth_server.state.clone();
         thread::spawn(move || match auth_server.authenticate() {
             Ok(msg) => println!("Auth server thread result: msg={:?}", &msg),
@@ -445,6 +653,8 @@ mod test {
         });
 
         (
+            client_authenticated,
+            server_authenticated,
             client_state_flow,
             server_state_flow,
             tester_to_client_send,
@@ -467,13 +677,9 @@ mod test {
 
     #[test]
     fn scramsha256cli_new() {
-        let auth_client = ScramSha256AuthenticatorClient::new(
-            mpsc::channel().0,
-            mpsc::channel().1,
-            "uname1",
-            "pass1",
-        );
-        assert_eq!(auth_client.username, "uname1");
+        let auth_client =
+            ScramSha256AuthenticatorClient::new("user1", "pass1", Duration::from_millis(100));
+        assert_eq!(auth_client.username, "user1");
         assert_eq!(auth_client.password, "pass1");
         assert_eq!(
             *auth_client.state.clone().lock().unwrap(),
@@ -483,11 +689,8 @@ mod test {
 
     #[test]
     fn scramsha256svr_new() {
-        let auth_server = ScramSha256AuthenticatorServer::new(
-            mpsc::channel().0,
-            mpsc::channel().1,
-            ExampleProvider::new(),
-        );
+        let auth_server =
+            ScramSha256AuthenticatorServer::new(ExampleProvider::new(), Duration::from_millis(100));
         assert_eq!(
             *auth_server.state.clone().lock().unwrap(),
             ServerStateFlow::New
@@ -497,6 +700,8 @@ mod test {
     #[test]
     fn scramsha256_authenticate_flow_when_client_first_and_invalid_username() {
         let (
+            client_authenticated,
+            server_authenticated,
             client_state_flow,
             server_state_flow,
             tester_to_client_send,
@@ -505,7 +710,7 @@ mod test {
             server_to_tester_recv,
             _client_to_tester_send,
             _server_to_tester_send,
-        ) = start_auth_flow("unameX", "pass1");
+        ) = start_auth_flow("userX", "pass1");
 
         thread::sleep(Duration::from_millis(20));
         assert_eq!(
@@ -513,6 +718,8 @@ mod test {
             ClientStateFlow::ClientInitialSent
         );
         assert_eq!(*server_state_flow.lock().unwrap(), ServerStateFlow::New);
+        assert!(!*client_authenticated.lock().unwrap());
+        assert!(!*server_authenticated.lock().unwrap());
 
         let c2s_msg = match client_to_tester_recv.try_recv() {
             Ok(msg) => {
@@ -541,6 +748,8 @@ mod test {
             *server_state_flow.lock().unwrap(),
             ServerStateFlow::ClientInitialRecvd
         );
+        assert!(!*client_authenticated.lock().unwrap());
+        assert!(!*server_authenticated.lock().unwrap());
 
         let s2c_msg = match server_to_tester_recv.try_recv() {
             Ok(msg) => {
@@ -566,6 +775,8 @@ mod test {
             *server_state_flow.lock().unwrap(),
             ServerStateFlow::ClientInitialRecvd
         );
+        assert!(!*client_authenticated.lock().unwrap());
+        assert!(!*server_authenticated.lock().unwrap());
 
         match client_to_tester_recv.try_recv() {
             Ok(msg) => panic!("Unexpected client to server msg (#2): msg={:?}", &msg),
@@ -583,6 +794,8 @@ mod test {
     #[test]
     fn scramsha256_authenticate_flow_when_client_first_and_invalid_password() {
         let (
+            client_authenticated,
+            server_authenticated,
             client_state_flow,
             server_state_flow,
             tester_to_client_send,
@@ -591,7 +804,7 @@ mod test {
             server_to_tester_recv,
             _client_to_tester_send,
             _server_to_tester_send,
-        ) = start_auth_flow("uname1", "passX");
+        ) = start_auth_flow("user1", "passX");
 
         thread::sleep(Duration::from_millis(20));
         assert_eq!(
@@ -599,6 +812,8 @@ mod test {
             ClientStateFlow::ClientInitialSent
         );
         assert_eq!(*server_state_flow.lock().unwrap(), ServerStateFlow::New);
+        assert!(!*client_authenticated.lock().unwrap());
+        assert!(!*server_authenticated.lock().unwrap());
 
         let c2s_msg = match client_to_tester_recv.try_recv() {
             Ok(msg) => {
@@ -627,6 +842,8 @@ mod test {
             *server_state_flow.lock().unwrap(),
             ServerStateFlow::ServerChallengeSent
         );
+        assert!(!*client_authenticated.lock().unwrap());
+        assert!(!*server_authenticated.lock().unwrap());
 
         let s2c_msg = match server_to_tester_recv.try_recv() {
             Ok(msg) => {
@@ -655,6 +872,8 @@ mod test {
             *server_state_flow.lock().unwrap(),
             ServerStateFlow::ServerChallengeSent
         );
+        assert!(!*client_authenticated.lock().unwrap());
+        assert!(!*server_authenticated.lock().unwrap());
 
         let c2s_msg = match client_to_tester_recv.try_recv() {
             Ok(msg) => {
@@ -683,6 +902,8 @@ mod test {
             *server_state_flow.lock().unwrap(),
             ServerStateFlow::ServerFinalSent
         );
+        assert!(!*client_authenticated.lock().unwrap());
+        assert!(!*server_authenticated.lock().unwrap());
 
         let s2c_msg = match server_to_tester_recv.try_recv() {
             Ok(msg) => {
@@ -703,6 +924,9 @@ mod test {
         tester_to_client_send.send(s2c_msg).unwrap();
 
         thread::sleep(Duration::from_millis(20));
+        assert!(!*client_authenticated.lock().unwrap());
+        assert!(!*server_authenticated.lock().unwrap());
+
         match client_to_tester_recv.try_recv() {
             Ok(msg) => panic!("Unexpected client to server msg (#3): msg={:?}", &msg),
             Err(err) if TryRecvError::Disconnected == err => panic!(
@@ -719,6 +943,8 @@ mod test {
     #[test]
     fn scramsha256_authenticate_flow_when_valid_credentials() {
         let (
+            client_authenticated,
+            server_authenticated,
             client_state_flow,
             server_state_flow,
             tester_to_client_send,
@@ -727,7 +953,7 @@ mod test {
             server_to_tester_recv,
             _client_to_tester_send,
             _server_to_tester_send,
-        ) = start_auth_flow("uname1", "pass1");
+        ) = start_auth_flow("user1", "pass1");
 
         thread::sleep(Duration::from_millis(20));
         assert_eq!(
@@ -735,6 +961,8 @@ mod test {
             ClientStateFlow::ClientInitialSent
         );
         assert_eq!(*server_state_flow.lock().unwrap(), ServerStateFlow::New);
+        assert!(!*client_authenticated.lock().unwrap());
+        assert!(!*server_authenticated.lock().unwrap());
 
         let c2s_msg = match client_to_tester_recv.try_recv() {
             Ok(msg) => {
@@ -763,6 +991,8 @@ mod test {
             *server_state_flow.lock().unwrap(),
             ServerStateFlow::ServerChallengeSent
         );
+        assert!(!*client_authenticated.lock().unwrap());
+        assert!(!*server_authenticated.lock().unwrap());
 
         let s2c_msg = match server_to_tester_recv.try_recv() {
             Ok(msg) => {
@@ -791,6 +1021,8 @@ mod test {
             *server_state_flow.lock().unwrap(),
             ServerStateFlow::ServerChallengeSent
         );
+        assert!(!*client_authenticated.lock().unwrap());
+        assert!(!*server_authenticated.lock().unwrap());
 
         let c2s_msg = match client_to_tester_recv.try_recv() {
             Ok(msg) => {
@@ -819,6 +1051,8 @@ mod test {
             *server_state_flow.lock().unwrap(),
             ServerStateFlow::ServerFinalSent
         );
+        assert!(!*client_authenticated.lock().unwrap());
+        assert!(*server_authenticated.lock().unwrap());
 
         let s2c_msg = match server_to_tester_recv.try_recv() {
             Ok(msg) => {
@@ -847,6 +1081,8 @@ mod test {
             *server_state_flow.lock().unwrap(),
             ServerStateFlow::ServerFinalSent
         );
+        assert!(*client_authenticated.lock().unwrap());
+        assert!(*server_authenticated.lock().unwrap());
 
         match client_to_tester_recv.try_recv() {
             Ok(msg) => panic!("Unexpected client to server msg (#3): msg={:?}", &msg),
@@ -864,6 +1100,8 @@ mod test {
     #[test]
     fn scramsha256_authenticate_flow_when_client_first_and_wrong_msg() {
         let (
+            client_authenticated,
+            server_authenticated,
             client_state_flow,
             server_state_flow,
             tester_to_client_send,
@@ -872,7 +1110,7 @@ mod test {
             server_to_tester_recv,
             _client_to_tester_send,
             _server_to_tester_send,
-        ) = start_auth_flow("uname1", "pass1");
+        ) = start_auth_flow("user1", "pass1");
 
         thread::sleep(Duration::from_millis(20));
         assert_eq!(
@@ -880,6 +1118,8 @@ mod test {
             ClientStateFlow::ClientInitialSent
         );
         assert_eq!(*server_state_flow.lock().unwrap(), ServerStateFlow::New);
+        assert!(!*client_authenticated.lock().unwrap());
+        assert!(!*server_authenticated.lock().unwrap());
 
         let _ = match client_to_tester_recv.try_recv() {
             Ok(msg) => {
@@ -907,9 +1147,14 @@ mod test {
             ClientStateFlow::ClientInitialSent
         );
         assert_eq!(*server_state_flow.lock().unwrap(), ServerStateFlow::New);
+        assert!(!*client_authenticated.lock().unwrap());
+        assert!(!*server_authenticated.lock().unwrap());
 
         let _ = match server_to_tester_recv.try_recv() {
-            Ok(msg) => panic!("Unexpected server to client msg (#1): msg={:?}", &msg),
+            Ok(msg) => match msg {
+                AuthnMessage::Error(_) => {}
+                _ => panic!("Unexpected server to client msg (#1): msg={:?}", &msg),
+            },
             Err(err) if TryRecvError::Disconnected == err => panic!(
                 "Unexpected server to client msg (#1) result: err={:?}",
                 &err
@@ -919,5 +1164,346 @@ mod test {
 
         let _ = tester_to_client_send.send(AuthnMessage::Error("shutdown".to_string()));
         let _ = tester_to_server_send.send(AuthnMessage::Error("shutdown".to_string()));
+    }
+
+    #[test]
+    fn scramsha256_spawn_authentication_flow_when_valid_credentials() {
+        let mut auth_client =
+            ScramSha256AuthenticatorClient::new("user1", "pass1", Duration::from_millis(100));
+        let mut auth_server =
+            ScramSha256AuthenticatorServer::new(ExampleProvider::new(), Duration::from_millis(100));
+
+        let auth_client_handle = auth_client.spawn_authentication();
+        let auth_server_handle = auth_server.spawn_authentication();
+
+        assert!(auth_client_handle.is_some());
+        assert!(auth_server_handle.is_some());
+
+        thread::sleep(Duration::from_millis(20));
+        assert_eq!(
+            *auth_client.state.lock().unwrap(),
+            ClientStateFlow::ClientInitialSent
+        );
+        assert_eq!(*auth_server.state.lock().unwrap(), ServerStateFlow::New);
+        assert!(!auth_client.is_authenticated());
+        assert!(!auth_server.is_authenticated());
+
+        let c2s_msg = match auth_client.exchange_messages(None) {
+            Ok(Some(msg)) => {
+                if let AuthnMessage::Payload(_) = msg {
+                    if is_authn_msg_error(&msg) {
+                        panic!("Unexpected client to server msg (#1): msg={:?}", &msg);
+                    }
+                    msg
+                } else {
+                    panic!("Unexpected client to server msg (#1): msg={:?}", &msg);
+                }
+            }
+            Ok(None) => panic!("Missing client to server msg (#1)"),
+            Err(err) => panic!(
+                "Unexpected client to server msg (#1) result: err={:?}",
+                &err
+            ),
+        };
+
+        let s2c_msg = match auth_server.exchange_messages(Some(c2s_msg)) {
+            Ok(Some(msg)) => {
+                if let AuthnMessage::Payload(_) = msg {
+                    if is_authn_msg_error(&msg) {
+                        panic!("Unexpected server to client msg (#1): msg={:?}", &msg);
+                    }
+                    msg
+                } else {
+                    panic!("Unexpected server to client msg (#1): msg={:?}", &msg);
+                }
+            }
+            Ok(None) => panic!("Missing server to client msg (#1)"),
+            Err(err) => panic!(
+                "Unexpected server to client msg (#1) result: err={:?}",
+                &err
+            ),
+        };
+
+        assert_eq!(
+            *auth_client.state.lock().unwrap(),
+            ClientStateFlow::ClientInitialSent
+        );
+        assert_eq!(
+            *auth_server.state.lock().unwrap(),
+            ServerStateFlow::ServerChallengeSent
+        );
+        assert!(!auth_client.is_authenticated());
+        assert!(!auth_server.is_authenticated());
+
+        let c2s_msg = match auth_client.exchange_messages(Some(s2c_msg)) {
+            Ok(Some(msg)) => {
+                if let AuthnMessage::Payload(_) = msg {
+                    if is_authn_msg_error(&msg) {
+                        panic!("Unexpected client to server msg (#2): msg={:?}", &msg);
+                    }
+                    msg
+                } else {
+                    panic!("Unexpected client to server msg (#2): msg={:?}", &msg);
+                }
+            }
+            Ok(None) => panic!("Missing client to server msg (#2)"),
+            Err(err) => panic!(
+                "Unexpected client to server msg (#2) result: err={:?}",
+                &err
+            ),
+        };
+
+        assert_eq!(
+            *auth_client.state.lock().unwrap(),
+            ClientStateFlow::ClientResponseSent
+        );
+        assert_eq!(
+            *auth_server.state.lock().unwrap(),
+            ServerStateFlow::ServerChallengeSent
+        );
+        assert!(!auth_client.is_authenticated());
+        assert!(!auth_server.is_authenticated());
+
+        let s2c_msg = match auth_server.exchange_messages(Some(c2s_msg)) {
+            Ok(Some(msg)) => {
+                if let AuthnMessage::Payload(_) = msg {
+                    if is_authn_msg_error(&msg) {
+                        panic!("Unexpected server to client msg (#2): msg={:?}", &msg);
+                    }
+                    msg
+                } else {
+                    panic!("Unexpected server to client msg (#2): msg={:?}", &msg);
+                }
+            }
+            Ok(None) => panic!("Missing server to client msg (#2)"),
+            Err(err) => panic!(
+                "Unexpected server to client msg (#2) result: err={:?}",
+                &err
+            ),
+        };
+
+        assert_eq!(
+            *auth_client.state.lock().unwrap(),
+            ClientStateFlow::ClientResponseSent
+        );
+        assert_eq!(
+            *auth_server.state.lock().unwrap(),
+            ServerStateFlow::ServerFinalSent
+        );
+        assert!(!auth_client.is_authenticated());
+        assert!(auth_server.is_authenticated());
+
+        match auth_client.exchange_messages(Some(s2c_msg)) {
+            Ok(Some(msg)) => panic!("Unexpected client to server msg (#3): msg={:?}", &msg),
+            Ok(None) => {}
+            Err(err) => panic!(
+                "Unexpected client to server msg (#3) result: err={:?}",
+                &err
+            ),
+        }
+
+        assert_eq!(
+            *auth_client.state.lock().unwrap(),
+            ClientStateFlow::ServerFinalRecvd
+        );
+        assert_eq!(
+            *auth_server.state.lock().unwrap(),
+            ServerStateFlow::ServerFinalSent
+        );
+        assert!(auth_client.is_authenticated());
+        assert!(auth_server.is_authenticated());
+
+        let _ = auth_client.exchange_messages(Some(AuthnMessage::Error("shutdown".to_string())));
+        let _ = auth_server.exchange_messages(Some(AuthnMessage::Error("shutdown".to_string())));
+    }
+
+    #[test]
+    fn scramsha256_spawn_authentication_flow_when_valid_credentials_but_exceed_server_channel_timeout(
+    ) {
+        let mut auth_client =
+            ScramSha256AuthenticatorClient::new("user1", "pass1", Duration::from_millis(100));
+        let mut auth_server =
+            ScramSha256AuthenticatorServer::new(ExampleProvider::new(), Duration::from_millis(100));
+
+        let auth_client_handle = auth_client.spawn_authentication();
+        let auth_server_handle = auth_server.spawn_authentication();
+
+        assert!(auth_client_handle.is_some());
+        assert!(auth_server_handle.is_some());
+
+        thread::sleep(Duration::from_millis(20));
+        assert_eq!(
+            *auth_client.state.lock().unwrap(),
+            ClientStateFlow::ClientInitialSent
+        );
+        assert_eq!(*auth_server.state.lock().unwrap(), ServerStateFlow::New);
+        assert!(!auth_client.is_authenticated());
+        assert!(!auth_server.is_authenticated());
+
+        let c2s_msg = match auth_client.exchange_messages(None) {
+            Ok(Some(msg)) => {
+                if let AuthnMessage::Payload(_) = msg {
+                    if is_authn_msg_error(&msg) {
+                        panic!("Unexpected client to server msg (#1): msg={:?}", &msg);
+                    }
+                    msg
+                } else {
+                    panic!("Unexpected client to server msg (#1): msg={:?}", &msg);
+                }
+            }
+            Ok(None) => panic!("Missing client to server msg (#1)"),
+            Err(err) => panic!(
+                "Unexpected client to server msg (#1) result: err={:?}",
+                &err
+            ),
+        };
+
+        thread::sleep(auth_server.channel_timeout.add(Duration::from_millis(20)));
+
+        match auth_server.exchange_messages(Some(c2s_msg)) {
+            Ok(Some(msg)) => panic!(
+                "Unexpected server to client msg (#1) response, should've timed out: msg={:?}",
+                &msg
+            ),
+            Ok(None) => panic!(
+                "Unexpected server to client msg (#1) response, should've timed out: msg=None"
+            ),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn scramsha256_spawn_authentication_flow_when_valid_credentials_but_exceed_client_channel_timeout(
+    ) {
+        let mut auth_client =
+            ScramSha256AuthenticatorClient::new("user1", "pass1", Duration::from_millis(100));
+        let mut auth_server =
+            ScramSha256AuthenticatorServer::new(ExampleProvider::new(), Duration::from_millis(100));
+
+        let auth_client_handle = auth_client.spawn_authentication();
+        let auth_server_handle = auth_server.spawn_authentication();
+
+        assert!(auth_client_handle.is_some());
+        assert!(auth_server_handle.is_some());
+
+        thread::sleep(Duration::from_millis(20));
+        assert_eq!(
+            *auth_client.state.lock().unwrap(),
+            ClientStateFlow::ClientInitialSent
+        );
+        assert_eq!(*auth_server.state.lock().unwrap(), ServerStateFlow::New);
+        assert!(!auth_client.is_authenticated());
+        assert!(!auth_server.is_authenticated());
+
+        let c2s_msg = match auth_client.exchange_messages(None) {
+            Ok(Some(msg)) => {
+                if let AuthnMessage::Payload(_) = msg {
+                    if is_authn_msg_error(&msg) {
+                        panic!("Unexpected client to server msg (#1): msg={:?}", &msg);
+                    }
+                    msg
+                } else {
+                    panic!("Unexpected client to server msg (#1): msg={:?}", &msg);
+                }
+            }
+            Ok(None) => panic!("Missing client to server msg (#1)"),
+            Err(err) => panic!(
+                "Unexpected client to server msg (#1) result: err={:?}",
+                &err
+            ),
+        };
+
+        let s2c_msg = match auth_server.exchange_messages(Some(c2s_msg)) {
+            Ok(Some(msg)) => {
+                if let AuthnMessage::Payload(_) = msg {
+                    if is_authn_msg_error(&msg) {
+                        panic!("Unexpected server to client msg (#1): msg={:?}", &msg);
+                    }
+                    msg
+                } else {
+                    panic!("Unexpected server to client msg (#1): msg={:?}", &msg);
+                }
+            }
+            Ok(None) => panic!("Missing server to client msg (#1)"),
+            Err(err) => panic!(
+                "Unexpected server to client msg (#1) result: err={:?}",
+                &err
+            ),
+        };
+
+        assert_eq!(
+            *auth_client.state.lock().unwrap(),
+            ClientStateFlow::ClientInitialSent
+        );
+        assert_eq!(
+            *auth_server.state.lock().unwrap(),
+            ServerStateFlow::ServerChallengeSent
+        );
+        assert!(!auth_client.is_authenticated());
+        assert!(!auth_server.is_authenticated());
+
+        thread::sleep(auth_client.channel_timeout.add(Duration::from_millis(20)));
+
+        match auth_client.exchange_messages(Some(s2c_msg)) {
+            Ok(Some(msg)) => panic!(
+                "Unexpected client to server msg (#2) response, should've timed out: msg={:?}",
+                &msg
+            ),
+            Ok(None) => panic!(
+                "Unexpected client to server msg (#2) response, should've timed out: msg=None"
+            ),
+            _ => {}
+        };
+    }
+
+    #[test]
+    fn user_authentication_provider_when_invalid_username() {
+        let user = model::user::User {
+            user_id: 100,
+            user_name: Some("userX".to_string()),
+            password: Some("30nasGxfW9JzThsjsGSutayNhTgRNVxkv_Qm6ZUlW2U=".to_string()),
+            name: "User100".to_string(),
+            status: model::user::Status::Active,
+            roles: vec![50, 51],
+        };
+
+        match user.get_password_for("user1") {
+            Some(_pwd_info) => panic!("Unexpected successful result"),
+            None => {}
+        }
+    }
+
+    #[test]
+    fn user_authentication_provider_when_invalid_password() {
+        let user = model::user::User {
+            user_id: 100,
+            user_name: Some("user1".to_string()),
+            password: Some("WRONG".to_string()),
+            name: "User100".to_string(),
+            status: model::user::Status::Active,
+            roles: vec![50, 51],
+        };
+
+        match user.get_password_for("user1") {
+            Some(_pwd_info) => panic!("Unexpected successful result"),
+            None => {}
+        }
+    }
+
+    #[test]
+    fn user_authentication_provider_when_valid() {
+        let user = model::user::User {
+            user_id: 100,
+            user_name: Some("user1".to_string()),
+            password: Some("30nasGxfW9JzThsjsGSutayNhTgRNVxkv_Qm6ZUlW2U=".to_string()),
+            name: "User100".to_string(),
+            status: model::user::Status::Active,
+            roles: vec![50, 51],
+        };
+
+        match user.get_password_for("user1") {
+            Some(_pwd_info) => {}
+            None => panic!("Unexpected unsuccessful result"),
+        }
     }
 }

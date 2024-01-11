@@ -200,6 +200,8 @@ mod tests {
                 100,
                 User {
                     user_id: 100,
+                    user_name: Some("uname100".to_string()),
+                    password: Some("pass100".to_string()),
                     name: "User100".to_string(),
                     status: Status::Active,
                     roles: vec![60, 61],
@@ -209,6 +211,8 @@ mod tests {
                 101,
                 User {
                     user_id: 101,
+                    user_name: Some("uname101".to_string()),
+                    password: Some("pass101".to_string()),
                     name: "User101".to_string(),
                     status: Status::Active,
                     roles: vec![],
@@ -255,7 +259,7 @@ mod tests {
         assert_eq!(user_repo.users.read().unwrap().len(), 2);
 
         *user_repo.reloader_new_data.lock().unwrap() =
-            "[{\"userId\": 800, \"name\": \"User800\", \"status\": \"inactive\", \"roles\": [600]}]".to_string();
+            "[{\"userId\": 800, \"userName\": \"user800\", \"password\": \"pass800\", \"name\": \"User800\", \"status\": \"inactive\", \"roles\": [600]}]".to_string();
 
         if let Err(err) = user_repo.process_source_data_updates() {
             panic!("Unexpected process updates result: err={:?}", &err);
@@ -265,6 +269,8 @@ mod tests {
             800,
             User {
                 user_id: 800,
+                user_name: Some("uname800".to_string()),
+                password: Some("pass800".to_string()),
                 name: "User800".to_string(),
                 status: Status::Inactive,
                 roles: vec![600],
@@ -310,7 +316,7 @@ mod tests {
         assert_eq!(user_repo.users.read().unwrap().len(), 2);
 
         *user_repo.reloader_new_data.lock().unwrap() =
-            "[{\"userId\": 800, \"name\": \"User800\", \"status\": \"inactive\", \"roles\": [600]}"
+            "[{\"userId\": 800, \"userName\": \"user800\", \"password\": \"pass800\", \"name\": \"User800\", \"status\": \"inactive\", \"roles\": [600]}"
                 .to_string();
 
         if let Ok(()) = user_repo.process_source_data_updates() {
@@ -331,6 +337,8 @@ mod tests {
         let user_key = 1;
         let user = User {
             user_id: 1,
+            user_name: Some("uname1".to_string()),
+            password: Some("pass1".to_string()),
             name: "user1".to_string(),
             status: Status::Active,
             roles: vec![60, 61],
@@ -353,6 +361,8 @@ mod tests {
         let user_key = 1;
         let user = User {
             user_id: 1,
+            user_name: Some("uname1".to_string()),
+            password: Some("pass1".to_string()),
             name: "user1".to_string(),
             status: Status::Active,
             roles: vec![60, 61],
@@ -376,18 +386,24 @@ mod tests {
         let users = [
             User {
                 user_id: 1,
+                user_name: Some("uname1".to_string()),
+                password: Some("pass1".to_string()),
                 name: "user1".to_string(),
                 status: Status::Active,
                 roles: vec![60],
             },
             User {
                 user_id: 2,
+                user_name: Some("uname2".to_string()),
+                password: Some("pass2".to_string()),
                 name: "user2".to_string(),
                 status: Status::Active,
                 roles: vec![],
             },
             User {
                 user_id: 3,
+                user_name: Some("uname3".to_string()),
+                password: Some("pass3".to_string()),
                 name: "user3".to_string(),
                 status: Status::Inactive,
                 roles: vec![61, 62],
@@ -429,18 +445,24 @@ mod tests {
         let users = [
             User {
                 user_id: 1,
+                user_name: Some("uname1".to_string()),
+                password: Some("pass1".to_string()),
                 name: "user1".to_string(),
                 status: Status::Active,
                 roles: vec![60],
             },
             User {
                 user_id: 2,
+                user_name: Some("uname2".to_string()),
+                password: Some("pass2".to_string()),
                 name: "user2".to_string(),
                 status: Status::Active,
                 roles: vec![],
             },
             User {
                 user_id: 3,
+                user_name: Some("uname3".to_string()),
+                password: Some("pass3".to_string()),
                 name: "user3".to_string(),
                 status: Status::Inactive,
                 roles: vec![61, 62],
@@ -477,6 +499,8 @@ mod tests {
                 1,
                 User {
                     user_id: 1,
+                    user_name: Some("uname1".to_string()),
+                    password: Some("pass1".to_string()),
                     name: "user1".to_string(),
                     status: Status::Active,
                     roles: vec![60],
@@ -486,6 +510,8 @@ mod tests {
                 2,
                 User {
                     user_id: 2,
+                    user_name: Some("uname2".to_string()),
+                    password: Some("pass2".to_string()),
                     name: "user2".to_string(),
                     status: Status::Active,
                     roles: vec![],
@@ -495,6 +521,8 @@ mod tests {
                 3,
                 User {
                     user_id: 3,
+                    user_name: Some("uname3".to_string()),
+                    password: Some("pass3".to_string()),
                     name: "user3".to_string(),
                     status: Status::Inactive,
                     roles: vec![61, 62],
@@ -517,6 +545,8 @@ mod tests {
         let user_key = 1;
         let user = User {
             user_id: 1,
+            user_name: Some("uname1".to_string()),
+            password: Some("pass1".to_string()),
             name: "user1".to_string(),
             status: Status::Active,
             roles: vec![],
@@ -539,6 +569,8 @@ mod tests {
         let user_key = 1;
         let user = User {
             user_id: 1,
+            user_name: Some("uname1".to_string()),
+            password: Some("pass1".to_string()),
             name: "user1".to_string(),
             status: Status::Active,
             roles: vec![60, 61],
