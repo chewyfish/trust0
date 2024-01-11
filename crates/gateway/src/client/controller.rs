@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -27,7 +28,8 @@ use trust0_common::net::tls_server::{conn_std, server_std};
 
 /// (MFA) Authentication context
 struct AuthnContext {
-    authenticator: Option<Box<dyn AuthenticatorServer>>,
+    authenticator: Box<dyn AuthenticatorServer>,
+    authn_thread_handle: Option<JoinHandle<Result<AuthnMessage, AppError>>>,
 }
 
 /// Process control plane commands. Clients use a connection REPL shell to issue requests.
@@ -40,7 +42,7 @@ pub struct ControlPlane {
     event_channel_sender: Sender<ConnectionEvent>,
     device: Device,
     user: model::user::User,
-    authn_context: Rc<Mutex<Option<AuthnContext>>>,
+    authn_context: Rc<Mutex<AuthnContext>>,
     services_by_id: HashMap<u64, model::service::Service>,
     services_by_name: HashMap<String, model::service::Service>,
 }
@@ -58,6 +60,14 @@ impl ControlPlane {
     ) -> Result<Self, AppError> {
         let (services_by_id, services_by_name) = Self::setup_services_maps(&service_repo)?;
 
+        let authenticator: Box<dyn AuthenticatorServer> = match &app_config.mfa_scheme {
+            AuthnType::ScramSha256 => Box::new(ScramSha256AuthenticatorServer::new(
+                user.clone(),
+                Duration::from_millis(10_000),
+            )),
+            AuthnType::Insecure => Box::new(InsecureAuthenticatorServer::new()),
+        };
+
         Ok(Self {
             app_config,
             processor: request::RequestProcessor::new(),
@@ -67,7 +77,10 @@ impl ControlPlane {
             event_channel_sender,
             device,
             user,
-            authn_context: Rc::new(Mutex::new(None)),
+            authn_context: Rc::new(Mutex::new(AuthnContext {
+                authenticator,
+                authn_thread_handle: None,
+            })),
             services_by_id,
             services_by_name,
         })
@@ -112,29 +125,30 @@ impl ControlPlane {
 
     /// Process 'login' command
     fn process_cmd_login(&self) -> Result<String, AppError> {
-        match &self.app_config.mfa_scheme {
-            AuthnType::ScramSha256 => {
+        let mut authn_context = self.authn_context.lock().unwrap();
+
+        let response_authn_msg = if authn_context.authenticator.is_authenticated() {
+            Some(AuthnMessage::Authenticated)
+        } else {
+            if AuthnType::ScramSha256 == self.app_config.mfa_scheme {
                 let mut authenticator = ScramSha256AuthenticatorServer::new(
                     self.user.clone(),
                     Duration::from_millis(10_000),
                 );
-                let _ = authenticator.spawn_authentication();
-                *self.authn_context.lock().unwrap() = Some(AuthnContext {
-                    authenticator: Some(Box::new(authenticator)),
-                });
+                authn_context.authn_thread_handle = authenticator.spawn_authentication();
+                authn_context.authenticator = Box::new(authenticator);
             }
-            AuthnType::Insecure => {
-                *self.authn_context.lock().unwrap() = Some(AuthnContext {
-                    authenticator: Some(Box::new(InsecureAuthenticatorServer::new())),
-                });
-            }
-        }
+            None
+        };
 
         Self::prepare_response(
             response::CODE_OK,
             &None,
             &request::Request::Login,
-            &Some(response::LoginData::new(self.app_config.mfa_scheme.clone(), None).try_into()?),
+            &Some(
+                response::LoginData::new(self.app_config.mfa_scheme.clone(), response_authn_msg)
+                    .try_into()?,
+            ),
         )
     }
 
@@ -142,40 +156,30 @@ impl ControlPlane {
     fn process_cmd_login_data(&self, authn_msg: AuthnMessage) -> Result<String, AppError> {
         let mut authn_context = self.authn_context.lock().unwrap();
 
-        if authn_context.as_ref().is_none()
-            || authn_context
-                .as_ref()
-                .unwrap()
-                .authenticator
-                .as_ref()
-                .is_none()
-        {
-            Err(AppError::GenWithCodeAndMsg(
+        let response_authn_msg = if authn_context.authenticator.is_authenticated() {
+            Some(AuthnMessage::Authenticated)
+        } else if authn_context.authn_thread_handle.is_none() {
+            return Err(AppError::GenWithCodeAndMsg(
                 response::CODE_FORBIDDEN,
                 "Login process flow not initiated".to_string(),
-            ))
+            ));
         } else {
-            Self::prepare_response(
-                response::CODE_OK,
-                &None,
-                &request::Request::LoginData {
-                    message: authn_msg.clone(),
-                },
-                &Some(
-                    response::LoginData::new(
-                        AuthnType::ScramSha256,
-                        authn_context
-                            .as_mut()
-                            .unwrap()
-                            .authenticator
-                            .as_mut()
-                            .unwrap()
-                            .exchange_messages(Some(authn_msg))?,
-                    )
+            authn_context
+                .authenticator
+                .exchange_messages(Some(authn_msg.clone()))?
+        };
+
+        Self::prepare_response(
+            response::CODE_OK,
+            &None,
+            &request::Request::LoginData {
+                message: authn_msg.clone(),
+            },
+            &Some(
+                response::LoginData::new(self.app_config.mfa_scheme.clone(), response_authn_msg)
                     .try_into()?,
-                ),
-            )
-        }
+            ),
+        )
     }
 
     /// Process 'connections' command
@@ -643,10 +647,10 @@ mod tests {
     use crate::repository::user_repo::tests::MockUserRepo;
     use crate::service::manager::tests::MockSvcMgr;
     use crate::service::proxy::proxy_base::tests::MockGwSvcProxyVisitor;
-    use mockall::predicate;
+    use mockall::{mock, predicate};
     use std::path::PathBuf;
     use std::sync::mpsc;
-    use trust0_common::authn::authenticator::AuthenticatorClient;
+    use trust0_common::authn::authenticator::{AuthenticatorClient, AuthenticatorServer};
     use trust0_common::authn::scram_sha256_authenticator::ScramSha256AuthenticatorClient;
     use trust0_common::crypto::file::load_certificates;
     use trust0_common::model::access::{EntityType, ServiceAccess};
@@ -656,6 +660,21 @@ mod tests {
         "testdata",
         "client-uid100.crt.pem",
     ];
+
+    // mocks
+    // =====
+    mock! {
+        pub AuthServer {}
+        impl AuthenticatorServer for AuthServer {
+            fn spawn_authentication(&mut self) -> Option<JoinHandle<Result<AuthnMessage, AppError>>>;
+            fn authenticate(&mut self) -> Result<AuthnMessage, AppError>;
+            fn exchange_messages(&mut self, inbound_msg: Option<AuthnMessage>) -> Result<Option<AuthnMessage>, AppError>;
+            fn is_authenticated(&self) -> bool;
+        }
+    }
+
+    // utils
+    // =====
 
     fn create_device() -> Result<Device, AppError> {
         let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
@@ -893,6 +912,65 @@ mod tests {
         )?)
     }
 
+    // tests
+    // =====
+
+    #[test]
+    fn ctlplane_process_request_when_valid_login_and_already_authed() {
+        let device = create_device().unwrap();
+        let user = create_user();
+        let repos = create_repos(false, false, false);
+        let event_channel = mpsc::channel();
+        let service_mgr = create_service_mgr(false, false, false, false);
+
+        let mut control_plane = create_control_plane(
+            event_channel.0,
+            &repos.0,
+            &repos.1,
+            &repos.2,
+            device,
+            user,
+            AuthnType::Insecure,
+        )
+        .unwrap();
+
+        let mut authenticator = MockAuthServer::new();
+        authenticator
+            .expect_is_authenticated()
+            .times(1)
+            .return_once(|| true);
+        control_plane.authn_context.lock().unwrap().authenticator = Box::new(authenticator);
+
+        let result = control_plane.process_request(&service_mgr, request::PROTOCOL_REQUEST_LOGIN);
+
+        if let Err(err) = &result {
+            panic!("Unexpected process request result: err={:?}", err);
+        }
+
+        let processed_request = result.unwrap();
+        assert_eq!(processed_request, request::Request::Login);
+
+        let result = event_channel.1.try_recv();
+
+        if let Err(err) = &result {
+            panic!("Unexpected channel recv result: err={:?}", err);
+        }
+
+        match &result.unwrap() {
+            ConnectionEvent::Closing => {
+                panic!("Unexpected connection event: val=Closing");
+            }
+            ConnectionEvent::Closed => {
+                panic!("Unexpected connection event: val=Closed");
+            }
+            ConnectionEvent::Write(response_bytes) => {
+                assert_eq!(
+                    String::from_utf8(response_bytes.clone()).unwrap(),
+                    "{\"code\":200,\"message\":null,\"request\":\"Login\",\"data\":{\"authnType\":\"insecure\",\"message\":\"authenticated\"}}\n");
+            }
+        }
+    }
+
     #[test]
     fn ctlplane_process_request_when_valid_login_and_insecure_authn() {
         let device = create_device().unwrap();
@@ -937,28 +1015,15 @@ mod tests {
             ConnectionEvent::Write(response_bytes) => {
                 assert_eq!(
                     String::from_utf8(response_bytes.clone()).unwrap(),
-                    "{\"code\":200,\"message\":null,\"request\":\"Login\",\"data\":{\"authnType\":\"insecure\",\"message\":null}}\n");
+                    "{\"code\":200,\"message\":null,\"request\":\"Login\",\"data\":{\"authnType\":\"insecure\",\"message\":\"authenticated\"}}\n");
             }
         }
 
-        assert!(control_plane.authn_context.lock().unwrap().is_some());
         assert!(control_plane
             .authn_context
             .lock()
             .unwrap()
-            .as_ref()
-            .unwrap()
             .authenticator
-            .is_some());
-        assert!(control_plane
-            .authn_context
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .authenticator
-            .as_ref()
-            .unwrap()
             .is_authenticated());
     }
 
@@ -1010,25 +1075,84 @@ mod tests {
             }
         }
 
-        assert!(control_plane.authn_context.lock().unwrap().is_some());
-        assert!(control_plane
-            .authn_context
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .authenticator
-            .is_some());
         assert!(!control_plane
             .authn_context
             .lock()
             .unwrap()
-            .as_ref()
-            .unwrap()
             .authenticator
-            .as_ref()
-            .unwrap()
             .is_authenticated());
+    }
+
+    #[test]
+    fn ctlplane_process_request_when_login_data_and_already_authed() {
+        let device = create_device().unwrap();
+        let user = create_user();
+        let repos = create_repos(false, false, false);
+        let event_channel = mpsc::channel();
+        let service_mgr = create_service_mgr(false, false, false, false);
+
+        let mut control_plane = create_control_plane(
+            event_channel.0,
+            &repos.0,
+            &repos.1,
+            &repos.2,
+            device,
+            user,
+            AuthnType::ScramSha256,
+        )
+        .unwrap();
+
+        let mut authenticator = MockAuthServer::new();
+        authenticator
+            .expect_is_authenticated()
+            .times(1)
+            .return_once(|| true);
+        control_plane.authn_context.lock().unwrap().authenticator = Box::new(authenticator);
+
+        let request = format!(
+            r#"{} --{} "{}""#,
+            request::PROTOCOL_REQUEST_LOGIN_DATA,
+            request::PROTOCOL_REQUEST_LOGIN_DATA_ARG_MESSAGE,
+            AuthnMessage::Payload("data1".to_string())
+                .to_json_str()
+                .unwrap()
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+        );
+
+        let result = control_plane.process_request(&service_mgr, &request);
+
+        if let Err(err) = &result {
+            panic!("Unexpected process request result: err={:?}", err);
+        }
+
+        let processed_request = result.unwrap();
+        assert_eq!(
+            processed_request,
+            request::Request::LoginData {
+                message: AuthnMessage::Payload("data1".to_string())
+            }
+        );
+
+        let result = event_channel.1.try_recv();
+
+        if let Err(err) = &result {
+            panic!("Unexpected channel recv result: err={:?}", err);
+        }
+
+        match &result.unwrap() {
+            ConnectionEvent::Closing => {
+                panic!("Unexpected connection event: val=Closing");
+            }
+            ConnectionEvent::Closed => {
+                panic!("Unexpected connection event: val=Closed");
+            }
+            ConnectionEvent::Write(response_bytes) => {
+                assert_eq!(
+                    String::from_utf8(response_bytes.clone()).unwrap(),
+                    "{\"code\":200,\"message\":null,\"request\":{\"LoginData\":{\"message\":{\"payload\":\"data1\"}}},\"data\":{\"authnType\":\"scramSha256\",\"message\":\"authenticated\"}}\n");
+            }
+        }
     }
 
     #[test]
@@ -1057,6 +1181,8 @@ mod tests {
             AuthnMessage::Payload("data1".to_string())
                 .to_json_str()
                 .unwrap()
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
         );
 
         let result = control_plane.process_request(&service_mgr, &request);
@@ -1066,7 +1192,12 @@ mod tests {
         }
 
         let processed_request = result.unwrap();
-        assert_eq!(processed_request, request::Request::None);
+        assert_eq!(
+            processed_request,
+            request::Request::LoginData {
+                message: AuthnMessage::Payload("data1".to_string())
+            }
+        );
 
         let result = event_channel.1.try_recv();
 
@@ -1082,12 +1213,22 @@ mod tests {
                 panic!("Unexpected connection event: val=Closed");
             }
             ConnectionEvent::Write(response_bytes) => {
-                assert!(String::from_utf8(response_bytes.clone()).unwrap().starts_with(
-                    "{\"code\":500,\"message\":\"Error: msg=Invalid authentication message for the \\\"login-data\\\" command"));
+                let expected_response_start = "{\"code\":403,\"message\":\"Response: code=403, msg=Login process flow not initiated\"".to_string();
+                let response = String::from_utf8(response_bytes.clone()).unwrap();
+                assert!(response.len() > expected_response_start.len());
+                assert_eq!(
+                    &response[..expected_response_start.len()],
+                    &expected_response_start
+                );
             }
         }
 
-        assert!(control_plane.authn_context.lock().unwrap().is_none());
+        assert!(control_plane
+            .authn_context
+            .lock()
+            .unwrap()
+            .authn_thread_handle
+            .is_none());
     }
 
     #[test]
@@ -1110,10 +1251,11 @@ mod tests {
         .unwrap();
         let mut authenticator =
             ScramSha256AuthenticatorServer::new(user.clone(), Duration::from_millis(10_000));
-        let _ = authenticator.spawn_authentication();
-        *control_plane.authn_context.lock().unwrap() = Some(AuthnContext {
-            authenticator: Some(Box::new(authenticator)),
-        });
+        let authn_thread_handle = authenticator.spawn_authentication();
+        *control_plane.authn_context.lock().unwrap() = AuthnContext {
+            authenticator: Box::new(authenticator),
+            authn_thread_handle,
+        };
         let mut auth_client = ScramSha256AuthenticatorClient::new(
             user.user_name.as_ref().unwrap(),
             user.password.as_ref().unwrap(),
@@ -1176,24 +1318,11 @@ mod tests {
             }
         }
 
-        assert!(control_plane.authn_context.lock().unwrap().is_some());
-        assert!(control_plane
-            .authn_context
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .authenticator
-            .is_some());
         assert!(!control_plane
             .authn_context
             .lock()
             .unwrap()
-            .as_ref()
-            .unwrap()
             .authenticator
-            .as_ref()
-            .unwrap()
             .is_authenticated());
     }
 

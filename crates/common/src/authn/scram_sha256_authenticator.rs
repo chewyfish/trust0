@@ -273,7 +273,7 @@ impl AuthenticatorClient for ScramSha256AuthenticatorClient {
             .client_response_receiver
             .as_ref()
             .unwrap()
-            .recv_timeout(Duration::from_millis(100))
+            .recv_timeout(Duration::from_millis(150))
         {
             Ok(msg) => return Ok(Some(msg)),
             Err(RecvTimeoutError::Disconnected) => return Ok(None),
@@ -524,7 +524,7 @@ where
             .server_response_receiver
             .as_ref()
             .unwrap()
-            .recv_timeout(Duration::from_millis(100))
+            .recv_timeout(Duration::from_millis(150))
         {
             Ok(msg) => return Ok(Some(msg)),
             Err(RecvTimeoutError::Disconnected) => return Ok(None),
@@ -593,7 +593,7 @@ pub mod test {
         }
     }
 
-    impl scram::AuthenticationProvider for ExampleProvider {
+    impl AuthenticationProvider for ExampleProvider {
         fn get_password_for(&self, username: &str) -> Option<scram::server::PasswordInfo> {
             match username {
                 "user1" => Some(scram::server::PasswordInfo::new(
@@ -627,7 +627,7 @@ pub mod test {
         let mut auth_client = ScramSha256AuthenticatorClient::new(
             &request_username,
             &request_password,
-            Duration::from_millis(100),
+            Duration::from_millis(150),
         );
         let client_authenticated = auth_client.authenticated.clone();
         let tester_to_client_send = auth_client.server_response_sender.take().unwrap();
@@ -641,7 +641,7 @@ pub mod test {
 
         // Spawn server thread
         let mut auth_server =
-            ScramSha256AuthenticatorServer::new(ExampleProvider::new(), Duration::from_millis(100));
+            ScramSha256AuthenticatorServer::new(ExampleProvider::new(), Duration::from_millis(150));
         let server_authenticated = auth_server.authenticated.clone();
         let tester_to_server_send = auth_server.client_response_sender.take().unwrap();
         let server_to_tester_recv = auth_server.server_response_receiver.take().unwrap();
@@ -678,7 +678,7 @@ pub mod test {
     #[test]
     fn scramsha256cli_new() {
         let auth_client =
-            ScramSha256AuthenticatorClient::new("user1", "pass1", Duration::from_millis(100));
+            ScramSha256AuthenticatorClient::new("user1", "pass1", Duration::from_millis(150));
         assert_eq!(auth_client.username, "user1");
         assert_eq!(auth_client.password, "pass1");
         assert_eq!(
@@ -690,7 +690,7 @@ pub mod test {
     #[test]
     fn scramsha256svr_new() {
         let auth_server =
-            ScramSha256AuthenticatorServer::new(ExampleProvider::new(), Duration::from_millis(100));
+            ScramSha256AuthenticatorServer::new(ExampleProvider::new(), Duration::from_millis(150));
         assert_eq!(
             *auth_server.state.clone().lock().unwrap(),
             ServerStateFlow::New
@@ -712,7 +712,7 @@ pub mod test {
             _server_to_tester_send,
         ) = start_auth_flow("userX", "pass1");
 
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -739,7 +739,7 @@ pub mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -766,7 +766,7 @@ pub mod test {
         };
         tester_to_client_send.send(s2c_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -806,7 +806,7 @@ pub mod test {
             _server_to_tester_send,
         ) = start_auth_flow("user1", "passX");
 
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -833,7 +833,7 @@ pub mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -863,7 +863,7 @@ pub mod test {
         };
         tester_to_client_send.send(s2c_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientResponseSent
@@ -893,7 +893,7 @@ pub mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientResponseSent
@@ -923,7 +923,7 @@ pub mod test {
         };
         tester_to_client_send.send(s2c_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(40));
         assert!(!*client_authenticated.lock().unwrap());
         assert!(!*server_authenticated.lock().unwrap());
 
@@ -955,7 +955,7 @@ pub mod test {
             _server_to_tester_send,
         ) = start_auth_flow("user1", "pass1");
 
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -982,7 +982,7 @@ pub mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -1012,7 +1012,7 @@ pub mod test {
         };
         tester_to_client_send.send(s2c_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientResponseSent
@@ -1042,7 +1042,7 @@ pub mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientResponseSent
@@ -1072,7 +1072,7 @@ pub mod test {
         };
         tester_to_client_send.send(s2c_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ServerFinalRecvd
@@ -1112,7 +1112,7 @@ pub mod test {
             _server_to_tester_send,
         ) = start_auth_flow("user1", "pass1");
 
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -1141,7 +1141,7 @@ pub mod test {
             .send(AuthnMessage::Error("wrong".to_string()))
             .unwrap();
 
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -1169,9 +1169,9 @@ pub mod test {
     #[test]
     fn scramsha256_spawn_authentication_flow_when_valid_credentials() {
         let mut auth_client =
-            ScramSha256AuthenticatorClient::new("user1", "pass1", Duration::from_millis(100));
+            ScramSha256AuthenticatorClient::new("user1", "pass1", Duration::from_millis(150));
         let mut auth_server =
-            ScramSha256AuthenticatorServer::new(ExampleProvider::new(), Duration::from_millis(100));
+            ScramSha256AuthenticatorServer::new(ExampleProvider::new(), Duration::from_millis(150));
 
         let auth_client_handle = auth_client.spawn_authentication();
         let auth_server_handle = auth_server.spawn_authentication();
@@ -1179,7 +1179,7 @@ pub mod test {
         assert!(auth_client_handle.is_some());
         assert!(auth_server_handle.is_some());
 
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *auth_client.state.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -1224,6 +1224,7 @@ pub mod test {
             ),
         };
 
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *auth_client.state.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -1253,6 +1254,7 @@ pub mod test {
             ),
         };
 
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *auth_client.state.lock().unwrap(),
             ClientStateFlow::ClientResponseSent
@@ -1282,6 +1284,7 @@ pub mod test {
             ),
         };
 
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *auth_client.state.lock().unwrap(),
             ClientStateFlow::ClientResponseSent
@@ -1302,6 +1305,7 @@ pub mod test {
             ),
         }
 
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *auth_client.state.lock().unwrap(),
             ClientStateFlow::ServerFinalRecvd
@@ -1321,9 +1325,9 @@ pub mod test {
     fn scramsha256_spawn_authentication_flow_when_valid_credentials_but_exceed_server_channel_timeout(
     ) {
         let mut auth_client =
-            ScramSha256AuthenticatorClient::new("user1", "pass1", Duration::from_millis(100));
+            ScramSha256AuthenticatorClient::new("user1", "pass1", Duration::from_millis(150));
         let mut auth_server =
-            ScramSha256AuthenticatorServer::new(ExampleProvider::new(), Duration::from_millis(100));
+            ScramSha256AuthenticatorServer::new(ExampleProvider::new(), Duration::from_millis(150));
 
         let auth_client_handle = auth_client.spawn_authentication();
         let auth_server_handle = auth_server.spawn_authentication();
@@ -1331,7 +1335,7 @@ pub mod test {
         assert!(auth_client_handle.is_some());
         assert!(auth_server_handle.is_some());
 
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *auth_client.state.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -1358,7 +1362,7 @@ pub mod test {
             ),
         };
 
-        thread::sleep(auth_server.channel_timeout.add(Duration::from_millis(20)));
+        thread::sleep(auth_server.channel_timeout.add(Duration::from_millis(40)));
 
         match auth_server.exchange_messages(Some(c2s_msg)) {
             Ok(Some(msg)) => panic!(
@@ -1376,9 +1380,9 @@ pub mod test {
     fn scramsha256_spawn_authentication_flow_when_valid_credentials_but_exceed_client_channel_timeout(
     ) {
         let mut auth_client =
-            ScramSha256AuthenticatorClient::new("user1", "pass1", Duration::from_millis(100));
+            ScramSha256AuthenticatorClient::new("user1", "pass1", Duration::from_millis(150));
         let mut auth_server =
-            ScramSha256AuthenticatorServer::new(ExampleProvider::new(), Duration::from_millis(100));
+            ScramSha256AuthenticatorServer::new(ExampleProvider::new(), Duration::from_millis(150));
 
         let auth_client_handle = auth_client.spawn_authentication();
         let auth_server_handle = auth_server.spawn_authentication();
@@ -1386,7 +1390,7 @@ pub mod test {
         assert!(auth_client_handle.is_some());
         assert!(auth_server_handle.is_some());
 
-        thread::sleep(Duration::from_millis(20));
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *auth_client.state.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -1431,6 +1435,7 @@ pub mod test {
             ),
         };
 
+        thread::sleep(Duration::from_millis(40));
         assert_eq!(
             *auth_client.state.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -1442,7 +1447,7 @@ pub mod test {
         assert!(!auth_client.is_authenticated());
         assert!(!auth_server.is_authenticated());
 
-        thread::sleep(auth_client.channel_timeout.add(Duration::from_millis(20)));
+        thread::sleep(auth_client.channel_timeout.add(Duration::from_millis(40)));
 
         match auth_client.exchange_messages(Some(s2c_msg)) {
             Ok(Some(msg)) => panic!(

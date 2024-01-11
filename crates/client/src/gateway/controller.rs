@@ -76,14 +76,30 @@ impl ControlPlane {
         let mut authn_context = self.authn_context.lock().unwrap();
         let authn_type = authn_context.as_ref().unwrap().authn_type.clone();
 
-        let (console_output_text, response_authn_msg, authn_complete) = match authn_type {
-            AuthnType::ScramSha256 => {
-                self.process_authn_message_for_scramsha256(&mut authn_context, authn_msg)?
-            }
-            AuthnType::Insecure => {
-                self.process_authn_message_for_insecure(&mut authn_context, authn_msg)?
-            }
-        };
+        let (console_output_text, response_authn_msg, authn_complete) =
+            if let Some(AuthnMessage::Authenticated) = authn_msg {
+                *self.authenticated.lock().unwrap() = true;
+                (
+                    format!("{}{}", AUTHN_RESPONSE_AUTHENTICATED, console::LINE_ENDING),
+                    None,
+                    true,
+                )
+            } else if let Some(AuthnMessage::Unauthenticated(_)) = authn_msg {
+                (
+                    format!("{}{}", AUTHN_RESPONSE_UNAUTHENTICATED, console::LINE_ENDING),
+                    None,
+                    true,
+                )
+            } else {
+                match authn_type {
+                    AuthnType::ScramSha256 => {
+                        self.process_authn_message_for_scramsha256(&mut authn_context, authn_msg)?
+                    }
+                    AuthnType::Insecure => {
+                        self.process_authn_message_for_insecure(&mut authn_context, authn_msg)?
+                    }
+                }
+            };
 
         // Send gateway authentication message
         if response_authn_msg.is_some() {
@@ -291,7 +307,7 @@ impl ControlPlane {
                 authn_type: login_data.authn_type.clone(),
                 username: None,
             });
-            self.process_authn_message(None)?;
+            self.process_authn_message(login_data.message.clone())?;
 
             gateway_response.request = request::Request::Ignore;
         } else {
@@ -682,7 +698,7 @@ pub mod tests {
     }
 
     #[test]
-    fn ctlplane_process_response_when_valid_login_flow_for_scramsha256_step2() {
+    fn ctlplane_validate_request_when_valid_login_flow_for_scramsha256_step2() {
         let output_channel = mpsc::channel();
         let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
@@ -740,7 +756,91 @@ pub mod tests {
     }
 
     #[test]
-    fn ctlplane_process_response_when_valid_login_flow_for_scramsha256_step3() {
+    fn ctlplane_process_authn_message_when_given_authenticated_msg() {
+        let output_channel = mpsc::channel();
+        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+            channel_sender: output_channel.0,
+        })));
+        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
+
+        let mut control_plane =
+            ControlPlane::new(Arc::new(app_config), Arc::new(Mutex::new(false)));
+        let event_channel = mpsc::channel();
+        control_plane.set_event_channel_sender(event_channel.0);
+        *control_plane.authn_context.lock().unwrap() = Some(AuthnContext {
+            authenticator: None,
+            authn_type: AuthnType::ScramSha256,
+            username: Some("user1".to_string()),
+        });
+
+        match control_plane.process_authn_message(Some(AuthnMessage::Authenticated)) {
+            Err(err) => panic!("Unexpected process message result: err={:?}", &err),
+            Ok(()) => {}
+        }
+
+        assert!(control_plane.authn_context.lock().unwrap().is_none());
+        assert!(*control_plane.authenticated.lock().unwrap());
+
+        match event_channel.1.try_recv() {
+            Ok(msg) => panic!("Unexpected event channel msg: msg={:?}", &msg),
+            Err(_) => {}
+        }
+
+        let expected_data = format!(
+            "{}{}{}",
+            AUTHN_RESPONSE_AUTHENTICATED,
+            console::LINE_ENDING,
+            console::SHELL_PROMPT
+        );
+        let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
+        assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
+    }
+
+    #[test]
+    fn ctlplane_process_authn_message_when_given_unauthenticated_msg() {
+        let output_channel = mpsc::channel();
+        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+            channel_sender: output_channel.0,
+        })));
+        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
+
+        let mut control_plane =
+            ControlPlane::new(Arc::new(app_config), Arc::new(Mutex::new(false)));
+        let event_channel = mpsc::channel();
+        control_plane.set_event_channel_sender(event_channel.0);
+        *control_plane.authn_context.lock().unwrap() = Some(AuthnContext {
+            authenticator: None,
+            authn_type: AuthnType::ScramSha256,
+            username: Some("user1".to_string()),
+        });
+
+        match control_plane
+            .process_authn_message(Some(AuthnMessage::Unauthenticated("msg1".to_string())))
+        {
+            Err(err) => panic!("Unexpected process message result: err={:?}", &err),
+            Ok(()) => {}
+        }
+
+        assert!(control_plane.authn_context.lock().unwrap().is_none());
+        assert!(!*control_plane.authenticated.lock().unwrap());
+
+        match event_channel.1.try_recv() {
+            Ok(msg) => panic!("Unexpected event channel msg: msg={:?}", &msg),
+            Err(_) => {}
+        }
+
+        let expected_data = format!(
+            "{}{}{}",
+            AUTHN_RESPONSE_UNAUTHENTICATED,
+            console::LINE_ENDING,
+            console::SHELL_PROMPT
+        );
+        let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
+        assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
+    }
+
+    #[test]
+    fn ctlplane_process_authn_message_when_valid_login_flow_for_scramsha256_step3() {
         let output_channel = mpsc::channel();
         let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
