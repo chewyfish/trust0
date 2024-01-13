@@ -21,13 +21,13 @@ pub struct CertAccessContext {
 #[derive(Clone, Default, Debug)]
 pub struct Device {
     /// Certificate subject attributes
-    cert_subj: HashMap<String, Vec<String>>,
+    pub cert_subj: HashMap<String, Vec<String>>,
 
     /// Certificate alternate subject name attributes
-    cert_alt_subj: HashMap<String, Vec<String>>,
+    pub cert_alt_subj: HashMap<String, Vec<String>>,
 
     /// Device certificate info
-    cert_access_context: CertAccessContext,
+    pub cert_access_context: CertAccessContext,
 }
 
 impl Device {

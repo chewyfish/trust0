@@ -480,6 +480,8 @@ impl ControlPlane {
     }
 }
 
+unsafe impl Send for ControlPlane {}
+
 impl RequestProcessor for ControlPlane {
     /// Process given command request
     fn process_request(
@@ -612,15 +614,26 @@ impl RequestProcessor for ControlPlane {
 
         Ok(client_request)
     }
+
+    fn is_authenticated(&self) -> bool {
+        self.authn_context
+            .lock()
+            .unwrap()
+            .authenticator
+            .is_authenticated()
+    }
 }
 
-pub trait RequestProcessor {
+pub trait RequestProcessor: Send {
     /// Process given command request
     fn process_request(
         &mut self,
         service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
         command_line: &str,
     ) -> Result<request::Request, AppError>;
+
+    /// Returns (secondary) authentication state
+    fn is_authenticated(&self) -> bool;
 }
 
 /// tls_server::server_std::Server strategy visitor pattern implementation
@@ -668,7 +681,7 @@ impl server_std::ServerVisitor for ControlPlaneServerVisitor {
 
 /// Unit tests
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::client::controller::RequestProcessor;
     use crate::config;
@@ -700,6 +713,14 @@ mod tests {
             fn spawn_authentication(&mut self) -> Option<JoinHandle<Result<AuthnMessage, AppError>>>;
             fn authenticate(&mut self) -> Result<AuthnMessage, AppError>;
             fn exchange_messages(&mut self, inbound_msg: Option<AuthnMessage>) -> Result<Option<AuthnMessage>, AppError>;
+            fn is_authenticated(&self) -> bool;
+        }
+    }
+
+    mock! {
+        pub ReqProcessor {}
+        impl RequestProcessor for ReqProcessor {
+            fn process_request(&mut self, service_mgr: &Arc<Mutex<dyn ServiceMgr>>, command_line: &str) -> Result<request::Request, AppError>;
             fn is_authenticated(&self) -> bool;
         }
     }
@@ -1909,5 +1930,47 @@ mod tests {
                            "{\"code\":404,\"message\":\"Response: code=404, msg=Unknown service: svc_name=INVALID_SERVICE\",\"request\":{\"Stop\":{\"service_name\":\"INVALID_SERVICE\"}},\"data\":null}\n");
             }
         }
+    }
+
+    #[test]
+    fn ctlplane_is_authenticated_when_unauthed_scramsha256_authn() {
+        let device = create_device().unwrap();
+        let user = create_user();
+        let repos = create_repos(false, false, false);
+        let event_channel = mpsc::channel();
+
+        let control_plane = create_control_plane(
+            event_channel.0,
+            &repos.0,
+            &repos.1,
+            &repos.2,
+            device,
+            user,
+            AuthnType::ScramSha256,
+        )
+        .unwrap();
+
+        assert!(!control_plane.is_authenticated());
+    }
+
+    #[test]
+    fn ctlplane_is_authenticated_when_authed_insecure_authn() {
+        let device = create_device().unwrap();
+        let user = create_user();
+        let repos = create_repos(false, false, false);
+        let event_channel = mpsc::channel();
+
+        let control_plane = create_control_plane(
+            event_channel.0,
+            &repos.0,
+            &repos.1,
+            &repos.2,
+            device,
+            user,
+            AuthnType::Insecure,
+        )
+        .unwrap();
+
+        assert!(control_plane.is_authenticated());
     }
 }

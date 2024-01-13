@@ -29,6 +29,11 @@ use trust0_common::crypto::file::{load_certificates, load_private_key};
 use trust0_common::error::AppError;
 use trust0_common::file::ReloadableFile;
 
+#[cfg(windows)]
+pub const LINE_ENDING: &'static str = "\r\n";
+#[cfg(not(windows))]
+pub const LINE_ENDING: &str = "\n";
+
 /// Client response messages
 pub const RESPCODE_0403_FORBIDDEN: u16 = 403;
 pub const RESPCODE_0420_INVALID_CLIENT_CERTIFICATE: u16 = 420;
@@ -37,6 +42,8 @@ pub const RESPCODE_0422_INACTIVE_USER: u16 = 422;
 pub const RESPCODE_0423_INVALID_REQUEST: u16 = 423;
 pub const RESPCODE_0424_INVALID_ALPN_PROTOCOL: u16 = 424;
 pub const RESPCODE_0425_INACTIVE_SERVICE_PROXY: u16 = 425;
+pub const RESPCODE_0426_CONTROL_PLANE_ALREADY_CONNECTED: u16 = 426;
+pub const RESPCODE_0427_CONTROL_PLANE_NOT_AUTHENTICATED: u16 = 427;
 pub const RESPCODE_0500_SYSTEM_ERROR: u16 = 500;
 pub const RESPCODE_0520_UNKNOWN_CODE: u16 = 520;
 const RESPMSG_0403_FORBIDDEN: &str = "[E0403] Access is forbidden";
@@ -46,6 +53,10 @@ const RESPMSG_0422_INACTIVE_USER: &str = "[E0422] User account is inactive";
 const RESPMSG_0423_INVALID_REQUEST: &str = "[E0423] Invalid request";
 const RESPMSG_0424_INVALID_ALPN_PROTOCOL: &str = "[E0424] Invalid ALPN protocol";
 const RESPMSG_0425_INACTIVE_SERVICE_PROXY: &str = "[E0425] Inactive service proxy";
+const RESPMSG_0426_CONTROL_PLANE_ALREADY_CONNECTED: &str =
+    "[E0426] Control plane already connected";
+const RESPMSG_0427_CONTROL_PLANE_NOT_AUTHENTICATED: &str =
+    "[E0427] Control plane not authenticated";
 const RESPMSG_0500_SYSTEM_ERROR: &str = "[E0500] System error occurred";
 const RESPMSG_0520_UNKNOWN_CODE: &str = "[E0520] System error occurred";
 
@@ -67,6 +78,14 @@ lazy_static! {
             (
                 RESPCODE_0425_INACTIVE_SERVICE_PROXY,
                 RESPMSG_0425_INACTIVE_SERVICE_PROXY,
+            ),
+            (
+                RESPCODE_0426_CONTROL_PLANE_ALREADY_CONNECTED,
+                RESPMSG_0426_CONTROL_PLANE_ALREADY_CONNECTED,
+            ),
+            (
+                RESPCODE_0427_CONTROL_PLANE_NOT_AUTHENTICATED,
+                RESPMSG_0427_CONTROL_PLANE_NOT_AUTHENTICATED,
             ),
             (RESPCODE_0500_SYSTEM_ERROR, RESPMSG_0500_SYSTEM_ERROR),
             (RESPCODE_0520_UNKNOWN_CODE, RESPMSG_0520_UNKNOWN_CODE),
@@ -182,8 +201,10 @@ pub struct AppConfigArgs {
     #[arg(required = false, long = "gateway-service-reply-host", env)]
     pub gateway_service_reply_host: Option<String>,
 
-    /// Secondary authentication mechanism
-    #[arg(required = false, long = "mfa-scheme", default_value_t = trust0_common::authn::authenticator::AuthnType::Insecure, env)]
+    /// Secondary authentication mechanism (in addition to client certificate authentication)
+    /// Current schemes: 'insecure': No authentication, all privileged actions allowed
+    ///                  'scram-sha256': SCRAM SHA256 using credentials stored in user repository
+    #[arg(required = false, long = "mfa-scheme", default_value_t = trust0_common::authn::authenticator::AuthnType::Insecure, env, verbatim_doc_comment)]
     pub mfa_scheme: AuthnType,
 
     /// Enable verbose logging

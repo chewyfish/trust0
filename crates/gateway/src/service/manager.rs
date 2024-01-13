@@ -1,3 +1,4 @@
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::ops::DerefMut;
 use std::sync::mpsc::{Receiver, Sender};
@@ -9,6 +10,7 @@ use anyhow::Result;
 
 use super::proxy::proxy_base::GatewayServiceProxy;
 use super::proxy::tcp_proxy::TcpGatewayProxy;
+use crate::client::controller::RequestProcessor;
 use crate::config::AppConfig;
 use crate::service::proxy::proxy_base::GatewayServiceProxyVisitor;
 use crate::service::proxy::tcp_proxy::TcpGatewayProxyServerVisitor;
@@ -30,13 +32,26 @@ pub trait ServiceMgr: Send {
 
     /// Active service proxy visitors accessor
     fn get_service_proxies(&self) -> Vec<Arc<Mutex<dyn GatewayServiceProxyVisitor>>>;
+
     /// Service proxy visitor (by service ID) accessor
     fn get_service_proxy(
         &self,
         service_id: u64,
     ) -> Option<Arc<Mutex<dyn GatewayServiceProxyVisitor>>>;
+
+    /// Returns whether control plane exists for user
+    fn has_control_plane_for_user(&self, user_id: u64, assert_authenticated: bool) -> bool;
+
+    /// Add new control plane for user. If already exists for user, return error
+    fn add_control_plane(
+        &mut self,
+        user_id: u64,
+        control_plane: Arc<Mutex<dyn RequestProcessor>>,
+    ) -> Result<(), AppError>;
+
     /// Clone proxy tasks sender
     fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent>;
+
     /// Startup new proxy service to allow clients to connect/communicate to given service
     /// Returns service proxy address/port
     fn startup(
@@ -44,8 +59,10 @@ pub trait ServiceMgr: Send {
         service_mgr: Arc<Mutex<dyn ServiceMgr>>,
         service: &Service,
     ) -> Result<(Option<String>, u16), AppError>;
+
     /// Returns whether there is an active service proxy for given user and service
     fn has_proxy_for_user_and_service(&mut self, user_id: u64, service_id: u64) -> bool;
+
     /// Shutdown service proxy connections. Consider all proxies or by service and/or user (if supplied).
     fn shutdown_connections(
         &mut self,
@@ -70,6 +87,7 @@ pub struct GatewayServiceMgr {
     last_service_port: u16,
     proxy_events_sender: Sender<ProxyEvent>,
     proxy_tasks_sender: Sender<ProxyExecutorEvent>,
+    control_planes: HashMap<u64, Arc<Mutex<dyn RequestProcessor>>>,
 }
 
 impl GatewayServiceMgr {
@@ -105,6 +123,7 @@ impl GatewayServiceMgr {
             last_service_port,
             proxy_events_sender,
             proxy_tasks_sender,
+            control_planes: HashMap::new(),
         }
     }
 
@@ -145,15 +164,46 @@ impl ServiceMgr for GatewayServiceMgr {
     fn get_service_proxies(&self) -> Vec<Arc<Mutex<dyn GatewayServiceProxyVisitor>>> {
         self.service_proxy_visitors.values().cloned().collect()
     }
+
     fn get_service_proxy(
         &self,
         service_id: u64,
     ) -> Option<Arc<Mutex<dyn GatewayServiceProxyVisitor>>> {
         self.service_proxy_visitors.get(&service_id).cloned()
     }
+
+    fn has_control_plane_for_user(&self, user_id: u64, assert_authenticated: bool) -> bool {
+        self.control_planes.contains_key(&user_id)
+            && (!assert_authenticated
+                || self
+                    .control_planes
+                    .get(&user_id)
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .is_authenticated())
+    }
+
+    fn add_control_plane(
+        &mut self,
+        user_id: u64,
+        control_plane: Arc<Mutex<dyn RequestProcessor>>,
+    ) -> Result<(), AppError> {
+        if let Entry::Vacant(entry) = self.control_planes.entry(user_id) {
+            let _ = entry.insert(control_plane);
+            Ok(())
+        } else {
+            Err(AppError::General(format!(
+                "Control plane already registered for user: uid={}",
+                &user_id
+            )))
+        }
+    }
+
     fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent> {
         self.proxy_tasks_sender.clone()
     }
+
     fn startup(
         &mut self,
         service_mgr: Arc<Mutex<dyn ServiceMgr>>,
@@ -261,6 +311,7 @@ impl ServiceMgr for GatewayServiceMgr {
 
         Ok((self.app_config.gateway_service_host.clone(), service_port))
     }
+
     fn has_proxy_for_user_and_service(&mut self, user_id: u64, service_id: u64) -> bool {
         match self.service_proxy_visitors.get(&service_id) {
             Some(proxy_visitor) => {
@@ -271,6 +322,7 @@ impl ServiceMgr for GatewayServiceMgr {
             None => false,
         }
     }
+
     fn shutdown_connections(
         &mut self,
         user_id: Option<u64>,
@@ -289,6 +341,14 @@ impl ServiceMgr for GatewayServiceMgr {
                 }
             }
         });
+
+        if service_id.is_none() {
+            if let Some(user_id_val) = &user_id {
+                let _ = self.control_planes.remove(user_id_val);
+            } else {
+                self.control_planes.clear();
+            }
+        }
 
         if !errors.is_empty() {
             return Err(AppError::General(format!(
@@ -318,6 +378,7 @@ impl ServiceMgr for GatewayServiceMgr {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::client::controller::tests::MockReqProcessor;
     use crate::config;
     use crate::repository::access_repo::tests::MockAccessRepo;
     use crate::repository::role_repo::tests::MockRoleRepo;
@@ -336,6 +397,8 @@ pub mod tests {
             fn get_service_id_by_proxy_key(&self, proxy_key: &str) -> Option<u64>;
             fn get_service_proxies(&self) -> Vec<Arc<Mutex<dyn GatewayServiceProxyVisitor>>>;
             fn get_service_proxy(&self, service_id: u64) -> Option<Arc<Mutex<dyn GatewayServiceProxyVisitor>>>;
+            fn has_control_plane_for_user(&self, user_id: u64, assert_authenticated: bool) -> bool;
+            fn add_control_plane(&mut self, user_id: u64, control_plane: Arc<Mutex<dyn RequestProcessor>>) -> Result<(), AppError>;
             fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent>;
             fn startup(&mut self, service_mgr: Arc<Mutex<dyn ServiceMgr>>, service: &Service) -> Result<(Option<String>, u16), AppError>;
             fn has_proxy_for_user_and_service(&mut self, user_id: u64, service_id: u64) -> bool;
@@ -372,6 +435,124 @@ pub mod tests {
         }
         service_mgr
     }
+
+    #[test]
+    fn gwsvcmgr_get_service_id_by_proxy_key_when_avail() {
+        let service_mgr = create_gw_service_mgr(true);
+        service_mgr
+            .services_by_proxy_key
+            .lock()
+            .unwrap()
+            .insert("key1".to_string(), 200);
+
+        assert!(service_mgr.get_service_id_by_proxy_key("key1").is_some());
+    }
+
+    #[test]
+    fn gwsvcmgr_get_service_id_by_proxy_key_when_unavail() {
+        let service_mgr = create_gw_service_mgr(true);
+        service_mgr
+            .services_by_proxy_key
+            .lock()
+            .unwrap()
+            .insert("key1".to_string(), 200);
+        assert!(service_mgr.get_service_id_by_proxy_key("key2").is_none());
+    }
+
+    #[test]
+    fn gwsvcmgr_get_service_proxies() {
+        let proxy_visitor = MockGwSvcProxyVisitor::new();
+        let mut service_mgr = create_gw_service_mgr(true);
+        assert!(service_mgr.service_proxy_visitors.is_empty());
+        service_mgr
+            .service_proxy_visitors
+            .insert(200, Arc::new(Mutex::new(proxy_visitor)));
+        let service_proxy_visitors = service_mgr.get_service_proxies();
+        assert_eq!(service_proxy_visitors.len(), 1);
+    }
+
+    #[test]
+    fn gwsvcmgr_has_control_plane_for_user_when_avail_and_assert_auth_and_unauthed() {
+        let mut service_mgr = create_gw_service_mgr(true);
+        let mut req_processor = MockReqProcessor::new();
+        req_processor
+            .expect_is_authenticated()
+            .times(1)
+            .return_once(|| false);
+        assert!(service_mgr.control_planes.is_empty());
+        service_mgr
+            .control_planes
+            .insert(100, Arc::new(Mutex::new(req_processor)));
+        assert!(!service_mgr.has_control_plane_for_user(100, true));
+    }
+
+    #[test]
+    fn gwsvcmgr_has_control_plane_for_user_when_avail_and_no_assert_auth_and_unauthed() {
+        let mut service_mgr = create_gw_service_mgr(true);
+        let mut req_processor = MockReqProcessor::new();
+        req_processor.expect_is_authenticated().never();
+        assert!(service_mgr.control_planes.is_empty());
+        service_mgr
+            .control_planes
+            .insert(100, Arc::new(Mutex::new(req_processor)));
+        assert!(service_mgr.has_control_plane_for_user(100, false));
+    }
+
+    #[test]
+    fn gwsvcmgr_has_control_plane_for_user_when_avail_and_assert_auth_and_authed() {
+        let mut service_mgr = create_gw_service_mgr(true);
+        let mut req_processor = MockReqProcessor::new();
+        req_processor
+            .expect_is_authenticated()
+            .times(1)
+            .return_once(|| true);
+        assert!(service_mgr.control_planes.is_empty());
+        service_mgr
+            .control_planes
+            .insert(100, Arc::new(Mutex::new(req_processor)));
+        assert!(service_mgr.has_control_plane_for_user(100, true));
+    }
+
+    #[test]
+    fn gwsvcmgr_has_control_plane_for_user_when_avail_and_no_assert_auth_and_authed() {
+        let mut service_mgr = create_gw_service_mgr(true);
+        let mut req_processor = MockReqProcessor::new();
+        req_processor.expect_is_authenticated().never();
+        assert!(service_mgr.control_planes.is_empty());
+        service_mgr
+            .control_planes
+            .insert(100, Arc::new(Mutex::new(req_processor)));
+        assert!(service_mgr.has_control_plane_for_user(100, false));
+    }
+
+    #[test]
+    fn gwsvcmgr_has_control_plane_for_user_when_unavail() {
+        let service_mgr = create_gw_service_mgr(true);
+        assert!(service_mgr.control_planes.is_empty());
+        assert!(!service_mgr.has_control_plane_for_user(100, false));
+    }
+
+    #[test]
+    fn gwsvcmgr_add_control_plane() {
+        let mut service_mgr = create_gw_service_mgr(true);
+        assert!(service_mgr.control_planes.is_empty());
+
+        if let Err(err) =
+            service_mgr.add_control_plane(100, Arc::new(Mutex::new(MockReqProcessor::new())))
+        {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        let control_plane = service_mgr.control_planes.get(&100);
+        assert!(control_plane.is_some());
+    }
+
+    #[test]
+    fn gwsvcmgr_clone_proxy_tasks_sender() {
+        let service_mgr = create_gw_service_mgr(true);
+        let _ = service_mgr.clone_proxy_tasks_sender();
+    }
+
     #[test]
     fn gwsvcmgr_startup_when_already_started() {
         let service = Service {
@@ -622,12 +803,22 @@ pub mod tests {
         service_mgr
             .service_proxy_visitors
             .insert(201, Arc::new(Mutex::new(proxy201_visitor)));
+        service_mgr
+            .control_planes
+            .insert(100, Arc::new(Mutex::new(MockReqProcessor::new())));
+        service_mgr
+            .control_planes
+            .insert(101, Arc::new(Mutex::new(MockReqProcessor::new())));
+
+        assert_eq!(service_mgr.control_planes.len(), 2);
 
         let result = service_mgr.shutdown_connections(None, None);
 
         if let Err(err) = &result {
             panic!("Unexpected shutdown result: err={:?}", &err);
         }
+
+        assert!(service_mgr.control_planes.is_empty());
     }
 
     #[test]
@@ -651,12 +842,22 @@ pub mod tests {
         service_mgr
             .service_proxy_visitors
             .insert(201, Arc::new(Mutex::new(proxy201_visitor)));
+        service_mgr
+            .control_planes
+            .insert(100, Arc::new(Mutex::new(MockReqProcessor::new())));
+        service_mgr
+            .control_planes
+            .insert(101, Arc::new(Mutex::new(MockReqProcessor::new())));
+
+        assert_eq!(service_mgr.control_planes.len(), 2);
 
         let result = service_mgr.shutdown_connections(Some(100), None);
 
         if let Err(err) = &result {
             panic!("Unexpected shutdown result: err={:?}", &err);
         }
+
+        assert_eq!(service_mgr.control_planes.len(), 1);
     }
 
     #[test]
@@ -676,12 +877,19 @@ pub mod tests {
         service_mgr
             .service_proxy_visitors
             .insert(201, Arc::new(Mutex::new(proxy201_visitor)));
+        service_mgr
+            .control_planes
+            .insert(100, Arc::new(Mutex::new(MockReqProcessor::new())));
+
+        assert_eq!(service_mgr.control_planes.len(), 1);
 
         let result = service_mgr.shutdown_connections(None, Some(200));
 
         if let Err(err) = &result {
             panic!("Unexpected shutdown result: err={:?}", &err);
         }
+
+        assert_eq!(service_mgr.control_planes.len(), 1);
     }
 
     #[test]
