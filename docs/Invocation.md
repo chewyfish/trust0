@@ -100,6 +100,14 @@ Options:
           
           [env: GATEWAY_SERVICE_REPLY_HOST=]
 
+      --mfa-scheme <MFA_SCHEME>
+          Secondary authentication mechanism (in addition to client certificate authentication)
+          Current schemes: 'insecure': No authentication, all privileged actions allowed
+                           'scram-sha256': SCRAM SHA256 using credentials stored in user repository
+          
+          [env: MFA_SCHEME=]
+          [default: insecure]
+
       --verbose
           Enable verbose logging
           
@@ -129,6 +137,11 @@ Options:
           Service entity store connect specifier string
           
           [env: SERVICE_DB_CONNECT=]
+
+      --role-db-connect <ROLE_DB_CONNECT>
+          Role entity store connect specifier string
+          
+          [env: ROLE_DB_CONNECT=]
 
       --user-db-connect <USER_DB_CONNECT>
           User entity store connect specifier string
