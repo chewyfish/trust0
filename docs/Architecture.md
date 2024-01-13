@@ -54,17 +54,18 @@ Note - A future Trust0 may accommodate gateway-to-gateway service proxy routing.
 
 The Control Plane connection is required and the first connection made between the T0C and a T0G. A REPL shell will be opened and the user may enter various commands:
 
-| Command     | Description                                                         |
-|-------------|---------------------------------------------------------------------|
-| about       | Display context information for connected mTLS device user          |
-| connections | List current service proxy connections                              |
-| ping        | Simple gateway heartbeat request                                    |
-| proxies     | List active service proxies, ready for new connections              |
-| services    | List authorized services for connected mTLS device user             |
-| start       | Startup proxy to authorized service via secure client-gateway proxy |
-| stop        | Shutdown active service proxy (previously started)                  |
-| quit        | Quit the control plane (and corresponding service connections)      |
-| help        | Print this message or the help of the given subcommand(s)           |
+| Command     | Description                                                               |
+|-------------|---------------------------------------------------------------------------|
+| about       | Display context information for connected mTLS device user                |
+| connections | List current service proxy connections                                    |
+| login       | Perform challenge-response authentication (if gateway configured for MFA) |
+| ping        | Simple gateway heartbeat request                                          |
+| proxies     | List active service proxies, ready for new connections                    |
+| services    | List authorized services for connected mTLS device user                   |
+| start       | Startup proxy to authorized service via secure client-gateway proxy       |
+| stop        | Shutdown active service proxy (previously started)                        |
+| quit        | Quit the control plane (and corresponding service connections)            |
+| help        | Print this message or the help of the given subcommand(s)                 |
 
 In the REPL shell, issue `help <COMMAND>` to learn more about these commands.
 
