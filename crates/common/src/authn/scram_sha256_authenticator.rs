@@ -4,12 +4,28 @@ use crate::model;
 use base64::prelude::*;
 use log::error;
 use scram::AuthenticationStatus;
+use std::num::NonZeroU32;
 use std::sync::mpsc;
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
 use std::time::Duration;
+
+/// Hash password (as is expected by this implementation)
+pub fn hash_password(username: &str, password: &str, base64_encode: bool) -> Vec<u8> {
+    let hashed_password = scram::hash_password(
+        password,
+        NonZeroU32::new(4096).unwrap(),
+        username.as_bytes(),
+    );
+
+    if base64_encode {
+        BASE64_URL_SAFE.encode(hashed_password).as_bytes().to_vec()
+    } else {
+        hashed_password.to_vec()
+    }
+}
 
 /// Handle processing error
 fn process_error(
@@ -570,9 +586,7 @@ impl scram::AuthenticationProvider for model::user::User {
 pub mod test {
     use super::*;
     use crate::authn::authenticator::AuthnMessage;
-    use ring::digest::SHA256_OUTPUT_LEN;
     use scram::AuthenticationProvider;
-    use std::num::NonZeroU32;
     use std::ops::Add;
     use std::sync::mpsc::TryRecvError;
     use std::sync::{Arc, Mutex};
@@ -582,13 +596,12 @@ pub mod test {
     // mocks/dummies
 
     pub struct ExampleProvider {
-        user1_password: [u8; SHA256_OUTPUT_LEN],
+        user1_password: Vec<u8>,
     }
 
     impl ExampleProvider {
         pub fn new() -> Self {
-            let pwd_iterations = NonZeroU32::new(4096).unwrap();
-            let user1_password = scram::hash_password("pass1", pwd_iterations, b"user1");
+            let user1_password = hash_password("user1", "pass1", false);
             ExampleProvider { user1_password }
         }
     }
@@ -597,7 +610,7 @@ pub mod test {
         fn get_password_for(&self, username: &str) -> Option<scram::server::PasswordInfo> {
             match username {
                 "user1" => Some(scram::server::PasswordInfo::new(
-                    self.user1_password.to_vec(),
+                    self.user1_password.clone(),
                     4096,
                     "user1".bytes().collect(),
                 )),
@@ -627,7 +640,7 @@ pub mod test {
         let mut auth_client = ScramSha256AuthenticatorClient::new(
             &request_username,
             &request_password,
-            Duration::from_millis(150),
+            Duration::from_millis(1500),
         );
         let client_authenticated = auth_client.authenticated.clone();
         let tester_to_client_send = auth_client.server_response_sender.take().unwrap();
@@ -640,8 +653,10 @@ pub mod test {
         });
 
         // Spawn server thread
-        let mut auth_server =
-            ScramSha256AuthenticatorServer::new(ExampleProvider::new(), Duration::from_millis(150));
+        let mut auth_server = ScramSha256AuthenticatorServer::new(
+            ExampleProvider::new(),
+            Duration::from_millis(1500),
+        );
         let server_authenticated = auth_server.authenticated.clone();
         let tester_to_server_send = auth_server.client_response_sender.take().unwrap();
         let server_to_tester_recv = auth_server.server_response_receiver.take().unwrap();
