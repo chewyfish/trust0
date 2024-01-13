@@ -1,3 +1,4 @@
+pub mod authn;
 pub mod config;
 pub mod control;
 pub mod crypto;

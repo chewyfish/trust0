@@ -4,11 +4,12 @@
   * [Trust0 Architecture](#trust0-architecture)
     * [Overview](#overview)
     * [Network Diagram](#network-diagram)
+    * [User Connections](#user-connections)
     * [Control Plane](#control-plane)
     * [Service Proxy](#service-proxy)
     * [Client Auth](#client-auth)
       * [mTLS Authentication](#mtls-authentication)
-      * [User Connections](#user-connections)
+      * [Secondary Authentication](#secondary-authentication)
       * [RBAC Authorization](#rbac-authorization)
       * [Certificate Revocation](#certificate-revocation)
     * [Database](#database)
@@ -30,7 +31,7 @@ Likewise, there are 2 types of T0C -> T0G connections:
 * Control Plane
 * Service Proxy
 
-Both connection types require mTLS, which allows both parties to authenticate each other. The T0C will use a certificate, which has embedded (device/)user information. This is used by the T0G to validate their account and determine their authorized services. The T0G has access to 3 DBs: users, services, and service authorization.
+Both connection types require mTLS, which allows both parties to authenticate each other (an optional secondary client authentication may also be enabled). The T0C will use a certificate, which has embedded (device/)user information. This is used by the T0G to validate their account and determine their authorized services. The T0G has access to 3 DBs: users, services, and service authorization.
 
 There is no authentication enforced for network connections made to the T0C. Likewise, this client is not secure to run on a multi-user machine and should be only be used on a single-user/personal computer (or some other scenario that can restrict access).
 
@@ -38,21 +39,33 @@ There is no authentication enforced for network connections made to the T0C. Lik
 
 ![](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/network-diagram.png)
 
+### User Connections
+
+All user connections use the same gateway port. The gateway knows the kind of connection based on the TLS application-layer protocol negotiation (ALPN) value given by the Trust0 client. The types of values are as follows:
+
+| Pattern       | Description                                                              |
+|---------------|--------------------------------------------------------------------------|
+| T0CP          | Control Plane                                                            |
+| T0SRV<SVC_ID> | Service Proxy (for service denoted by service ID (u64 value) `<SVC_ID>`) |
+
+Note - A future Trust0 may accommodate gateway-to-gateway service proxy routing. In this case, gateway's will also use TLS client authentication in the same manner as clients (albeit they will have a different SAN field JSON structure to denote themselves as gateways).
+
 ### Control Plane
 
 The Control Plane connection is required and the first connection made between the T0C and a T0G. A REPL shell will be opened and the user may enter various commands:
 
-| Command     | Description                                                         |
-|-------------|---------------------------------------------------------------------|
-| about       | Display context information for connected mTLS device user          |
-| connections | List current service proxy connections                              |
-| ping        | Simple gateway heartbeat request                                    |
-| proxies     | List active service proxies, ready for new connections              |
-| services    | List authorized services for connected mTLS device user             |
-| start       | Startup proxy to authorized service via secure client-gateway proxy |
-| stop        | Shutdown active service proxy (previously started)                  |
-| quit        | Quit the control plane (and corresponding service connections)      |
-| help        | Print this message or the help of the given subcommand(s)           |
+| Command     | Description                                                               |
+|-------------|---------------------------------------------------------------------------|
+| about       | Display context information for connected mTLS device user                |
+| connections | List current service proxy connections                                    |
+| login       | Perform challenge-response authentication (if gateway configured for MFA) |
+| ping        | Simple gateway heartbeat request                                          |
+| proxies     | List active service proxies, ready for new connections                    |
+| services    | List authorized services for connected mTLS device user                   |
+| start       | Startup proxy to authorized service via secure client-gateway proxy       |
+| stop        | Shutdown active service proxy (previously started)                        |
+| quit        | Quit the control plane (and corresponding service connections)            |
+| help        | Print this message or the help of the given subcommand(s)                 |
 
 In the REPL shell, issue `help <COMMAND>` to learn more about these commands.
 
@@ -121,16 +134,11 @@ This allows the gateway to identify the user by their "userId" value (currently 
 
 Subsequently, it will check the respective [User Table](#user-table) record for the current status (values: `active`, `inactive`) and allow or prohibit the user connection accordingly.
 
-#### User Connections
+#### Secondary Authentication
 
-All user connections use the same gateway port. The gateway knows the kind of connection based on the TLS application-layer protocol negotiation (ALPN) value given by the Trust0 client. The types of values are as follows:
+In addition to TLS client authentication, Trust0 supports additional authentication scheme to be employed. Currently only a SCRAM SHA256 implementation is available. If enabled on the gateway, privileged control plane actions and service proxy connections will be guarded against access if the user hasn't passed this secondary authentication. This is accomplished via a `login` control plane flow.
 
-| Pattern       | Description                                                              |
-|---------------|--------------------------------------------------------------------------|
-| T0CP          | Control Plane                                                            |
-| T0SRV<SVC_ID> | Service Proxy (for service denoted by service ID (u64 value) `<SVC_ID>`) |
-
-Note - A future Trust0 may accommodate gateway-to-gateway service proxy routing. In this case, gateway's will also use TLS client authentication in the same manner as clients (albeit they will have a different SAN field JSON structure to denote themselves as gateways).
+The SCRAM SHA256 authentication will use the user credentials stored in the user's [User Table](#user-table) record. The hashed password value can be obtained using the included  [Trust0 Password Hasher](./Utilities.md#trust0-password-hasher) utility.
 
 #### RBAC Authorization
 
@@ -157,12 +165,14 @@ The repository is exposed as an abstract trait, so additional DB implementations
 
 User table contains records for each user account.
 
-| Field   | Description                                                |
-|---------|------------------------------------------------------------|
-| user ID | A unique integer serving as the primary key for the record |
-| name    | Personal name for user                                     |
-| status  | Account status field. Values are: 'inactive', 'active      |
-| roles   | List of RBAC role IDs assigned to this user                |
+| Field     | Description                                                     |
+|-----------|-----------------------------------------------------------------|
+| user ID   | A unique integer serving as the primary key for the record      |
+| user name | An user name used in a (optional) secondary authentication flow |
+| password  | An password used in a (optional) secondary authentication flow  |
+| name      | Personal name for user                                          |
+| status    | Account status field. Values are: 'inactive', 'active           |
+| roles     | List of RBAC role IDs assigned to this user                     |
 
 #### Role Table
 

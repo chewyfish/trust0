@@ -1,3 +1,4 @@
+use crate::authn::authenticator::AuthnMessage;
 use clap::error::ErrorKind;
 use clap::{ArgMatches, Command};
 use serde_derive::{Deserialize, Serialize};
@@ -9,6 +10,9 @@ use crate::error::AppError;
 pub const PROTOCOL_REQUEST_ABOUT: &str = "about";
 pub const PROTOCOL_REQUEST_CONNECTIONS: &str = "connections";
 pub const PROTOCOL_REQUEST_HELP: &str = "help";
+pub const PROTOCOL_REQUEST_LOGIN: &str = "login";
+pub const PROTOCOL_REQUEST_LOGIN_DATA: &str = "login-data";
+pub const PROTOCOL_REQUEST_LOGIN_DATA_ARG_MESSAGE: &str = "message";
 pub const PROTOCOL_REQUEST_PING: &str = "ping";
 pub const PROTOCOL_REQUEST_PROXIES: &str = "proxies";
 pub const PROTOCOL_REQUEST_SERVICES: &str = "services";
@@ -36,6 +40,11 @@ pub enum Request {
     None,
     About,
     Connections,
+    Ignore,
+    Login,
+    LoginData {
+        message: AuthnMessage,
+    },
     Ping,
     Proxies,
     Services,
@@ -95,6 +104,8 @@ impl RequestProcessor {
         match parsed_command.unwrap().subcommand() {
             Some((PROTOCOL_REQUEST_ABOUT, _matches)) => Ok(Request::About),
             Some((PROTOCOL_REQUEST_CONNECTIONS, _matches)) => Ok(Request::Connections),
+            Some((PROTOCOL_REQUEST_LOGIN, _matches)) => Ok(Request::Login),
+            Some((PROTOCOL_REQUEST_LOGIN_DATA, matches)) => Self::parse_login_data_request(matches),
             Some((PROTOCOL_REQUEST_PING, _matches)) => Ok(Request::Ping),
             Some((PROTOCOL_REQUEST_PROXIES, _matches)) => Ok(Request::Proxies),
             Some((PROTOCOL_REQUEST_SERVICES, _matches)) => Ok(Request::Services),
@@ -112,6 +123,28 @@ impl RequestProcessor {
                 }
             }
             None => unreachable!("subcommand required"),
+        }
+    }
+
+    /// Parse "login-data" request
+    fn parse_login_data_request(arg_matches: &ArgMatches) -> Result<Request, AppError> {
+        let message = arg_matches.get_one::<String>("message");
+        if message.is_none() {
+            return Err(AppError::General(format!(
+                "Authentication message is required for the \"{}\" command",
+                PROTOCOL_REQUEST_LOGIN_DATA
+            )));
+        }
+
+        match AuthnMessage::parse_json_str(message.unwrap()) {
+            Ok(authn_msg) => Ok(Request::LoginData { message: authn_msg }),
+            Err(err) => Err(AppError::GenWithMsgAndErr(
+                format!(
+                    "Invalid authentication message for the \"{}\" command",
+                    PROTOCOL_REQUEST_LOGIN_DATA
+                ),
+                Box::new(err),
+            )),
         }
     }
 
@@ -174,6 +207,18 @@ impl RequestProcessor {
                 Command::new(PROTOCOL_REQUEST_CONNECTIONS)
                     .about("List current service proxy connections")
                     .help_template(COMMAND_TEMPLATE),
+            )
+            .subcommand(
+                Command::new(PROTOCOL_REQUEST_LOGIN)
+                    .about("Perform challenge-response authentication (if gateway configured for MFA)")
+                    .help_template(COMMAND_TEMPLATE),
+            )
+            .subcommand(
+                Command::new(PROTOCOL_REQUEST_LOGIN_DATA)
+                    .hide(true)
+                    .args(&[
+                        clap::arg!(-m --message <MESSAGE> "Authentication message content")
+                    ])
             )
             .subcommand(
                 Command::new(PROTOCOL_REQUEST_PING)
@@ -257,7 +302,7 @@ mod tests {
         assert!(parse_error.get_code().is_some());
         assert_eq!(response::CODE_OK, parse_error.get_code().unwrap());
 
-        let expected_msg = "Response: code=200, msg=COMMANDS:\n  about        Display context information for connected mTLS device user\n  connections  List current service proxy connections\n  ping         Simple gateway heartbeat request\n  proxies      List active service proxies, ready for new connections\n  services     List authorized services for connected mTLS device user\n  start        Startup proxy to authorized service via secure client-gateway proxy\n  stop         Shutdown active service proxy (previously started)\n  quit         Quit the control plane (and corresponding service connections)\n  help         Print this message or the help of the given subcommand(s)\n".to_string();
+        let expected_msg = "Response: code=200, msg=COMMANDS:\n  about        Display context information for connected mTLS device user\n  connections  List current service proxy connections\n  login        Perform challenge-response authentication (if gateway configured for MFA)\n  ping         Simple gateway heartbeat request\n  proxies      List active service proxies, ready for new connections\n  services     List authorized services for connected mTLS device user\n  start        Startup proxy to authorized service via secure client-gateway proxy\n  stop         Shutdown active service proxy (previously started)\n  quit         Quit the control plane (and corresponding service connections)\n  help         Print this message or the help of the given subcommand(s)\n".to_string();
 
         assert_eq!(parse_error.to_string(), expected_msg);
     }
@@ -271,6 +316,48 @@ mod tests {
         match result {
             Ok(request) => match request {
                 Request::Connections => {}
+                _ => panic!("Unexpected successful result: req={:?}", request),
+            },
+            Err(err) => panic!("Unexpected result: err={:?}", err),
+        }
+    }
+
+    #[test]
+    fn reqproc_parse_when_login_request() {
+        let request_processor = RequestProcessor::new();
+
+        let result = request_processor.parse(PROTOCOL_REQUEST_LOGIN);
+
+        match result {
+            Ok(request) => match request {
+                Request::Login => {}
+                _ => panic!("Unexpected successful result: req={:?}", request),
+            },
+            Err(err) => panic!("Unexpected result: err={:?}", err),
+        }
+    }
+
+    #[test]
+    fn reqproc_parse_when_login_data_request() {
+        let request_processor = RequestProcessor::new();
+
+        let authn_msg = AuthnMessage::Payload("msg1".to_string());
+        let request = format!(
+            r#"{} --{} "{}""#,
+            PROTOCOL_REQUEST_LOGIN_DATA,
+            PROTOCOL_REQUEST_LOGIN_DATA_ARG_MESSAGE,
+            authn_msg
+                .to_json_str()
+                .unwrap()
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+        );
+
+        let result = request_processor.parse(&request);
+
+        match result {
+            Ok(request) => match request {
+                Request::LoginData { message: _ } => {}
                 _ => panic!("Unexpected successful result: req={:?}", request),
             },
             Err(err) => panic!("Unexpected result: err={:?}", err),

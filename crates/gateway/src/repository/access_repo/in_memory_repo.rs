@@ -559,8 +559,14 @@ mod tests {
             .unwrap()
             .insert(access_keys[2].clone(), accesses[2].clone());
 
-        let result =
-            access_repo.get_all_for_user(&User::new(10, "name10", Status::Active, &vec![]));
+        let result = access_repo.get_all_for_user(&User::new(
+            10,
+            Some("uname10"),
+            Some("pass10"),
+            "name10",
+            Status::Active,
+            &vec![],
+        ));
 
         if let Err(err) = &result {
             panic!("Unexpected result: err={:?}", &err)
@@ -611,7 +617,14 @@ mod tests {
             .unwrap()
             .insert(access_keys[2].clone(), accesses[2].clone());
 
-        let result = access_repo.get_all_for_user(&User::new(1, "name1", Status::Active, &vec![]));
+        let result = access_repo.get_all_for_user(&User::new(
+            1,
+            Some("uname1"),
+            Some("pass1"),
+            "name1",
+            Status::Active,
+            &vec![],
+        ));
 
         if let Err(err) = &result {
             panic!("Unexpected result: err={:?}", &err)
@@ -694,8 +707,14 @@ mod tests {
             .unwrap()
             .insert(access_keys[2].clone(), accesses[2].clone());
 
-        let result =
-            access_repo.get_all_for_user(&User::new(1, "name1", Status::Active, &vec![10]));
+        let result = access_repo.get_all_for_user(&User::new(
+            1,
+            Some("uname1"),
+            Some("pass1"),
+            "name1",
+            Status::Active,
+            &vec![10],
+        ));
 
         if let Err(err) = &result {
             panic!("Unexpected result: err={:?}", &err)
@@ -778,8 +797,17 @@ mod tests {
             .unwrap()
             .insert(access_keys[2].clone(), accesses[2].clone());
 
-        let result =
-            access_repo.get_for_user(4, &User::new(10, "name10", Status::Active, &vec![50]));
+        let result = access_repo.get_for_user(
+            4,
+            &User::new(
+                10,
+                Some("uname10"),
+                Some("pass10"),
+                "name10",
+                Status::Active,
+                &vec![50],
+            ),
+        );
 
         if let Err(err) = &result {
             panic!("Unexpected result: err={:?}", &err)
@@ -830,7 +858,17 @@ mod tests {
             .unwrap()
             .insert(access_keys[2].clone(), accesses[2].clone());
 
-        let result = access_repo.get_for_user(2, &User::new(1, "name1", Status::Active, &vec![50]));
+        let result = access_repo.get_for_user(
+            2,
+            &User::new(
+                1,
+                Some("uname1"),
+                Some("pass1"),
+                "name1",
+                Status::Active,
+                &vec![50],
+            ),
+        );
 
         if let Err(err) = &result {
             panic!("Unexpected result: err={:?}", &err)
@@ -890,7 +928,17 @@ mod tests {
             .unwrap()
             .insert(access_keys[2].clone(), accesses[2].clone());
 
-        let result = access_repo.get_for_user(5, &User::new(1, "name1", Status::Active, &vec![10]));
+        let result = access_repo.get_for_user(
+            5,
+            &User::new(
+                1,
+                Some("uname1"),
+                Some("pass1"),
+                "name1",
+                Status::Active,
+                &vec![10],
+            ),
+        );
 
         if let Err(err) = &result {
             panic!("Unexpected result: err={:?}", &err)

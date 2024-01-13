@@ -1,7 +1,7 @@
 use serde_derive::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug)]
-#[serde(rename_all(serialize = "snake_case", deserialize = "camelCase"))]
+#[serde(rename_all = "camelCase")]
 pub struct Role {
     pub role_id: u64,
     pub name: String,

@@ -1,7 +1,7 @@
 use serde_derive::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, Hash, Eq, PartialEq)]
-#[serde(rename_all(serialize = "snake_case", deserialize = "camelCase"))]
+#[serde(rename_all = "camelCase")]
 pub enum EntityType {
     #[default]
     None,
@@ -10,7 +10,7 @@ pub enum EntityType {
 }
 
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug)]
-#[serde(rename_all(serialize = "snake_case", deserialize = "camelCase"))]
+#[serde(rename_all = "camelCase")]
 pub struct ServiceAccess {
     pub service_id: u64,
     pub entity_type: EntityType,

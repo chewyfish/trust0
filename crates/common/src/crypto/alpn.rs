@@ -7,7 +7,7 @@ pub const PROTOCOL_SERVICE: &str = "T0SRV";
 pub const PROTOCOL_SERVICE_PARSE_REGEX: &str = r"^T0SRV(\d+)$";
 
 /// Trust0 utilized ALPN protocol negotiation to determine connection type: Control Plane; Service Proxy
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Protocol {
     ControlPlane,
     Service(u64),

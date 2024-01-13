@@ -3,6 +3,7 @@
 <!-- TOC -->
   * [Trust0 Utilities](#trust0-utilities)
       * [Trust0 Client Installer](#trust0-client-installer)
+      * [Trust0 Password Hasher](#trust0-password-hasher)
       * [Create Root CA PKI Resources](#create-root-ca-pki-resources)
       * [Create Gateway PKI Resources](#create-gateway-pki-resources)
       * [Create Client PKI Resources](#create-client-pki-resources)
@@ -132,6 +133,43 @@ Installed client certificate: path="<USER_HOME>/.local/share/Trust0/pki/trust0-c
 Installed client key: path="<USER_HOME>/.local/share/Trust0/pki/trust0-client.key.pem"
 Installed client config: path="<USER_HOME>/.config/Trust0/trust0-client.conf"
 Installation complete! Consider adding '"<USER_HOME>/.local/share/Trust0/bin"' to the executable search path.
+```
+
+#### Trust0 Password Hasher
+
+The common crate has a user password hashing tool (`trust0-password-hasher`), which will correctly create a hashed password that can be stored in the [User Table](./Architecture.md#user-table). This can be used by an optional secondary gateway authentication procedure (if gateway is configured for a scheme that requires user password credentials).
+
+When invoking the tool, merely provide the correct authentication scheme, subsequently you will be prompted for a username and password, then the hashed password will be displayed.
+
+Here is the usage description:
+
+```
+Creates valid user password hashes, usable by (relevant) Trust0 authentication schemes
+
+Usage: trust0-password-hasher --authn-scheme <AUTHN_SCHEME>
+
+Options:
+      --authn-scheme <AUTHN_SCHEME>
+          Authentication mechanism
+          Current schemes: 'scram-sha256': SCRAM SHA256 using credentials stored in user repository
+          
+          [env: AUTHN_SCHEME=]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+```
+
+Here is a simple invocation of this tool:
+
+```
+<TRUST0_REPO>/target/debug$ ./target/debug/trust0-password-hasher --authn-scheme scram-sha256
+Trust0 SDP Password Hasher v0.4.0-alpha
+Username: user1
+Password: 
+30nasGxfW9JzThsjsGSutayNhTgRNVxkv_Qm6ZUlW2U=
 ```
 
 #### Create Root CA PKI Resources

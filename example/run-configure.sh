@@ -25,6 +25,8 @@ else
   RECONFIGURE=y
 fi
 
+read -p "If example requires secondary authentication credentials, please use \"user1\", \"pass1\""
+
 if [ "$RECONFIGURE" == 'y' ]; then
   mkdir -p "${EXAMPLE_BUILD_DIR}"
   rm -f "${EXAMPLE_CONFIG_FILE}" "${DATASOURCE_INMEMDB_ACCESS_FILE}" "${DATASOURCE_INMEMDB_SERVICE_FILE}" "${DATASOURCE_INMEMDB_ROLE_FILE}" "${DATASOURCE_INMEMDB_USER_FILE}"

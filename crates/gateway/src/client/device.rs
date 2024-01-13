@@ -11,7 +11,7 @@ use trust0_common::crypto::asn;
 use trust0_common::error::AppError;
 
 #[derive(Serialize, Deserialize, Clone, Default, Debug)]
-#[serde(rename_all(serialize = "snake_case", deserialize = "camelCase"))]
+#[serde(rename_all = "camelCase")]
 pub struct CertAccessContext {
     pub user_id: u64,
     pub platform: String,
@@ -21,13 +21,13 @@ pub struct CertAccessContext {
 #[derive(Clone, Default, Debug)]
 pub struct Device {
     /// Certificate subject attributes
-    cert_subj: HashMap<String, Vec<String>>,
+    pub cert_subj: HashMap<String, Vec<String>>,
 
     /// Certificate alternate subject name attributes
-    cert_alt_subj: HashMap<String, Vec<String>>,
+    pub cert_alt_subj: HashMap<String, Vec<String>>,
 
     /// Device certificate info
-    cert_access_context: CertAccessContext,
+    pub cert_access_context: CertAccessContext,
 }
 
 impl Device {

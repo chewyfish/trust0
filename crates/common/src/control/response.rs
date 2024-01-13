@@ -1,5 +1,6 @@
 use std::borrow::Borrow;
 
+use crate::authn::authenticator;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -328,6 +329,76 @@ impl TryInto<Value> for &Service {
     }
 }
 
+/// Represents object to be used in an authentication exchange
+#[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct LoginData {
+    pub authn_type: authenticator::AuthnType,
+    pub message: Option<authenticator::AuthnMessage>,
+}
+
+impl LoginData {
+    /// LoginData constructor
+    pub fn new(
+        authn_type: authenticator::AuthnType,
+        message: Option<authenticator::AuthnMessage>,
+    ) -> Self {
+        Self {
+            authn_type,
+            message,
+        }
+    }
+
+    /// Construct LoginData(s) from serde Value
+    pub fn from_serde_value(value: &Value) -> Result<Vec<LoginData>, AppError> {
+        if let Value::Array(values) = &value {
+            Ok(values
+                .iter()
+                .map(|v| {
+                    serde_json::from_value(v.clone()).map_err(|err| {
+                        AppError::GenWithMsgAndErr(
+                            "Error converting serde Value::Array to LoginData".to_string(),
+                            Box::new(err),
+                        )
+                    })
+                })
+                .collect::<Result<Vec<LoginData>, AppError>>()?)
+        } else {
+            Ok(vec![serde_json::from_value(value.clone()).map_err(
+                |err| {
+                    AppError::GenWithMsgAndErr(
+                        "Error converting serde Value to LoginData".to_string(),
+                        Box::new(err),
+                    )
+                },
+            )?])
+        }
+    }
+}
+
+unsafe impl Send for LoginData {}
+
+impl TryInto<Value> for LoginData {
+    type Error = AppError;
+
+    fn try_into(self) -> Result<Value, Self::Error> {
+        self.borrow().try_into()
+    }
+}
+
+impl TryInto<Value> for &LoginData {
+    type Error = AppError;
+
+    fn try_into(self) -> Result<Value, Self::Error> {
+        serde_json::to_value(self).map_err(|err| {
+            AppError::GenWithMsgAndErr(
+                "Error converting LoginData to serde Value".to_string(),
+                Box::new(err),
+            )
+        })
+    }
+}
+
 /// Represents active service proxy connections for connected mTLS device user
 #[derive(Serialize, Deserialize, Clone, PartialEq, Default, Debug)]
 pub struct Connection {
@@ -580,6 +651,53 @@ mod tests {
                 assert_eq!(
                     value,
                     json!({"id": 200, "name": "svc1", "transport": "TCP", "address": "host:9000"})
+                );
+            }
+            Err(err) => panic!("Unexpected result: err={:?}", err),
+        }
+    }
+
+    #[test]
+    fn logindata_from_serde_value_when_invalid() {
+        let login_data_json =
+            json!({"authnTypeINVALID": "scramSha256", "message": {"payload": "data1"}});
+
+        match LoginData::from_serde_value(&login_data_json) {
+            Ok(login_data) => panic!("Unexpected successful result: data={:?}", login_data),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn logindata_from_serde_value_when_valid() {
+        let login_data_json = json!({"authnType": "scramSha256", "message": {"payload": "data1"}});
+
+        match LoginData::from_serde_value(&login_data_json) {
+            Ok(login_data_list) => {
+                assert_eq!(login_data_list.len(), 1);
+                let login_data = LoginData::new(
+                    authenticator::AuthnType::ScramSha256,
+                    Some(authenticator::AuthnMessage::Payload("data1".to_string())),
+                );
+                assert_eq!(login_data_list, vec![login_data]);
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn logindata_try_into() {
+        let login_data = LoginData::new(
+            authenticator::AuthnType::ScramSha256,
+            Some(authenticator::AuthnMessage::Payload("data1".to_string())),
+        );
+
+        let result: Result<Value, AppError> = login_data.try_into();
+        match result {
+            Ok(value) => {
+                assert_eq!(
+                    value,
+                    json!({"authnType": "scramSha256", "message": {"payload": "data1"}})
                 );
             }
             Err(err) => panic!("Unexpected result: err={:?}", err),
