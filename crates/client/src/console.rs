@@ -117,7 +117,6 @@ impl ShellInputReader {
             }
         };
         match &read_result {
-            Ok(line) if line.is_empty() => (),
             Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => (),
             _ => {
                 let _ = channel_sender.send(read_result);
