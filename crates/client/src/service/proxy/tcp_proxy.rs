@@ -273,9 +273,12 @@ unsafe impl Send for ClientConnVisitor {}
 pub mod tests {
     use super::*;
     use crate::config;
+    use crate::service::proxy::proxy_base;
     use std::sync;
+    use std::sync::mpsc::TryRecvError;
     use trust0_common::model::service::Transport;
     use trust0_common::net::stream_utils;
+    use trust0_common::net::tcp_server::conn_std::ConnectionVisitor;
     use trust0_common::net::tcp_server::server_std::ServerVisitor;
 
     #[test]
@@ -354,5 +357,277 @@ pub mod tests {
         ) {
             panic!("Unexpected result: err={:?}", &err);
         }
+    }
+
+    #[test]
+    fn tcpsvrproxyvisit_on_conn_accepted() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let (proxy_tasks_sender, proxy_tasks_receiver) = sync::mpsc::channel();
+        let (proxy_events_sender, proxy_events_receiver) = sync::mpsc::channel();
+        let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
+        let services_by_proxy_key = Arc::new(Mutex::new(HashMap::new()));
+
+        let tcp_listener = std::net::TcpListener::bind("localhost:0").unwrap();
+        let gateway_proxy_port = tcp_listener.local_addr().unwrap().port();
+        let tls_server_config = Arc::new(
+            proxy_base::tests::create_tls_server_config(vec![
+                alpn::Protocol::create_service_protocol(200).into_bytes(),
+            ])
+            .unwrap(),
+        );
+        proxy_base::tests::spawn_tls_server_listener(tcp_listener, tls_server_config, 1).unwrap();
+
+        let mut server_visitor = TcpClientProxyServerVisitor {
+            app_config: app_config.clone(),
+            service: Service {
+                service_id: 200,
+                name: "svc200".to_string(),
+                transport: Transport::TCP,
+                host: "localhost".to_string(),
+                port: 4000,
+            },
+            client_proxy_port: 3000,
+            gateway_proxy_host: "localhost".to_string(),
+            gateway_proxy_port,
+            proxy_tasks_sender,
+            proxy_events_sender,
+            services_by_proxy_key: services_by_proxy_key.clone(),
+            proxy_keys: HashSet::new(),
+            shutdown_requested: false,
+        };
+
+        let client_conn = server_visitor
+            .create_client_conn(
+                stream_utils::clone_std_tcp_stream(&connected_tcp_stream.server_stream.0).unwrap(),
+            )
+            .unwrap();
+
+        if let Err(err) = server_visitor.on_conn_accepted(client_conn) {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        let expected_proxy_key = ProxyEvent::key_value(
+            &ProxyType::TcpAndTcp,
+            connected_tcp_stream.server_stream.0.peer_addr().ok(),
+            connected_tcp_stream.server_stream.0.local_addr().ok(),
+        );
+
+        match proxy_tasks_receiver.try_recv() {
+            Ok(proxy_task) => match proxy_task {
+                ProxyExecutorEvent::OpenTcpAndTcpProxy(proxy_key, _) => {
+                    assert_eq!(
+                        proxy_key, expected_proxy_key,
+                        "Received proxy task mismatch: act-key={}, exp-key={}",
+                        &proxy_key, &expected_proxy_key
+                    );
+                }
+                ProxyExecutorEvent::Close(key) => {
+                    panic!("Unexpected received close proxy task: key={:?}", &key)
+                }
+                ProxyExecutorEvent::OpenChannelAndTcpProxy(key, _) => panic!(
+                    "Unexpected received open channel&tcp proxy task: key={:?}",
+                    &key
+                ),
+                ProxyExecutorEvent::OpenTcpAndUdpProxy(key, _) => panic!(
+                    "Unexpected received open tcp&udp proxy task: key={:?}",
+                    &key
+                ),
+            },
+            Err(err) => panic!("Unexpected received proxy task error: err={:?}", &err),
+        }
+
+        match proxy_events_receiver.try_recv() {
+            Ok(proxy_event) => panic!("Unexpected received proxy event: event={:?}", &proxy_event),
+            Err(err) if TryRecvError::Disconnected == err => panic!(
+                "Unexpected received disconnected proxy event result: err={:?}",
+                &err
+            ),
+            _ => {}
+        }
+
+        assert!(services_by_proxy_key
+            .lock()
+            .unwrap()
+            .contains_key(&expected_proxy_key));
+        assert_eq!(
+            *services_by_proxy_key
+                .lock()
+                .unwrap()
+                .get(&expected_proxy_key)
+                .unwrap(),
+            200
+        );
+        assert!(server_visitor.proxy_keys.contains(&expected_proxy_key));
+    }
+
+    #[test]
+    fn tcpsvrproxyvisit_accessors_and_mutators() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let service = Service {
+            service_id: 200,
+            name: "svc200".to_string(),
+            transport: Transport::TCP,
+            host: "svchost1".to_string(),
+            port: 4000,
+        };
+
+        let mut server_visitor = TcpClientProxyServerVisitor {
+            app_config: app_config.clone(),
+            service: service.clone(),
+            client_proxy_port: 3000,
+            gateway_proxy_host: "gwhost1".to_string(),
+            gateway_proxy_port: 2000,
+            proxy_tasks_sender: sync::mpsc::channel().0,
+            proxy_events_sender: sync::mpsc::channel().0,
+            services_by_proxy_key: Arc::new(Mutex::new(HashMap::new())),
+            proxy_keys: HashSet::new(),
+            shutdown_requested: false,
+        };
+
+        assert!(!server_visitor.get_shutdown_requested());
+        server_visitor.set_shutdown_requested();
+        assert!(server_visitor.get_shutdown_requested());
+        assert_eq!(server_visitor.get_service(), &service);
+        assert_eq!(server_visitor.get_client_proxy_port(), 3000);
+        assert_eq!(server_visitor.get_gateway_proxy_host(), "gwhost1");
+        assert_eq!(server_visitor.get_gateway_proxy_port(), 2000);
+    }
+
+    #[test]
+    fn tcpsvrproxyvisit_shutdown_connections() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let (proxy_tasks_sender, proxy_tasks_receiver) = sync::mpsc::channel();
+        let services_by_proxy_key =
+            Arc::new(Mutex::new(HashMap::from([("key1".to_string(), 200)])));
+        let service = Service {
+            service_id: 200,
+            name: "svc200".to_string(),
+            transport: Transport::TCP,
+            host: "svchost1".to_string(),
+            port: 4000,
+        };
+
+        let mut server_visitor = TcpClientProxyServerVisitor {
+            app_config: app_config.clone(),
+            service: service.clone(),
+            client_proxy_port: 3000,
+            gateway_proxy_host: "gwhost1".to_string(),
+            gateway_proxy_port: 2000,
+            proxy_tasks_sender: proxy_tasks_sender.clone(),
+            proxy_events_sender: sync::mpsc::channel().0,
+            services_by_proxy_key: services_by_proxy_key.clone(),
+            proxy_keys: HashSet::from(["key1".to_string()]),
+            shutdown_requested: false,
+        };
+
+        if let Err(err) = server_visitor.shutdown_connections(proxy_tasks_sender) {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        match proxy_tasks_receiver.try_recv() {
+            Ok(proxy_task) => match proxy_task {
+                ProxyExecutorEvent::Close(key) => assert_eq!(key, "key1".to_string()),
+                ProxyExecutorEvent::OpenTcpAndTcpProxy(key, _) => panic!(
+                    "Unexpected received open tcp&tcp proxy task: key={:?}",
+                    &key
+                ),
+                ProxyExecutorEvent::OpenChannelAndTcpProxy(key, _) => panic!(
+                    "Unexpected received open channel&tcp proxy task: key={:?}",
+                    &key
+                ),
+                ProxyExecutorEvent::OpenTcpAndUdpProxy(key, _) => panic!(
+                    "Unexpected received open tcp&udp proxy task: key={:?}",
+                    &key
+                ),
+            },
+            Err(err) => panic!("Unexpected received proxy task error: err={:?}", &err),
+        }
+
+        assert!(services_by_proxy_key.lock().unwrap().is_empty());
+        assert!(server_visitor.proxy_keys.is_empty());
+    }
+
+    #[test]
+    fn tcpsvrproxyvisit_remove_proxy_for_key_when_not_exists() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let services_by_proxy_key = Arc::new(Mutex::new(HashMap::from([
+            ("key1".to_string(), 200),
+            ("key2".to_string(), 201),
+        ])));
+        let service = Service {
+            service_id: 200,
+            name: "svc200".to_string(),
+            transport: Transport::TCP,
+            host: "svchost1".to_string(),
+            port: 4000,
+        };
+
+        let mut server_visitor = TcpClientProxyServerVisitor {
+            app_config: app_config.clone(),
+            service: service.clone(),
+            client_proxy_port: 3000,
+            gateway_proxy_host: "gwhost1".to_string(),
+            gateway_proxy_port: 2000,
+            proxy_tasks_sender: sync::mpsc::channel().0,
+            proxy_events_sender: sync::mpsc::channel().0,
+            services_by_proxy_key: services_by_proxy_key.clone(),
+            proxy_keys: HashSet::from(["key2".to_string()]),
+            shutdown_requested: false,
+        };
+
+        assert!(!server_visitor.remove_proxy_for_key("key1"));
+
+        assert!(services_by_proxy_key.lock().unwrap().contains_key("key1"));
+        assert_eq!(services_by_proxy_key.lock().unwrap().len(), 2);
+        assert!(server_visitor.proxy_keys.contains("key2"));
+        assert_eq!(server_visitor.proxy_keys.len(), 1);
+    }
+
+    #[test]
+    fn tcpsvrproxyvisit_remove_proxy_for_key_when_exists() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let services_by_proxy_key = Arc::new(Mutex::new(HashMap::from([
+            ("key1".to_string(), 200),
+            ("key2".to_string(), 201),
+        ])));
+        let service = Service {
+            service_id: 200,
+            name: "svc200".to_string(),
+            transport: Transport::TCP,
+            host: "svchost1".to_string(),
+            port: 4000,
+        };
+
+        let mut server_visitor = TcpClientProxyServerVisitor {
+            app_config: app_config.clone(),
+            service: service.clone(),
+            client_proxy_port: 3000,
+            gateway_proxy_host: "gwhost1".to_string(),
+            gateway_proxy_port: 2000,
+            proxy_tasks_sender: sync::mpsc::channel().0,
+            proxy_events_sender: sync::mpsc::channel().0,
+            services_by_proxy_key: services_by_proxy_key.clone(),
+            proxy_keys: HashSet::from(["key2".to_string(), "key3".to_string()]),
+            shutdown_requested: false,
+        };
+
+        assert!(server_visitor.remove_proxy_for_key("key2"));
+
+        assert!(!services_by_proxy_key.lock().unwrap().contains_key("key2"));
+        assert_eq!(services_by_proxy_key.lock().unwrap().len(), 1);
+        assert!(!server_visitor.proxy_keys.contains("key2"));
+        assert_eq!(server_visitor.proxy_keys.len(), 1);
+    }
+
+    #[test]
+    fn cliconnvisit_new() {
+        let visitor = ClientConnVisitor::new();
+        assert!(visitor.is_ok());
+    }
+
+    #[test]
+    fn cliconnvisit_send_error_response() {
+        let mut visitor = ClientConnVisitor {};
+        visitor.send_error_response(&AppError::StreamEOF);
     }
 }
