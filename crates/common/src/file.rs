@@ -211,15 +211,11 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    const VALID_FILE: [&str; 3] = [
-        env!("CARGO_MANIFEST_DIR"),
-        "testdata",
-        "client0.local.crt.pem",
-    ];
+    const VALID_FILE: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "client-config.rc"];
     const MISSING_FILE: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "NON-EXISTENT.txt"];
 
     #[test]
-    fn file_mtime_when_invalid_filepath() {
+    fn file_file_mtime_when_invalid_filepath() {
         let file_pathbuf: PathBuf = MISSING_FILE.iter().collect();
 
         let result = file_mtime(file_pathbuf.as_path());
@@ -233,7 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn file_mtime_when_valid_filepath() {
+    fn file_file_mtime_when_valid_filepath() {
         let file_pathbuf: PathBuf = VALID_FILE.iter().collect();
 
         let result = file_mtime(file_pathbuf.as_path());
@@ -244,6 +240,39 @@ mod tests {
                 &file_pathbuf, &result
             );
         }
+    }
+
+    #[test]
+    fn file_load_text_data_when_invalid_filepath() {
+        let file_pathbuf: PathBuf = MISSING_FILE.iter().collect();
+
+        let result = load_text_data(file_pathbuf.to_str().unwrap());
+
+        if result.is_ok() {
+            panic!(
+                "Unexpected result: path={:?}, val={:?}",
+                &file_pathbuf, &result
+            );
+        }
+    }
+
+    #[test]
+    fn file_load_text_data_when_valid_filepath() {
+        let file_pathbuf: PathBuf = VALID_FILE.iter().collect();
+
+        let result = load_text_data(file_pathbuf.to_str().unwrap());
+
+        if result.is_err() {
+            panic!(
+                "Unexpected result: path={:?}, val={:?}",
+                &file_pathbuf, &result
+            );
+        }
+
+        assert_eq!(
+            result.unwrap().replace(&[' ', '\t', '\r', '\n'], ""),
+            "GATEWAY_PORT=8888MAX_FRAG_SIZE=128".to_string()
+        );
     }
 }
 
@@ -426,7 +455,7 @@ mod reload_tests {
     }
 
     #[test]
-    fn reloadfile_spawn_reloader() {
+    fn reloadfile_spawn_reloader_when_valid_file() {
         let filepath: PathBuf = FILE_REVOKED_CERTS_0_PATHPARTS.iter().collect();
         let last_mtime = SystemTime::now();
         let reloading = Arc::new(Mutex::new(false));
@@ -443,7 +472,24 @@ mod reload_tests {
     }
 
     #[test]
-    fn reloadtext_new() {
+    fn reloadfile_spawn_reloader_when_invalid_file() {
+        let filepath: PathBuf = FILE_MISSING_PATHPARTS.iter().collect();
+        let last_mtime = SystemTime::now();
+        let reloading = Arc::new(Mutex::new(false));
+
+        let file = ReloadFileImpl {
+            path: filepath,
+            last_mtime,
+            action: ReloadFileAction::None,
+            reloading: reloading.clone(),
+        };
+
+        <ReloadFileImpl as ReloadableFile>::spawn_reloader(file, Some(Duration::from_millis(10)));
+        *reloading.lock().unwrap() = false;
+    }
+
+    #[test]
+    fn reloadtext_new_when_valid_file() {
         let filepath: PathBuf = FILE_INVALID_CRL_PATHPARTS.iter().collect();
         let text_data = Arc::new(Mutex::new("txt1".to_string()));
 
@@ -560,5 +606,22 @@ mod reload_tests {
         };
 
         let _ = text_file.process_reload();
+    }
+
+    #[test]
+    #[should_panic]
+    fn reloadtext_on_critical_error() {
+        let filepath: PathBuf = FILE_INVALID_CRL_PATHPARTS.iter().collect();
+        let text_data = Arc::new(Mutex::new(String::new()));
+        let last_mtime = file_mtime(filepath.as_path()).unwrap();
+
+        let mut text_file = ReloadableTextFile {
+            path: filepath.clone(),
+            last_mtime,
+            text_data: text_data.clone(),
+            reloading: Arc::new(Mutex::new(true)),
+        };
+
+        let _ = text_file.on_critical_error(&AppError::General("msg1".to_string()));
     }
 }

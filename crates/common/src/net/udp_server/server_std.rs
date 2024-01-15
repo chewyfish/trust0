@@ -358,6 +358,161 @@ pub mod tests {
     }
 
     #[test]
+    fn server_bind_listener_when_invalid_address() {
+        let mut visitor = MockServerVisit::new();
+        visitor.expect_on_listening().never();
+        let mut server = Server {
+            visitor: Arc::new(Mutex::new(visitor)),
+            _server_port: 1,
+            server_socket: None,
+            server_addr: "127.0.0.1:1".parse().unwrap(),
+            polling: false,
+            closing: false,
+            closed: false,
+        };
+
+        if let Ok(()) = server.bind_listener() {
+            panic!("Unexpected successful result");
+        }
+    }
+
+    #[test]
+    fn server_bind_listener_when_no_errors() {
+        let mut visitor = MockServerVisit::new();
+        visitor
+            .expect_on_listening()
+            .times(1)
+            .return_once(|| Ok(()));
+        let mut server = Server {
+            visitor: Arc::new(Mutex::new(visitor)),
+            _server_port: 1,
+            server_socket: None,
+            server_addr: "127.0.0.1:0".parse().unwrap(),
+            polling: false,
+            closing: false,
+            closed: false,
+        };
+
+        if let Err(err) = server.bind_listener() {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        assert!(!server.closing);
+        assert!(!server.closed);
+        assert!(!server.polling);
+    }
+
+    #[test]
+    fn server_clone_server_socket_when_no_socket() {
+        let server = Server {
+            visitor: Arc::new(Mutex::new(MockServerVisit::new())),
+            _server_port: 1,
+            server_socket: None,
+            server_addr: "127.0.0.1:0".parse().unwrap(),
+            polling: false,
+            closing: false,
+            closed: false,
+        };
+
+        if let Ok(socket) = server.clone_server_socket() {
+            panic!("Unexpected successful result: socket={:?}", &socket);
+        }
+    }
+
+    #[test]
+    fn server_clone_server_socket_when_has_socket() {
+        let server_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let server = Server {
+            visitor: Arc::new(Mutex::new(MockServerVisit::new())),
+            _server_port: 1,
+            server_socket: Some(UdpSocket::bind(server_addr.clone()).unwrap()),
+            server_addr,
+            polling: false,
+            closing: false,
+            closed: false,
+        };
+
+        if let Err(err) = server.clone_server_socket() {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn server_send_message_when_invalid_client_socket() {
+        let server_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let server_socket = UdpSocket::bind(server_addr.clone()).unwrap();
+        let client_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+
+        if let Ok(bytes_len) = Server::send_message(&server_socket, &client_addr, &vec![0x10]) {
+            panic!("Unexpected successful result: len={:?}", bytes_len);
+        }
+    }
+
+    #[test]
+    fn server_send_message_when_valid() {
+        let connected_socket = stream_utils::ConnectedUdpSocket::new();
+
+        if let Err(err) = Server::send_message(
+            &connected_socket.as_ref().unwrap().server_socket.0,
+            &connected_socket.as_ref().unwrap().client_socket.1,
+            &vec![0x10],
+        ) {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn server_poll_new_messages_when_not_listening() {
+        let server_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let mut server = Server {
+            visitor: Arc::new(Mutex::new(MockServerVisit::new())),
+            _server_port: 1,
+            server_socket: None,
+            server_addr,
+            polling: false,
+            closing: false,
+            closed: false,
+        };
+
+        if let Ok(()) = server.poll_new_messages() {
+            panic!("Unexpected successful result");
+        }
+    }
+
+    #[test]
+    fn server_poll_new_messages_when_2nd_loop_iteration_shutdown_request() {
+        let mut visitor = MockServerVisit::new();
+        visitor
+            .expect_get_shutdown_requested()
+            .times(1)
+            .return_once(|| false);
+        visitor
+            .expect_get_shutdown_requested()
+            .times(1)
+            .return_once(|| true);
+        let server_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let server_socket = UdpSocket::bind(server_addr.clone()).unwrap();
+        server_socket.set_nonblocking(true).unwrap();
+        let mut server = Server {
+            visitor: Arc::new(Mutex::new(visitor)),
+            _server_port: 1,
+            server_socket: Some(server_socket),
+            server_addr,
+            polling: false,
+            closing: false,
+            closed: false,
+        };
+
+        if let Err(err) = server.poll_new_messages() {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        assert!(!server.polling);
+        assert!(server.closing);
+        assert!(server.closed);
+    }
+
+    #[test]
     fn server_shutdown_when_not_polling() {
         let mut server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),

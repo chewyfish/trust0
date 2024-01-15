@@ -101,6 +101,10 @@ mod test {
         assert_eq!(format!("{:?}", &error), expected_str.to_string());
     }
 
+    fn assert_formatted_display(error: &AppError, expected_str: &str) {
+        assert_eq!(error.to_string(), expected_str.to_string());
+    }
+
     #[test]
     fn apperror_get_code() {
         let bad_addr_parse: Result<std::net::IpAddr, std::net::AddrParseError> =
@@ -198,6 +202,60 @@ mod test {
         );
         assert_formatted_debug(&AE::WouldBlock, "WouldBlock");
         assert_formatted_debug(&AE::StreamEOF, "StreamEOF");
+    }
+
+    #[test]
+    fn apperror_formatted_display() {
+        let bad_addr_parse: Result<std::net::IpAddr, std::net::AddrParseError> =
+            "127.0.0.1:8080".parse();
+        let addr_parse_err = bad_addr_parse.err().unwrap();
+        assert_formatted_display(
+            &AE::AddrParse(addr_parse_err.clone()),
+            "invalid IP address syntax",
+        );
+        assert_formatted_display(&AE::General("g1".to_string()), "g1");
+        assert_formatted_display(&AE::GenWithCode(111), "Response: code=111");
+        assert_formatted_display(
+            &AE::GenWithCodeAndErr(112, Box::new(addr_parse_err.clone())),
+            "Response: code=112, err=AddrParseError(Ip)",
+        );
+        assert_formatted_display(
+            &AE::GenWithCodeAndMsg(113, "gwcam1".to_string()),
+            "Response: code=113, msg=gwcam1",
+        );
+        assert_formatted_display(
+            &AE::GenWithCodeAndMsgAndErr(
+                114,
+                "gwcamae1".to_string(),
+                Box::new(addr_parse_err.clone()),
+            ),
+            "Response: code=114, msg=gwcamae1, err=AddrParseError(Ip)",
+        );
+        assert_formatted_display(
+            &AE::GenWithErr(Box::new(addr_parse_err.clone())),
+            "invalid IP address syntax",
+        );
+        assert_formatted_display(
+            &AE::GenWithMsgAndErr("gwmae1".to_string(), Box::new(addr_parse_err.clone())),
+            "Error: msg=gwmae1, err=AddrParseError(Ip)",
+        );
+        assert_formatted_display(
+            &AE::Io(io::Error::new(io::ErrorKind::Other, "ioe1")),
+            "ioe1",
+        );
+        assert_formatted_display(
+            &AE::IoWithMsg(
+                "iwm1".to_string(),
+                io::Error::new(io::ErrorKind::Other, "ioe2"),
+            ),
+            "IO Error: msg=iwm1, err=Custom { kind: Other, error: \"ioe2\" }",
+        );
+        assert_formatted_display(
+            &AE::Tls(rustls::Error::General("re1".to_string())),
+            "unexpected error: re1",
+        );
+        assert_formatted_display(&AE::WouldBlock, "WouldBlock Error");
+        assert_formatted_display(&AE::StreamEOF, "StreamEOF Error");
     }
 
     #[test]

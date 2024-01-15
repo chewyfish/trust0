@@ -279,7 +279,10 @@ pub trait ServerVisitor: Send {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use mockall::mock;
+    use crate::net::stream_utils;
+    use crate::net::tcp_server::conn_std::tests::MockConnVisit;
+    use mockall::{mock, predicate};
+    use std::sync::mpsc;
 
     // mocks
     // =====
@@ -296,6 +299,124 @@ pub mod tests {
 
     // tests
     // ====
+
+    #[test]
+    fn server_new() {
+        let server = Server::new(Arc::new(Mutex::new(MockServerVisit::new())), 1234);
+
+        assert_eq!(server._server_port, 1234);
+        assert!(server.tcp_listener.is_none());
+        assert_eq!(server.listen_addr, "[::]:1234");
+        assert!(!server.polling);
+        assert!(!server.closing);
+        assert!(!server.closed);
+    }
+
+    #[test]
+    fn server_bind_listener() {
+        let mut visitor = MockServerVisit::new();
+        visitor
+            .expect_on_listening()
+            .times(1)
+            .return_once(|| Ok(()));
+        let mut server = Server {
+            visitor: Arc::new(Mutex::new(visitor)),
+            _server_port: 1234,
+            tcp_listener: None,
+            listen_addr: "127.0.0.1:0".to_string(),
+            polling: false,
+            closing: false,
+            closed: false,
+        };
+
+        if let Err(err) = server.bind_listener() {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        assert!(server.tcp_listener.is_some());
+        assert!(!server.polling);
+        assert!(!server.closing);
+        assert!(!server.closed);
+    }
+
+    #[test]
+    fn server_poll_new_connections_when_not_listening() {
+        let mut server = Server {
+            visitor: Arc::new(Mutex::new(MockServerVisit::new())),
+            _server_port: 1234,
+            tcp_listener: None,
+            listen_addr: "127.0.0.1:0".to_string(),
+            polling: false,
+            closing: false,
+            closed: false,
+        };
+
+        if let Ok(()) = server.poll_new_connections() {
+            panic!("Unexpected successful result");
+        }
+
+        assert!(server.tcp_listener.is_none());
+        assert!(!server.polling);
+        assert!(!server.closing);
+        assert!(!server.closed);
+    }
+
+    #[test]
+    fn server_poll_new_connections_when_already_polling() {
+        let tcp_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        tcp_listener.set_nonblocking(true).unwrap();
+        let mut server = Server {
+            visitor: Arc::new(Mutex::new(MockServerVisit::new())),
+            _server_port: 1234,
+            tcp_listener: Some(tcp_listener),
+            listen_addr: "127.0.0.1:0".to_string(),
+            polling: true,
+            closing: false,
+            closed: false,
+        };
+
+        if let Ok(()) = server.poll_new_connections() {
+            panic!("Unexpected successful result");
+        }
+
+        assert!(server.tcp_listener.is_some());
+        assert!(server.polling);
+        assert!(!server.closing);
+        assert!(!server.closed);
+    }
+
+    #[test]
+    fn server_poll_new_connections_when_2nd_iteration_shutdown_request() {
+        let tcp_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        tcp_listener.set_nonblocking(true).unwrap();
+        let mut visitor = MockServerVisit::new();
+        visitor
+            .expect_get_shutdown_requested()
+            .times(1)
+            .return_once(|| false);
+        visitor
+            .expect_get_shutdown_requested()
+            .times(1)
+            .return_once(|| true);
+        let mut server = Server {
+            visitor: Arc::new(Mutex::new(visitor)),
+            _server_port: 1234,
+            tcp_listener: Some(tcp_listener),
+            listen_addr: "127.0.0.1:0".to_string(),
+            polling: false,
+            closing: false,
+            closed: false,
+        };
+
+        if let Err(err) = server.poll_new_connections() {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        assert!(server.tcp_listener.is_none());
+        assert!(!server.polling);
+        assert!(server.closing);
+        assert!(server.closed);
+    }
 
     #[test]
     fn server_assert_listening_when_not_listening() {
@@ -369,5 +490,43 @@ pub mod tests {
         server.stop_poller();
 
         assert_eq!(server.polling, false);
+    }
+
+    #[test]
+    fn server_spawn_connection_processor_when_no_errors() {
+        let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
+        let mut stream_reader = stream_utils::tests::MockStreamReader::new();
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|_| Ok(100));
+        let mut conn_visitor = MockConnVisit::new();
+        conn_visitor
+            .expect_on_connection_read()
+            .times(1)
+            .with(predicate::always())
+            .return_once(|_| Err(AppError::StreamEOF));
+        conn_visitor
+            .expect_on_polling_cycle()
+            .times(1)
+            .return_once(|| Err(AppError::StreamEOF));
+        conn_visitor
+            .expect_on_shutdown()
+            .times(1)
+            .return_once(|| Ok(()));
+        let event_channel = mpsc::channel();
+        let conn = conn_std::tests::create_connection(
+            Box::new(conn_visitor),
+            Some(
+                stream_utils::clone_std_tcp_stream(&connected_tcp_stream.server_stream.0).unwrap(),
+            ),
+            Box::new(stream_reader),
+            Box::new(stream_utils::tests::MockStreamWriter::new()),
+            event_channel,
+            false,
+        );
+
+        Server::spawn_connection_processor(conn);
     }
 }
