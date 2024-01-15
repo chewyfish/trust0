@@ -67,8 +67,6 @@ impl client_std::ClientVisitor for ClientVisitor {
         &mut self,
         tls_conn: conn_std::TlsClientConnection,
     ) -> Result<conn_std::Connection, AppError> {
-        // TODO
-        // authenticate_mfa
         let conn_visitor =
             ServerConnVisitor::new(self.app_config.clone(), self.service_mgr.clone())?;
         let connection = conn_std::Connection::new(Box::new(conn_visitor), tls_conn)?;
