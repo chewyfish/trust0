@@ -328,7 +328,36 @@ pub trait ServerVisitor: Send {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use mockall::mock;
+    use crate::crypto::alpn;
+    use crate::crypto::file::{load_certificates, load_private_key};
+    use crate::net::tls_client::client_std;
+    use crate::net::tls_server::conn_std::Connection;
+    use log::error;
+    use mockall::{mock, predicate};
+    use pki_types::{
+        PrivateKeyDer, PrivatePkcs1KeyDer, PrivatePkcs8KeyDer, PrivateSec1KeyDer, ServerName,
+    };
+    use rustls::crypto::CryptoProvider;
+    use rustls::server::WebPkiClientVerifier;
+    use rustls::{ClientConfig, ServerConfig};
+    use std::net::{TcpStream, ToSocketAddrs};
+    use std::path::PathBuf;
+
+    const CERTFILE_ROOTCA_PATHPARTS: [&str; 3] = [
+        env!("CARGO_MANIFEST_DIR"),
+        "testdata",
+        "root-ca.local.crt.pem",
+    ];
+    const CERTFILE_GATEWAY_PATHPARTS: [&str; 3] = [
+        env!("CARGO_MANIFEST_DIR"),
+        "testdata",
+        "gateway.local.crt.pem",
+    ];
+    const KEYFILE_GATEWAY_PATHPARTS: [&str; 3] = [
+        env!("CARGO_MANIFEST_DIR"),
+        "testdata",
+        "gateway.local.key.pem",
+    ];
 
     // mocks
     // =====
@@ -344,8 +373,307 @@ pub mod tests {
         }
     }
 
+    // utils
+    // =====
+
+    pub fn create_tls_server_config() -> Result<ServerConfig, anyhow::Error> {
+        let rootca_cert_file: PathBuf = CERTFILE_ROOTCA_PATHPARTS.iter().collect();
+        let rootca_cert = load_certificates(rootca_cert_file.to_str().unwrap().to_string())?;
+        let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
+        let gateway_cert = load_certificates(gateway_cert_file.to_str().unwrap().to_string())?;
+        let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
+        let gateway_key = load_private_key(gateway_key_file.to_str().unwrap().to_string())?;
+        let cipher_suites: Vec<rustls::SupportedCipherSuite> =
+            rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
+        let protocol_versions: Vec<&'static rustls::SupportedProtocolVersion> =
+            rustls::ALL_VERSIONS.to_vec();
+        let alpn_protocols = vec![alpn::Protocol::ControlPlane.to_string().into_bytes()];
+
+        let mut auth_root_certs = rustls::RootCertStore::empty();
+        for auth_root_cert in rootca_cert {
+            auth_root_certs.add(auth_root_cert).unwrap();
+        }
+
+        let mut tls_server_config = ServerConfig::builder_with_provider(
+            CryptoProvider {
+                cipher_suites,
+                ..rustls::crypto::ring::default_provider()
+            }
+            .into(),
+        )
+        .with_protocol_versions(protocol_versions.as_slice())
+        .expect("Inconsistent cipher-suites/versions specified")
+        .with_client_cert_verifier(
+            WebPkiClientVerifier::builder(Arc::new(auth_root_certs.clone()))
+                .with_crls(vec![])
+                .build()
+                .unwrap(),
+        )
+        .with_single_cert(
+            gateway_cert.clone(),
+            match &gateway_key {
+                PrivateKeyDer::Pkcs1(key_der) => {
+                    Ok(PrivatePkcs1KeyDer::from(key_der.secret_pkcs1_der().to_vec()).into())
+                }
+                PrivateKeyDer::Pkcs8(key_der) => {
+                    Ok(PrivatePkcs8KeyDer::from(key_der.secret_pkcs8_der().to_vec()).into())
+                }
+                PrivateKeyDer::Sec1(key_der) => {
+                    Ok(PrivateSec1KeyDer::from(key_der.secret_sec1_der().to_vec()).into())
+                }
+                _ => Err(AppError::General(format!(
+                    "Unsupported key type: key={:?}",
+                    &gateway_key
+                ))),
+            }?,
+        )
+        .expect("Bad certificates/private key");
+        tls_server_config.key_log = Arc::new(rustls::KeyLogFile::new());
+        tls_server_config.alpn_protocols = alpn_protocols;
+
+        Ok(tls_server_config)
+    }
+
+    fn connect_to_tls_server(
+        tls_client_config: ClientConfig,
+        server_host: &str,
+        server_port: u16,
+    ) -> Result<(), anyhow::Error> {
+        let server_name = ServerName::try_from(server_host.to_string())?;
+        let server_addr = (server_host, server_port)
+            .to_socket_addrs()?
+            .next()
+            .unwrap();
+        let mut tls_cli_conn =
+            rustls::ClientConnection::new(Arc::new(tls_client_config), server_name)?;
+        let mut tcp_stream = TcpStream::connect(server_addr)?;
+        let _ = tls_cli_conn.complete_io(&mut tcp_stream)?;
+        Ok(())
+    }
+
     // tests
     // ====
+    #[test]
+    fn server_new() {
+        let server = Server::new(Arc::new(Mutex::new(MockServerVisit::new())), 1234);
+
+        assert_eq!(server._server_port, 1234);
+        assert!(server.tcp_listener.is_none());
+        assert_eq!(server.listen_addr, "[::]:1234");
+        assert!(!server.polling);
+        assert!(!server.closing);
+        assert!(!server.closed);
+    }
+
+    #[test]
+    fn server_bind_listener() {
+        let mut visitor = MockServerVisit::new();
+        visitor
+            .expect_on_listening()
+            .times(1)
+            .return_once(|| Ok(()));
+        let mut server = Server {
+            visitor: Arc::new(Mutex::new(visitor)),
+            _server_port: 1234,
+            tcp_listener: None,
+            listen_addr: "127.0.0.1:0".to_string(),
+            polling: false,
+            closing: false,
+            closed: false,
+        };
+
+        if let Err(err) = server.bind_listener() {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        assert!(server.tcp_listener.is_some());
+        assert!(!server.polling);
+        assert!(!server.closing);
+        assert!(!server.closed);
+    }
+
+    #[test]
+    fn server_poll_new_connections_when_not_listening() {
+        let mut server = Server {
+            visitor: Arc::new(Mutex::new(MockServerVisit::new())),
+            _server_port: 1234,
+            tcp_listener: None,
+            listen_addr: "127.0.0.1:0".to_string(),
+            polling: false,
+            closing: false,
+            closed: false,
+        };
+
+        if let Ok(()) = server.poll_new_connections() {
+            panic!("Unexpected successful result");
+        }
+
+        assert!(server.tcp_listener.is_none());
+        assert!(!server.polling);
+        assert!(!server.closing);
+        assert!(!server.closed);
+    }
+
+    #[test]
+    fn server_poll_new_connections_when_already_polling() {
+        let tcp_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        tcp_listener.set_nonblocking(true).unwrap();
+        let mut server = Server {
+            visitor: Arc::new(Mutex::new(MockServerVisit::new())),
+            _server_port: 1234,
+            tcp_listener: Some(tcp_listener),
+            listen_addr: "127.0.0.1:0".to_string(),
+            polling: true,
+            closing: false,
+            closed: false,
+        };
+
+        if let Ok(()) = server.poll_new_connections() {
+            panic!("Unexpected successful result");
+        }
+
+        assert!(server.tcp_listener.is_some());
+        assert!(server.polling);
+        assert!(!server.closing);
+        assert!(!server.closed);
+    }
+
+    #[test]
+    fn server_poll_new_connections_when_2nd_iteration_shutdown_request() {
+        let tcp_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        tcp_listener.set_nonblocking(true).unwrap();
+        let mut visitor = MockServerVisit::new();
+        visitor
+            .expect_get_shutdown_requested()
+            .times(1)
+            .return_once(|| false);
+        visitor
+            .expect_get_shutdown_requested()
+            .times(1)
+            .return_once(|| true);
+        let mut server = Server {
+            visitor: Arc::new(Mutex::new(visitor)),
+            _server_port: 1234,
+            tcp_listener: Some(tcp_listener),
+            listen_addr: "127.0.0.1:0".to_string(),
+            polling: false,
+            closing: false,
+            closed: false,
+        };
+
+        if let Err(err) = server.poll_new_connections() {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        assert!(server.tcp_listener.is_none());
+        assert!(!server.polling);
+        assert!(server.closing);
+        assert!(server.closed);
+    }
+
+    #[test]
+    fn server_poll_new_connections_when_connection_request() {
+        let tcp_listener = TcpListener::bind("localhost:0").unwrap();
+        tcp_listener.set_nonblocking(true).unwrap();
+        let server_port = tcp_listener.local_addr().unwrap().port();
+        let conn_created = Arc::new(Mutex::new(false));
+        let conn_handshaking = Arc::new(Mutex::new(false));
+        let conn_accepted = Arc::new(Mutex::new(false));
+        let shutdown = Arc::new(Mutex::new(false));
+
+        struct TestServerVisitor {
+            conn_created: Arc<Mutex<bool>>,
+            conn_handshaking: Arc<Mutex<bool>>,
+            conn_accepted: Arc<Mutex<bool>>,
+            shutdown: Arc<Mutex<bool>>,
+        }
+        impl ServerVisitor for TestServerVisitor {
+            fn create_client_conn(
+                &mut self,
+                tls_conn: TlsServerConnection,
+            ) -> Result<Connection, AppError> {
+                let mut conn_visitor = conn_std::tests::MockConnVisit::new();
+                conn_visitor
+                    .expect_set_event_channel_sender()
+                    .with(predicate::always())
+                    .return_once(|_| Ok(()));
+                conn_visitor.expect_on_connected().return_once(|| Ok(()));
+                let conn = Connection::new(
+                    Box::new(conn_visitor),
+                    tls_conn,
+                    alpn::Protocol::ControlPlane,
+                )?;
+                *self.conn_created.lock().unwrap() = true;
+                println!("CCC");
+                Ok(conn)
+            }
+            fn on_tls_handshaking(
+                &mut self,
+                _accepted: &Accepted,
+            ) -> Result<ServerConfig, AppError> {
+                let config = create_tls_server_config().map_err(|err| {
+                    AppError::General(format!("TLS handshaking error: err={:?}", &err))
+                })?;
+                *self.conn_handshaking.lock().unwrap() = true;
+                println!("OTH");
+                Ok(config)
+            }
+            fn on_conn_accepted(&mut self, connection: Connection) -> Result<(), AppError> {
+                Server::spawn_connection_processor(connection);
+                *self.conn_accepted.lock().unwrap() = true;
+                println!("OCA");
+                Ok(())
+            }
+            fn get_shutdown_requested(&self) -> bool {
+                *self.shutdown.lock().unwrap()
+            }
+        }
+
+        let visitor = Arc::new(Mutex::new(TestServerVisitor {
+            conn_created: conn_created.clone(),
+            conn_handshaking: conn_handshaking.clone(),
+            conn_accepted: conn_accepted.clone(),
+            shutdown: shutdown.clone(),
+        }));
+
+        let server = Arc::new(Mutex::new(Server {
+            visitor: visitor.clone(),
+            _server_port: 1234,
+            tcp_listener: Some(tcp_listener),
+            listen_addr: "127.0.0.1:0".to_string(),
+            polling: false,
+            closing: false,
+            closed: false,
+        }));
+        let server_copy = server.clone();
+
+        let _ = thread::spawn(move || {
+            if let Err(err) = server_copy.lock().unwrap().poll_new_connections() {
+                error!("Unexpected result: err={:?}", &err);
+            }
+        });
+
+        thread::sleep(Duration::from_millis(100));
+        connect_to_tls_server(
+            client_std::tests::create_tls_client_config().unwrap(),
+            "localhost",
+            server_port,
+        )
+        .unwrap();
+        thread::sleep(Duration::from_millis(100));
+
+        assert!(*conn_created.lock().unwrap());
+        assert!(*conn_handshaking.lock().unwrap());
+        assert!(*conn_accepted.lock().unwrap());
+
+        *shutdown.lock().unwrap() = true;
+        thread::sleep(Duration::from_millis(100));
+
+        assert!(server.lock().unwrap().tcp_listener.is_none());
+        assert!(!server.lock().unwrap().polling);
+        assert!(server.lock().unwrap().closing);
+        assert!(server.lock().unwrap().closed);
+    }
 
     #[test]
     fn server_assert_listening_when_not_listening() {
