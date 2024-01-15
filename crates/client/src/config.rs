@@ -289,17 +289,28 @@ pub mod tests {
     pub fn create_app_config(
         shell_output_writer: Option<ShellOutputWriter>,
     ) -> Result<AppConfig, AppError> {
+        let rootca_cert_file: PathBuf = CERTFILE_ROOT_CA_PATHPARTS.iter().collect();
+        let rootca_cert = load_certificates(rootca_cert_file.to_str().unwrap().to_string())?;
         let client_pki_files: (PathBuf, PathBuf) = (
             CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect(),
             KEYFILE_CLIENT_UID100_PATHPARTS.iter().collect(),
         );
         let client_cert = load_certificates(client_pki_files.0.to_str().unwrap().to_string())?;
         let client_key = load_private_key(client_pki_files.1.to_str().unwrap().to_string())?;
-        let auth_root_certs = RootCertStore::empty();
         let cipher_suites: Vec<SupportedCipherSuite> =
             rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
         let protocol_versions: Vec<&'static rustls::SupportedProtocolVersion> =
             rustls::ALL_VERSIONS.to_vec();
+
+        let mut auth_root_certs = RootCertStore::empty();
+        for ca_root_cert in rootca_cert {
+            auth_root_certs.add(ca_root_cert).map_err(|err| {
+                AppError::GenWithMsgAndErr(
+                    "Error adding CA root cert".to_string(),
+                    Box::new(err.clone()),
+                )
+            })?;
+        }
 
         let tls_client_config = rustls::ClientConfig::builder_with_provider(
             CryptoProvider {

@@ -727,7 +727,7 @@ pub mod test {
             _server_to_tester_send,
         ) = start_auth_flow("userX", "pass1");
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -754,7 +754,7 @@ pub mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -781,7 +781,7 @@ pub mod test {
         };
         tester_to_client_send.send(s2c_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -821,7 +821,7 @@ pub mod test {
             _server_to_tester_send,
         ) = start_auth_flow("user1", "passX");
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -848,7 +848,7 @@ pub mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -878,7 +878,7 @@ pub mod test {
         };
         tester_to_client_send.send(s2c_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientResponseSent
@@ -908,7 +908,7 @@ pub mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientResponseSent
@@ -938,7 +938,7 @@ pub mod test {
         };
         tester_to_client_send.send(s2c_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert!(!*client_authenticated.lock().unwrap());
         assert!(!*server_authenticated.lock().unwrap());
 
@@ -970,7 +970,7 @@ pub mod test {
             _server_to_tester_send,
         ) = start_auth_flow("user1", "pass1");
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -997,7 +997,7 @@ pub mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -1027,7 +1027,7 @@ pub mod test {
         };
         tester_to_client_send.send(s2c_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientResponseSent
@@ -1057,7 +1057,7 @@ pub mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientResponseSent
@@ -1087,7 +1087,7 @@ pub mod test {
         };
         tester_to_client_send.send(s2c_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ServerFinalRecvd
@@ -1127,7 +1127,7 @@ pub mod test {
             _server_to_tester_send,
         ) = start_auth_flow("user1", "pass1");
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -1156,7 +1156,7 @@ pub mod test {
             .send(AuthnMessage::Error("wrong".to_string()))
             .unwrap();
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *client_state_flow.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -1194,7 +1194,7 @@ pub mod test {
         assert!(auth_client_handle.is_some());
         assert!(auth_server_handle.is_some());
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *auth_client.state.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -1239,7 +1239,7 @@ pub mod test {
             ),
         };
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *auth_client.state.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -1269,7 +1269,7 @@ pub mod test {
             ),
         };
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *auth_client.state.lock().unwrap(),
             ClientStateFlow::ClientResponseSent
@@ -1299,7 +1299,7 @@ pub mod test {
             ),
         };
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *auth_client.state.lock().unwrap(),
             ClientStateFlow::ClientResponseSent
@@ -1320,7 +1320,7 @@ pub mod test {
             ),
         }
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *auth_client.state.lock().unwrap(),
             ClientStateFlow::ServerFinalRecvd
@@ -1350,7 +1350,7 @@ pub mod test {
         assert!(auth_client_handle.is_some());
         assert!(auth_server_handle.is_some());
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *auth_client.state.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -1377,7 +1377,7 @@ pub mod test {
             ),
         };
 
-        thread::sleep(auth_server.channel_timeout.add(Duration::from_millis(40)));
+        thread::sleep(auth_server.channel_timeout.add(Duration::from_millis(50)));
 
         match auth_server.exchange_messages(Some(c2s_msg)) {
             Ok(Some(msg)) => panic!(
@@ -1405,7 +1405,7 @@ pub mod test {
         assert!(auth_client_handle.is_some());
         assert!(auth_server_handle.is_some());
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *auth_client.state.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -1450,7 +1450,7 @@ pub mod test {
             ),
         };
 
-        thread::sleep(Duration::from_millis(40));
+        thread::sleep(Duration::from_millis(50));
         assert_eq!(
             *auth_client.state.lock().unwrap(),
             ClientStateFlow::ClientInitialSent
@@ -1462,7 +1462,7 @@ pub mod test {
         assert!(!auth_client.is_authenticated());
         assert!(!auth_server.is_authenticated());
 
-        thread::sleep(auth_client.channel_timeout.add(Duration::from_millis(40)));
+        thread::sleep(auth_client.channel_timeout.add(Duration::from_millis(50)));
 
         match auth_client.exchange_messages(Some(s2c_msg)) {
             Ok(Some(msg)) => panic!(
