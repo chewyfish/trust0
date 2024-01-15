@@ -168,6 +168,17 @@ mod tests {
     use trust0_common::testutils::{self, ChannelWriter};
 
     #[test]
+    fn srvconnvis_new() {
+        match ServerConnVisitor::new(
+            Arc::new(config::tests::create_app_config(None).unwrap()),
+            Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new())),
+        ) {
+            Ok(server_conn_visitor) => assert!(server_conn_visitor.event_channel_sender.is_none()),
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
+    }
+
+    #[test]
     fn srvconnvis_on_connection_read_when_simple_ping_response() {
         let app_config = config::tests::create_app_config(None).unwrap();
         let service_mgr = service::manager::tests::MockSvcMgr::new();
