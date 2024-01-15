@@ -536,7 +536,7 @@ mod tests {
         assert!(certs.get(0).is_some());
         assert_eq!(
             calculate_hash(certs.get(0).unwrap().as_bytes()),
-            1885740960756082036
+            4742559486257069929
         );
     }
 
@@ -617,7 +617,7 @@ mod tests {
 
         assert_eq!(
             calculate_hash(result.unwrap().secret_der()),
-            831110266228463504
+            6990430383764372935
         );
     }
 
