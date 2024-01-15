@@ -18,6 +18,15 @@ ROOT_CA__PKI_CRL_CONF_FILE=${TESTDATA_BUILD_DIR}/${ROOT_CA__PKI_NAME}.crl.cnf
 ROOT_CA__PKI_DATABASE_FILE=${TESTDATA_BUILD_DIR}/ca-index.txt
 ROOT_CA__PKI_CRLNUMBER_FILE=${TESTDATA_BUILD_DIR}/ca-crlnumber.txt
 
+# Params - Gateway
+
+GATEWAY__PKI_NAME=gateway.local
+GATEWAY__PKI_SUBJ_COMMONNAME=${GATEWAY__PKI_NAME}
+GATEWAY__PKI_SAN_DNS1=localhost
+GATEWAY__PKI_KEY_FILE=${TESTDATA_BUILD_DIR}/${GATEWAY__PKI_NAME}.key.pem
+GATEWAY__PKI_CSR_FILE=${TESTDATA_BUILD_DIR}/${GATEWAY__PKI_NAME}.csr
+GATEWAY__PKI_CERT_FILE=${TESTDATA_BUILD_DIR}/${GATEWAY__PKI_NAME}.crt.pem
+
 # Params - Client
 
 CLIENT0__PKI_NAME=client0.local
@@ -40,7 +49,7 @@ CRL_0_1__PKI_FILE=${TESTDATA_BUILD_DIR}/revoked-crts-0-1.crl.pem
 
 # Targets
 
-.PHONY: default check-prereqs clean-all root-ca-pki client-pki crl-files
+.PHONY: default check-prereqs clean-all root-ca-pki gateway-pki client-pki crl-files
 
 default:
 
@@ -52,6 +61,9 @@ clean-all:
 	rm -f ${ROOT_CA__PKI_CRL_CONF_FILE}
 	rm -f ${ROOT_CA__PKI_DATABASE_FILE}
 	rm -f ${ROOT_CA__PKI_CRLNUMBER_FILE}
+	rm -f ${GATEWAY__PKI_KEY_FILE}
+	rm -f ${GATEWAY__PKI_CSR_FILE}
+	rm -f ${GATEWAY__PKI_CERT_FILE}
 	rm -f ${CLIENT0__PKI_KEY_FILE}
 	rm -f ${CLIENT0__PKI_CSR_FILE}
 	rm -f ${CLIENT0__PKI_CERT_FILE}
@@ -84,6 +96,15 @@ ${ROOT_CA__PKI_CERT_CONF_FILE}: ${TESTDATA_BUILD_DIRFILE}
 		extendedKeyUsage = critical, serverAuth, clientAuth
 		basicConstraints = CA:true
 		keyUsage = cRLSign, keyCertSign, digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment, keyAgreement, keyCertSign, cRLSign
+		[ v3_gateway ]
+		basicConstraints = critical,CA:false
+		keyUsage = cRLSign, keyCertSign, digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment, keyAgreement, keyCertSign, cRLSign
+		extendedKeyUsage = critical, clientAuth, serverAuth
+		subjectKeyIdentifier = hash
+		authorityKeyIdentifier = keyid:always,issuer:always
+		subjectAltName = @gateway_alt_names
+		[ gateway_alt_names ]
+		DNS.1 = ${GATEWAY__PKI_SAN_DNS1}
 		[ v3_client ]
 		basicConstraints = critical,CA:false
 		keyUsage = nonRepudiation, digitalSignature
@@ -117,6 +138,28 @@ ${ROOT_CA__PKI_CRL_CONF_FILE}: ${TESTDATA_BUILD_DIRFILE}
 root-ca-pki: ${ROOT_CA__PKI_CERT_FILE} ${ROOT_CA__PKI_CERT_CONF_FILE} ${ROOT_CA__PKI_CRL_CONF_FILE}
 	@echo "Finished root-ca"
 	@echo "################"
+	@echo ""
+
+# Targets - Gateway
+
+${GATEWAY__PKI_KEY_FILE}: ${TESTDATA_BUILD_DIRFILE}
+	@echo "Creating $@"
+	cd ${TESTDATA_BUILD_DIR} && ${OPENSSL_CMD} genrsa -out ${GATEWAY__PKI_KEY_FILE} 4096
+	@echo ""
+
+${GATEWAY__PKI_CSR_FILE}: ${TESTDATA_BUILD_DIRFILE} ${GATEWAY__PKI_KEY_FILE}
+	@echo "Creating $@"
+	cd ${TESTDATA_BUILD_DIR} && ${OPENSSL_CMD} req -key ${GATEWAY__PKI_KEY_FILE} -subj "/CN=${GATEWAY__PKI_SUBJ_COMMONNAME}" -new -out ${GATEWAY__PKI_CSR_FILE}
+	@echo ""
+
+${GATEWAY__PKI_CERT_FILE}: ${TESTDATA_BUILD_DIRFILE} ${ROOT_CA__PKI_CERT_FILE} ${ROOT_CA__PKI_KEY_FILE} ${ROOT_CA__PKI_CERT_CONF_FILE} ${GATEWAY__PKI_CSR_FILE}
+	@echo "Creating $@"
+	cd ${TESTDATA_BUILD_DIR} && ${OPENSSL_CMD} x509 -req -in ${GATEWAY__PKI_CSR_FILE} -out ${GATEWAY__PKI_CERT_FILE} -CA ${ROOT_CA__PKI_CERT_FILE} -CAkey ${ROOT_CA__PKI_KEY_FILE} -sha256 -days 3000 -set_serial 300 -extfile ${ROOT_CA__PKI_CERT_CONF_FILE} -extensions v3_gateway  -subj "/CN=${GATEWAY__PKI_SUBJ_COMMONNAME}"
+	@echo ""
+
+gateway-pki: root-ca-pki ${GATEWAY__PKI_CERT_FILE}
+	@echo "Finished gateway-pki"
+	@echo "#######################"
 	@echo ""
 
 # Targets - Client
