@@ -311,7 +311,8 @@ pub mod tests {
             }
         }
 
-        assert_eq!(actual_lines.len(), 0);
+        assert_eq!(actual_lines.len(), 1);
+        assert!(actual_lines.get(0).unwrap().is_empty());
     }
 
     #[test]
