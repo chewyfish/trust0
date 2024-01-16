@@ -48,12 +48,23 @@ pub trait GatewayServiceProxyVisitor: server_std::ServerVisitor + Send {
 /// Unit tests
 #[cfg(test)]
 pub mod tests {
-
     use super::*;
     use mockall::mock;
-    use rustls::server::Accepted;
+    use pki_types::{PrivateKeyDer, PrivatePkcs1KeyDer, PrivatePkcs8KeyDer, PrivateSec1KeyDer};
+    use rustls::crypto::CryptoProvider;
+    use rustls::server::{Accepted, WebPkiClientVerifier};
     use rustls::ServerConfig;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use trust0_common::crypto::file::{load_certificates, load_private_key};
     use trust0_common::net::tls_server::{conn_std, server_std};
+
+    const CERTFILE_ROOTCA_PATHPARTS: [&str; 3] =
+        [env!("CARGO_MANIFEST_DIR"), "testdata", "root-ca.crt.pem"];
+    const CERTFILE_GATEWAY_PATHPARTS: [&str; 3] =
+        [env!("CARGO_MANIFEST_DIR"), "testdata", "gateway.crt.pem"];
+    const KEYFILE_GATEWAY_PATHPARTS: [&str; 3] =
+        [env!("CARGO_MANIFEST_DIR"), "testdata", "gateway.key.pem"];
 
     // mocks
     // =====
@@ -73,5 +84,67 @@ pub mod tests {
             fn shutdown_connections(&mut self, proxy_tasks_sender: Sender<ProxyExecutorEvent>, user_id: Option<u64>) -> Result<(), AppError>;
             fn remove_proxy_for_key(&mut self, proxy_key: &str) -> bool;
         }
+    }
+
+    // utils
+    // =====
+
+    pub fn create_tls_server_config(
+        alpn_protocols: Vec<Vec<u8>>,
+    ) -> Result<ServerConfig, anyhow::Error> {
+        let rootca_cert_file: PathBuf = CERTFILE_ROOTCA_PATHPARTS.iter().collect();
+        let rootca_cert = load_certificates(rootca_cert_file.to_str().unwrap().to_string())?;
+        let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
+        let gateway_cert = load_certificates(gateway_cert_file.to_str().unwrap().to_string())?;
+        let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
+        let gateway_key = load_private_key(gateway_key_file.to_str().unwrap().to_string())?;
+        let cipher_suites: Vec<rustls::SupportedCipherSuite> =
+            rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
+        let protocol_versions: Vec<&'static rustls::SupportedProtocolVersion> =
+            rustls::ALL_VERSIONS.to_vec();
+
+        let mut auth_root_certs = rustls::RootCertStore::empty();
+        for auth_root_cert in rootca_cert {
+            auth_root_certs.add(auth_root_cert).unwrap();
+        }
+
+        let mut tls_server_config = ServerConfig::builder_with_provider(
+            CryptoProvider {
+                cipher_suites,
+                ..rustls::crypto::ring::default_provider()
+            }
+            .into(),
+        )
+        .with_protocol_versions(protocol_versions.as_slice())
+        .expect("Inconsistent cipher-suites/versions specified")
+        .with_client_cert_verifier(
+            WebPkiClientVerifier::builder(Arc::new(auth_root_certs.clone()))
+                .with_crls(vec![])
+                .build()
+                .unwrap(),
+        )
+        .with_single_cert(
+            gateway_cert.clone(),
+            match &gateway_key {
+                PrivateKeyDer::Pkcs1(key_der) => {
+                    Ok(PrivatePkcs1KeyDer::from(key_der.secret_pkcs1_der().to_vec()).into())
+                }
+                PrivateKeyDer::Pkcs8(key_der) => {
+                    Ok(PrivatePkcs8KeyDer::from(key_der.secret_pkcs8_der().to_vec()).into())
+                }
+                PrivateKeyDer::Sec1(key_der) => {
+                    Ok(PrivateSec1KeyDer::from(key_der.secret_sec1_der().to_vec()).into())
+                }
+                _ => Err(AppError::General(format!(
+                    "Unsupported key type: key={:?}",
+                    &gateway_key
+                ))),
+            }?,
+        )
+        .expect("Bad certificates/private key");
+        tls_server_config.key_log = Arc::new(rustls::KeyLogFile::new());
+        tls_server_config.alpn_protocols = alpn_protocols;
+
+        Ok(tls_server_config)
     }
 }

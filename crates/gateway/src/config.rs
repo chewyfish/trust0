@@ -637,7 +637,7 @@ pub mod tests {
             user_repo,
             gateway_service_host: None,
             gateway_service_ports: None,
-            gateway_service_reply_host: "".to_string(),
+            gateway_service_reply_host: "localhost".to_string(),
             mask_addresses: false,
             dns_client,
         })
