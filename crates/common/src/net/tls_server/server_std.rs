@@ -604,7 +604,6 @@ pub mod tests {
                     alpn::Protocol::ControlPlane,
                 )?;
                 *self.conn_created.lock().unwrap() = true;
-                println!("CCC");
                 Ok(conn)
             }
             fn on_tls_handshaking(
@@ -615,13 +614,11 @@ pub mod tests {
                     AppError::General(format!("TLS handshaking error: err={:?}", &err))
                 })?;
                 *self.conn_handshaking.lock().unwrap() = true;
-                println!("OTH");
                 Ok(config)
             }
             fn on_conn_accepted(&mut self, connection: Connection) -> Result<(), AppError> {
                 Server::spawn_connection_processor(connection);
                 *self.conn_accepted.lock().unwrap() = true;
-                println!("OCA");
                 Ok(())
             }
             fn get_shutdown_requested(&self) -> bool {

@@ -193,9 +193,22 @@ impl ClientConnVisitor {
         Ok(alpn_protocol)
     }
 
+    #[cfg(not(test))]
     /// User accessor
     pub fn get_user(&self) -> &Option<User> {
         &self.user
+    }
+
+    #[cfg(test)]
+    /// User mutator
+    pub fn set_user(&mut self, user: Option<User>) {
+        self.user = user;
+    }
+
+    #[cfg(test)]
+    /// Protocol mutator
+    pub fn set_protocol(&mut self, protocol: Option<alpn::Protocol>) {
+        self.protocol = protocol;
     }
 
     /// Parse TLS ALPN protocol
