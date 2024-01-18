@@ -3,17 +3,18 @@
 set -euo pipefail
 
 EXAMPLE_DIR=$(dirname "$0")
-NCAT_CMD=ncat
-TMUX_CMD=tmux
+GMAKE_CMD="gmake"
+NCAT_CMD="ncat"
+TMUX_CMD="tmux"
 
 # Build binaries/pki/db/...
 
 "${EXAMPLE_DIR}"/run-configure.sh
-make clean-all
-make gateway-server-pki
-make client-pki
-make trust0-gateway
-make trust0-client
+"${GMAKE_CMD}" clean-all
+"${GMAKE_CMD}" gateway-server-pki
+"${GMAKE_CMD}" client-pki
+"${GMAKE_CMD}" trust0-gateway
+"${GMAKE_CMD}" trust0-client
 
 # Run example in tmux session
 
@@ -30,9 +31,9 @@ source "${EXAMPLE_DIR}"/target/example.conf
 
 PS1='$ ' ${TMUX_CMD} new-session -s trust0-echo-udp-example \; \
   set -g mouse on \; \
-  send-keys '(clear && read -p "Step 1: Hit <Enter> to run trust0 gateway" && make run-trust0-gateway-nodeps EXECBIN_EXTRA_ARGS="'"${GATEWAY_BIN_ARGS}"'")' C-m \; \
+  send-keys '(clear && read -p "Step 1: Hit <Enter> to run trust0 gateway" && '"${GMAKE_CMD}"' run-trust0-gateway-nodeps EXECBIN_EXTRA_ARGS="'"${GATEWAY_BIN_ARGS}"'")' C-m \; \
   split-window -v -l 65% \; \
-  send-keys '(clear && echo "Step 2.1: Hit <Enter> to run trust0 client (after gateway is up)" && read -p "Step 2.2: Enter \"start -s echo-udp -p '"${ECHO_PROXY__PORT}"'\" (to start service proxy)" && make run-trust0-client-nodeps EXECBIN_EXTRA_ARGS="'"${CLIENT_BIN_ARGS}"'")' C-m \; \
+  send-keys '(clear && echo "Step 2.1: Hit <Enter> to run trust0 client (after gateway is up)" && read -p "Step 2.2: Enter \"start -s echo-udp -p '"${ECHO_PROXY__PORT}"'\" (to start service proxy)" && '"${GMAKE_CMD}"' run-trust0-client-nodeps EXECBIN_EXTRA_ARGS="'"${CLIENT_BIN_ARGS}"'")' C-m \; \
   split-window -v -l 43% \; \
   send-keys '(clear && read -p "Step 3: Hit <Enter> to run echo server" && '"${NCAT_CMD}"' -v -u -k -l -p '"${ECHO_SERVICE__PORT}"' --exec "/bin/cat")' C-m \; \
   split-window -h -l 65% \; \

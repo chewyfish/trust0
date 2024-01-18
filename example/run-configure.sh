@@ -15,6 +15,7 @@ DATASOURCE_INMEMDB_ROLE_FILE="${EXAMPLE_BUILD_DIR}/example-db-role.json"
 DATASOURCE_INMEMDB_USER_M4_FILE="${EXAMPLE_DIR}/example-db-user.json.m4"
 DATASOURCE_INMEMDB_USER_FILE="${EXAMPLE_BUILD_DIR}/example-db-user.json"
 
+GMAKE_CMD="gmake"
 CARGO_CMD="cargo"
 OPENSSL_CMD="openssl"
 M4_CMD="m4"
@@ -38,6 +39,7 @@ function check_command_exists() {
   fi
 }
 
+check_command_exists "${GMAKE_CMD}"
 check_command_exists "${CARGO_CMD}"
 check_command_exists "${OPENSSL_CMD}"
 check_command_exists "${M4_CMD}"
