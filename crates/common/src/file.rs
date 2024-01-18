@@ -467,7 +467,7 @@ mod reload_tests {
             reloading: reloading.clone(),
         };
 
-        <ReloadFileImpl as ReloadableFile>::spawn_reloader(file, Some(Duration::from_millis(10)));
+        <ReloadFileImpl as ReloadableFile>::spawn_reloader(file, Some(Duration::from_millis(1000)));
         *reloading.lock().unwrap() = false;
     }
 
@@ -484,7 +484,7 @@ mod reload_tests {
             reloading: reloading.clone(),
         };
 
-        <ReloadFileImpl as ReloadableFile>::spawn_reloader(file, Some(Duration::from_millis(10)));
+        <ReloadFileImpl as ReloadableFile>::spawn_reloader(file, Some(Duration::from_millis(1000)));
         *reloading.lock().unwrap() = false;
     }
 
