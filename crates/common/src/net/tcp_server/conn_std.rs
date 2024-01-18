@@ -113,6 +113,8 @@ impl Connection {
                     Ok(ConnectionEvent::Closing) => {
                         if let Err(err) = self.shutdown() {
                             error(&target!(), &format!("{:?}", err));
+                            self.closed = true;
+                            break;
                         }
                     }
 
@@ -209,16 +211,15 @@ impl Connection {
             return Ok(());
         }
 
-        self.tcp_stream
-            .as_ref()
-            .unwrap()
-            .shutdown(Shutdown::Both)
-            .map_err(|err| {
-                AppError::GenWithMsgAndErr(
+        match self.tcp_stream.as_ref().unwrap().shutdown(Shutdown::Both) {
+            Err(err) if io::ErrorKind::NotConnected != err.kind() => {
+                return Err(AppError::GenWithMsgAndErr(
                     "Error shutting down TCP connection".to_string(),
                     Box::new(err),
-                )
-            })?;
+                ))
+            }
+            _ => {}
+        }
 
         self.closed = true;
 
