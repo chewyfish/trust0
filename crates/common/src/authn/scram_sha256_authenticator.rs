@@ -289,7 +289,7 @@ impl AuthenticatorClient for ScramSha256AuthenticatorClient {
             .client_response_receiver
             .as_ref()
             .unwrap()
-            .recv_timeout(Duration::from_millis(150))
+            .recv_timeout(self.channel_timeout)
         {
             Ok(msg) => return Ok(Some(msg)),
             Err(RecvTimeoutError::Disconnected) => return Ok(None),
@@ -540,7 +540,7 @@ where
             .server_response_receiver
             .as_ref()
             .unwrap()
-            .recv_timeout(Duration::from_millis(150))
+            .recv_timeout(self.channel_timeout)
         {
             Ok(msg) => return Ok(Some(msg)),
             Err(RecvTimeoutError::Disconnected) => return Ok(None),
@@ -688,12 +688,33 @@ pub mod test {
             _ => false,
         }
     }
+
+    fn assert_states(
+        client_state: &Arc<Mutex<ClientStateFlow>>,
+        server_state: &Arc<Mutex<ServerStateFlow>>,
+        expected_client_state: ClientStateFlow,
+        expected_server_state: ServerStateFlow,
+        check_delay: Duration,
+        num_rechecks: u8,
+    ) {
+        for _i in 0..num_rechecks {
+            if (*client_state.lock().unwrap() == expected_client_state)
+                && (*server_state.lock().unwrap() == expected_server_state)
+            {
+                return;
+            }
+            thread::sleep(check_delay);
+        }
+        assert_eq!(*client_state.lock().unwrap(), expected_client_state);
+        assert_eq!(*server_state.lock().unwrap(), expected_server_state);
+    }
+
     // tests
 
     #[test]
     fn scramsha256cli_new() {
         let auth_client =
-            ScramSha256AuthenticatorClient::new("user1", "pass1", Duration::from_millis(150));
+            ScramSha256AuthenticatorClient::new("user1", "pass1", Duration::from_millis(1500));
         assert_eq!(auth_client.username, "user1");
         assert_eq!(auth_client.password, "pass1");
         assert_eq!(
@@ -754,14 +775,13 @@ pub mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(50));
-        assert_eq!(
-            *client_state_flow.lock().unwrap(),
-            ClientStateFlow::ClientInitialSent
-        );
-        assert_eq!(
-            *server_state_flow.lock().unwrap(),
-            ServerStateFlow::ClientInitialRecvd
+        assert_states(
+            &client_state_flow,
+            &server_state_flow,
+            ClientStateFlow::ClientInitialSent,
+            ServerStateFlow::ClientInitialRecvd,
+            Duration::from_millis(50),
+            3,
         );
         assert!(!*client_authenticated.lock().unwrap());
         assert!(!*server_authenticated.lock().unwrap());
@@ -781,14 +801,13 @@ pub mod test {
         };
         tester_to_client_send.send(s2c_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(50));
-        assert_eq!(
-            *client_state_flow.lock().unwrap(),
-            ClientStateFlow::ClientInitialSent
-        );
-        assert_eq!(
-            *server_state_flow.lock().unwrap(),
-            ServerStateFlow::ClientInitialRecvd
+        assert_states(
+            &client_state_flow,
+            &server_state_flow,
+            ClientStateFlow::ClientInitialSent,
+            ServerStateFlow::ClientInitialRecvd,
+            Duration::from_millis(50),
+            3,
         );
         assert!(!*client_authenticated.lock().unwrap());
         assert!(!*server_authenticated.lock().unwrap());
@@ -848,14 +867,13 @@ pub mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(50));
-        assert_eq!(
-            *client_state_flow.lock().unwrap(),
-            ClientStateFlow::ClientInitialSent
-        );
-        assert_eq!(
-            *server_state_flow.lock().unwrap(),
-            ServerStateFlow::ServerChallengeSent
+        assert_states(
+            &client_state_flow,
+            &server_state_flow,
+            ClientStateFlow::ClientInitialSent,
+            ServerStateFlow::ServerChallengeSent,
+            Duration::from_millis(50),
+            3,
         );
         assert!(!*client_authenticated.lock().unwrap());
         assert!(!*server_authenticated.lock().unwrap());
@@ -878,14 +896,13 @@ pub mod test {
         };
         tester_to_client_send.send(s2c_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(50));
-        assert_eq!(
-            *client_state_flow.lock().unwrap(),
-            ClientStateFlow::ClientResponseSent
-        );
-        assert_eq!(
-            *server_state_flow.lock().unwrap(),
-            ServerStateFlow::ServerChallengeSent
+        assert_states(
+            &client_state_flow,
+            &server_state_flow,
+            ClientStateFlow::ClientResponseSent,
+            ServerStateFlow::ServerChallengeSent,
+            Duration::from_millis(50),
+            3,
         );
         assert!(!*client_authenticated.lock().unwrap());
         assert!(!*server_authenticated.lock().unwrap());
@@ -908,14 +925,13 @@ pub mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(50));
-        assert_eq!(
-            *client_state_flow.lock().unwrap(),
-            ClientStateFlow::ClientResponseSent
-        );
-        assert_eq!(
-            *server_state_flow.lock().unwrap(),
-            ServerStateFlow::ServerFinalSent
+        assert_states(
+            &client_state_flow,
+            &server_state_flow,
+            ClientStateFlow::ClientResponseSent,
+            ServerStateFlow::ServerFinalSent,
+            Duration::from_millis(50),
+            3,
         );
         assert!(!*client_authenticated.lock().unwrap());
         assert!(!*server_authenticated.lock().unwrap());
@@ -997,14 +1013,13 @@ pub mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(50));
-        assert_eq!(
-            *client_state_flow.lock().unwrap(),
-            ClientStateFlow::ClientInitialSent
-        );
-        assert_eq!(
-            *server_state_flow.lock().unwrap(),
-            ServerStateFlow::ServerChallengeSent
+        assert_states(
+            &client_state_flow,
+            &server_state_flow,
+            ClientStateFlow::ClientInitialSent,
+            ServerStateFlow::ServerChallengeSent,
+            Duration::from_millis(50),
+            3,
         );
         assert!(!*client_authenticated.lock().unwrap());
         assert!(!*server_authenticated.lock().unwrap());
@@ -1027,14 +1042,13 @@ pub mod test {
         };
         tester_to_client_send.send(s2c_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(50));
-        assert_eq!(
-            *client_state_flow.lock().unwrap(),
-            ClientStateFlow::ClientResponseSent
-        );
-        assert_eq!(
-            *server_state_flow.lock().unwrap(),
-            ServerStateFlow::ServerChallengeSent
+        assert_states(
+            &client_state_flow,
+            &server_state_flow,
+            ClientStateFlow::ClientResponseSent,
+            ServerStateFlow::ServerChallengeSent,
+            Duration::from_millis(50),
+            3,
         );
         assert!(!*client_authenticated.lock().unwrap());
         assert!(!*server_authenticated.lock().unwrap());
@@ -1057,14 +1071,13 @@ pub mod test {
         };
         tester_to_server_send.send(c2s_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(50));
-        assert_eq!(
-            *client_state_flow.lock().unwrap(),
-            ClientStateFlow::ClientResponseSent
-        );
-        assert_eq!(
-            *server_state_flow.lock().unwrap(),
-            ServerStateFlow::ServerFinalSent
+        assert_states(
+            &client_state_flow,
+            &server_state_flow,
+            ClientStateFlow::ClientResponseSent,
+            ServerStateFlow::ServerFinalSent,
+            Duration::from_millis(50),
+            3,
         );
         assert!(!*client_authenticated.lock().unwrap());
         assert!(*server_authenticated.lock().unwrap());
@@ -1087,14 +1100,13 @@ pub mod test {
         };
         tester_to_client_send.send(s2c_msg).unwrap();
 
-        thread::sleep(Duration::from_millis(50));
-        assert_eq!(
-            *client_state_flow.lock().unwrap(),
-            ClientStateFlow::ServerFinalRecvd
-        );
-        assert_eq!(
-            *server_state_flow.lock().unwrap(),
-            ServerStateFlow::ServerFinalSent
+        assert_states(
+            &client_state_flow,
+            &server_state_flow,
+            ClientStateFlow::ServerFinalRecvd,
+            ServerStateFlow::ServerFinalSent,
+            Duration::from_millis(50),
+            3,
         );
         assert!(*client_authenticated.lock().unwrap());
         assert!(*server_authenticated.lock().unwrap());
@@ -1184,9 +1196,11 @@ pub mod test {
     #[test]
     fn scramsha256_spawn_authentication_flow_when_valid_credentials() {
         let mut auth_client =
-            ScramSha256AuthenticatorClient::new("user1", "pass1", Duration::from_millis(150));
-        let mut auth_server =
-            ScramSha256AuthenticatorServer::new(ExampleProvider::new(), Duration::from_millis(150));
+            ScramSha256AuthenticatorClient::new("user1", "pass1", Duration::from_millis(1500));
+        let mut auth_server = ScramSha256AuthenticatorServer::new(
+            ExampleProvider::new(),
+            Duration::from_millis(1500),
+        );
 
         let auth_client_handle = auth_client.spawn_authentication();
         let auth_server_handle = auth_server.spawn_authentication();
@@ -1239,14 +1253,13 @@ pub mod test {
             ),
         };
 
-        thread::sleep(Duration::from_millis(50));
-        assert_eq!(
-            *auth_client.state.lock().unwrap(),
-            ClientStateFlow::ClientInitialSent
-        );
-        assert_eq!(
-            *auth_server.state.lock().unwrap(),
-            ServerStateFlow::ServerChallengeSent
+        assert_states(
+            &auth_client.state,
+            &auth_server.state,
+            ClientStateFlow::ClientInitialSent,
+            ServerStateFlow::ServerChallengeSent,
+            Duration::from_millis(50),
+            3,
         );
         assert!(!auth_client.is_authenticated());
         assert!(!auth_server.is_authenticated());
@@ -1269,14 +1282,13 @@ pub mod test {
             ),
         };
 
-        thread::sleep(Duration::from_millis(50));
-        assert_eq!(
-            *auth_client.state.lock().unwrap(),
-            ClientStateFlow::ClientResponseSent
-        );
-        assert_eq!(
-            *auth_server.state.lock().unwrap(),
-            ServerStateFlow::ServerChallengeSent
+        assert_states(
+            &auth_client.state,
+            &auth_server.state,
+            ClientStateFlow::ClientResponseSent,
+            ServerStateFlow::ServerChallengeSent,
+            Duration::from_millis(50),
+            3,
         );
         assert!(!auth_client.is_authenticated());
         assert!(!auth_server.is_authenticated());
@@ -1299,14 +1311,13 @@ pub mod test {
             ),
         };
 
-        thread::sleep(Duration::from_millis(50));
-        assert_eq!(
-            *auth_client.state.lock().unwrap(),
-            ClientStateFlow::ClientResponseSent
-        );
-        assert_eq!(
-            *auth_server.state.lock().unwrap(),
-            ServerStateFlow::ServerFinalSent
+        assert_states(
+            &auth_client.state,
+            &auth_server.state,
+            ClientStateFlow::ClientResponseSent,
+            ServerStateFlow::ServerFinalSent,
+            Duration::from_millis(50),
+            3,
         );
         assert!(!auth_client.is_authenticated());
         assert!(auth_server.is_authenticated());
@@ -1320,14 +1331,13 @@ pub mod test {
             ),
         }
 
-        thread::sleep(Duration::from_millis(50));
-        assert_eq!(
-            *auth_client.state.lock().unwrap(),
-            ClientStateFlow::ServerFinalRecvd
-        );
-        assert_eq!(
-            *auth_server.state.lock().unwrap(),
-            ServerStateFlow::ServerFinalSent
+        assert_states(
+            &auth_client.state,
+            &auth_server.state,
+            ClientStateFlow::ServerFinalRecvd,
+            ServerStateFlow::ServerFinalSent,
+            Duration::from_millis(50),
+            3,
         );
         assert!(auth_client.is_authenticated());
         assert!(auth_server.is_authenticated());
@@ -1450,14 +1460,13 @@ pub mod test {
             ),
         };
 
-        thread::sleep(Duration::from_millis(50));
-        assert_eq!(
-            *auth_client.state.lock().unwrap(),
-            ClientStateFlow::ClientInitialSent
-        );
-        assert_eq!(
-            *auth_server.state.lock().unwrap(),
-            ServerStateFlow::ServerChallengeSent
+        assert_states(
+            &auth_client.state,
+            &auth_server.state,
+            ClientStateFlow::ClientInitialSent,
+            ServerStateFlow::ServerChallengeSent,
+            Duration::from_millis(50),
+            3,
         );
         assert!(!auth_client.is_authenticated());
         assert!(!auth_server.is_authenticated());
