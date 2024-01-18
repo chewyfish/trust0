@@ -10,9 +10,6 @@ PROJECT_RESOURCES_DIR=${PROJECT_DIR}/resources
 
 CARGO_CMD=cargo
 OPENSSL_CMD=openssl
-M4_CMD=m4
-TMUX_CMD=tmux
-NCAT_CMD=ncat
 TRUST0_ADMIN_CMD=${PROJECT_RESOURCES_DIR}/trust0-admin.sh
 
 CARGOBUILD_EXTRA_ARGS=
@@ -101,7 +98,7 @@ KEYALG_PARAMS=${KEYALG_RSA_PARAMS}
 
 # Targets
 
-.PHONY: default clean-all root-ca-pki generate-root-ca-pki-resources gateway-server-pki generate-gateway-pki-resources client-pki generate-client-pki-resources trust0-gateway trust0-client run-trust0-gateway run-trust0-client run-trust0-gateway-nodeps run-trust0-client-nodeps setup-crl-files check-prereqs-examples check-prereqs-example-chat-tcp check-prereqs-example-echo-udp check-prereqs-example-revoke-cert
+.PHONY: default clean-all root-ca-pki generate-root-ca-pki-resources gateway-server-pki generate-gateway-pki-resources client-pki generate-client-pki-resources trust0-gateway trust0-client run-trust0-gateway run-trust0-client run-trust0-gateway-nodeps run-trust0-client-nodeps setup-crl-files
 
 default:
 
@@ -116,25 +113,11 @@ clean-all:
 	@rm -f ${ROOT_CA__PKI_DATABASE_FILE}.*
 	@rm -f ${ROOT_CA__PKI_CRLNUMBER_FILE}
 	@rm -f ${ROOT_CA__PKI_CRLNUMBER_FILE}.*
-	@rm -f ${DATASOURCE_INMEMDB_ACCESS_FILE}
-	@rm -f ${DATASOURCE_INMEMDB_SERVICE_FILE}
-	@rm -f ${DATASOURCE_INMEMDB_ROLE_FILE}
-	@rm -f ${DATASOURCE_INMEMDB_USER_FILE}
 	@rm -f ${CRLSUPPORT__PKI_GATEWAY_CONFIGURED_FILE}
 	@rm -f ${CRLSUPPORT__PKI_REVOKE_CLIENT_FILE}
 
 ${EXAMPLE_CONFIG_FILE}:
 	@${EXAMPLE_DIR}/run_configure.sh
-
-check-prereqs-examples:
-	@(which ${CARGO_CMD} 2> /dev/null > /dev/null || echo "Command '${CARGO_CMD}' missing, please install")
-	@(which ${OPENSSL_CMD} 2> /dev/null > /dev/null || echo "Command '${OPENSSL_CMD}' missing, please install")
-	@(which ${M4_CMD} 2> /dev/null > /dev/null || echo "Command '${M4_CMD}' missing, please install")
-	@(which ${TMUX_CMD} 2> /dev/null > /dev/null || echo "Command '${TMUX_CMD}' missing, please install")
-
-check-prereqs-example-chat-tcp: check-prereqs-examples
-check-prereqs-example-echo-udp: check-prereqs-examples
-check-prereqs-example-revoke-cert: check-prereqs-examples
 
 # Targets - ROOT CA
 
