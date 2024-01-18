@@ -15,12 +15,12 @@ DATASOURCE_INMEMDB_ROLE_FILE="${EXAMPLE_BUILD_DIR}/example-db-role.json"
 DATASOURCE_INMEMDB_USER_M4_FILE="${EXAMPLE_DIR}/example-db-user.json.m4"
 DATASOURCE_INMEMDB_USER_FILE="${EXAMPLE_BUILD_DIR}/example-db-user.json"
 
-GMAKE_CMD="gmake"
-CARGO_CMD="cargo"
-OPENSSL_CMD="openssl"
-M4_CMD="m4"
-TMUX_CMD="tmux"
-NCAT_CMD="ncat"
+GMAKE_CMD=${GMAKE_CMD:-gmake}
+CARGO_CMD=${CARGO_CMD:-cargo}
+OPENSSL_CMD=${OPENSSL_CMD:-openssl}
+M4_CMD=${M4_CMD:-m4}
+TMUX_CMD=${TMUX_CMD:-tmux}
+NCAT_CMD=${NCAT_CMD:-ncat}
 
 # Check pre-requisites
 

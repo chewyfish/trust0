@@ -4,9 +4,9 @@ set -euo pipefail
 
 EXAMPLE_DIR=$(dirname "$0")
 EXAMPLE_BUILD_DIR="${EXAMPLE_DIR}/target"
-GMAKE_CMD="gmake"
-NCAT_CMD="ncat"
-TMUX_CMD="tmux"
+GMAKE_CMD=${GMAKE_CMD:-gmake}
+NCAT_CMD=${NCAT_CMD:-ncat}
+TMUX_CMD=${TMUX_CMD:-tmux}
 
 # Build binaries/pki/db/...
 
