@@ -117,7 +117,7 @@ clean-all:
 	@rm -f ${CRLSUPPORT__PKI_REVOKE_CLIENT_FILE}
 
 ${EXAMPLE_CONFIG_FILE}:
-	@${EXAMPLE_DIR}/run_configure.sh
+	@(test -f "$@" || (echo "Example configuration file '$@' unavailable. Please run '${EXAMPLE_DIR}/run-configure.sh'" && exit 1))
 
 # Targets - ROOT CA
 
