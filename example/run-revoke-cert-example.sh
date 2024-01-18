@@ -7,19 +7,10 @@ EXAMPLE_BUILD_DIR="${EXAMPLE_DIR}/target"
 NCAT_CMD=ncat
 TMUX_CMD=tmux
 
-# Check pre-requisites
-
-ERROR_MSG="$(make check-prereqs-example-revoke-cert)"
-
-if [ -n "${ERROR_MSG}" ]; then
-  echo "${ERROR_MSG}"
-  exit 1
-fi
-
 # Build binaries/pki/db/...
 
-make clean-all
 "${EXAMPLE_DIR}"/run-configure.sh
+make clean-all
 make gateway-server-pki
 make client-pki
 make setup-crl-files

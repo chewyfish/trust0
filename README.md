@@ -18,11 +18,11 @@
 
 Trust0 is a [Zero Trust](https://en.wikipedia.org/wiki/Zero_trust_security_model) security framework, whose implementation is fashioned as a [Software Defined Perimeter](https://en.wikipedia.org/wiki/Software-defined_perimeter) service gateway. The gateway ensures that users may only access services, which were authorized for their account.
 
-This is very early alpha, use with care.
+This is early alpha, use with care.
 
 ### To-Do
 
-* Verify/add macOS and Windows support
+* Verify/add macOS and Windows support. Only Linux (Fedora 39) tested.
 * Enhance gateway for runtime client certificate reissuance (on expiry or on demand)
 * Incorporate device posture trust assessment and rules processor for security enforcement
 * Build (more) testing: unit, integration, performance, ...

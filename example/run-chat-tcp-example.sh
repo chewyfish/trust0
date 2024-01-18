@@ -6,21 +6,10 @@ EXAMPLE_DIR=$(dirname "$0")
 NCAT_CMD=ncat
 TMUX_CMD=tmux
 
-# Check pre-requisites
-
-ERROR_MSG="$(make check-prereqs-example-chat-tcp)"
-
-if [ -n "${ERROR_MSG}" ]; then
-  echo "${ERROR_MSG}"
-  exit 1
-fi
-
-# Build binaries
-
 # Build binaries/pki/db/...
 
-make clean-all
 "${EXAMPLE_DIR}"/run-configure.sh
+make clean-all
 make gateway-server-pki
 make client-pki
 make trust0-gateway
