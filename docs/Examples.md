@@ -35,7 +35,13 @@ To run the examples, the following commands are required:
 | `tmux`         | Linux, macOS: `3.3a`           |                                         |
 | `ncat`         | Linux: `7.93`, macOS: `7.94`   | This can be found in the `nmap` package |
 
-Additionally, make sure your firewall does not prohibit the examples' connections.
+If you wish to override the command used by the example script, merely supply the environment variable(s) for the respective commands (refer to `run-configure.sh` for a listing of command variables).  For example:
+
+```
+GMAKE_CMD=/opt/bin/make OPENSSL_CMD=openssl2 ./run-chat-tcp-example.sh
+```
+
+Also make sure your firewall does not prohibit the examples' connections.
 
 #### Linux
 
