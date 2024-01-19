@@ -2,6 +2,10 @@
 
 <!-- TOC -->
   * [Trust0 Examples](#trust0-examples)
+    * [Pre-requisites](#pre-requisites)
+      * [Linux](#linux)
+      * [macOS](#macos)
+      * [Windows](#windows)
     * [Example - Chat TCP service](#example---chat-tcp-service)
     * [Example - Echo UDP service](#example---echo-udp-service)
     * [Example - Revoke Certificate](#example---revoke-certificate)
@@ -16,6 +20,39 @@ The following examples are provided in the `examples` directory:
 * [Chat TCP](#example---chat-tcp-service)
 * [Echo UDP](#example---echo-udp-service)
 * [Revoke Cert](#example---revoke-certificate)
+
+### Pre-requisites
+
+To run the examples, the following commands are required:
+
+| Facility       | Original tested version        | Notes                                   |
+|----------------|--------------------------------|-----------------------------------------|
+| Rust toolchain | Linux, macOS: `1.74.0`         |                                         |
+| `bash`         | Linux, macOS: `5.2.21`         | Code will assert version is 4 or higher |
+| `gmake`        | Linux, macOS: `4.4.1`          |                                         |
+| `openssl`      | Linux: `3.3.1`, macOS: `3.2.0` |                                         |
+| `m4`           | Linux: `1.4.19` macOS: `1.4.6` |                                         |
+| `tmux`         | Linux, macOS: `3.3a`           |                                         |
+| `ncat`         | Linux: `7.93`, macOS: `7.94`   | This can be found in the `nmap` package |
+
+Additionally, make sure your firewall does not prohibit the examples' connections.
+
+#### Linux
+
+Tested with Linux Fedora 39. Other (main) Linux distributions will be tested (eventually).
+
+#### macOS
+
+Tested with macOS Big Sur. The following [MacPorts](https://www.macports.org) ports were installed:
+
+* `bash`
+* `gmake`
+* `tmux`
+* `nmap`
+
+#### Windows
+
+Support will be added soon for Windows.
 
 ### Example - Chat TCP service
 

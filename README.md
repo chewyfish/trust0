@@ -22,7 +22,7 @@ This is early alpha, use with care.
 
 ### To-Do
 
-* Verify/add macOS and Windows support. Only Linux (Fedora 39) tested.
+* Add Windows support. Tested: macOS (Big Sur); Linux (Fedora 39)
 * Enhance gateway for runtime client certificate reissuance (on expiry or on demand)
 * Incorporate device posture trust assessment and rules processor for security enforcement
 * Build (more) testing: unit, integration, performance, ...
