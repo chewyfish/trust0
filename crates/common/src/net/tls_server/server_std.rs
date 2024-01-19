@@ -11,6 +11,9 @@ use crate::logging::{error, info};
 use crate::net::tls_server::conn_std::{self, TlsServerConnection};
 use crate::target;
 
+const CONN_COMPLETION_MAX_ATTEMPTS: usize = 60;
+const CONN_COMPLETION_REATTEMPT_DELAY_MSECS: u64 = 30;
+
 /// This is a TLS server, which will listen/accept client connections
 ///
 /// It has a TCP-level stream, a TLS-level connection state, and some other state/metadata.
@@ -249,16 +252,6 @@ impl Server {
             )
         })?;
 
-        let _ = tls_srv_conn.complete_io(&mut tcp_stream).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!(
-                    "Error completing TLS server connection: server_addr={:?}, peer_addr={:?}",
-                    &self.listen_addr, &peer_addr
-                ),
-                Box::new(err),
-            )
-        })?;
-
         tcp_stream.set_nonblocking(true).map_err(|err| {
             AppError::GenWithMsgAndErr(
                 format!(
@@ -269,16 +262,71 @@ impl Server {
             )
         })?;
 
-        let tls_conn = rustls::StreamOwned::new(tls_srv_conn, tcp_stream);
+        // Complete TLS connection in separate thread
+        let listen_addr = self.listen_addr.clone();
+        let visitor = self.visitor.clone();
 
-        let connection = self.visitor.lock().unwrap().create_client_conn(tls_conn)?;
+        let _ = thread::spawn(move || {
+            let reattempt_delay = Duration::from_millis(CONN_COMPLETION_REATTEMPT_DELAY_MSECS);
+            for attempt in 0..CONN_COMPLETION_MAX_ATTEMPTS {
+                match tls_srv_conn.complete_io(&mut tcp_stream) {
+                    Ok(_) => break,
+                    Err(err) if io::ErrorKind::WouldBlock == err.kind() => {}
+                    Err(err) => {
+                        error(
+                            &target!(),
+                            &format!(
+                                "Error completing TLS connection: server_addr={:?}, peer_addr={:?}, err={:?}",
+                                &listen_addr, &peer_addr, &err
+                            ),
+                        );
+                        return;
+                    }
+                }
+                if attempt == (CONN_COMPLETION_MAX_ATTEMPTS - 1) {
+                    error(
+                        &target!(),
+                        &format!(
+                            "Exhausted attempting to complete TLS connection: server_addr={:?}, peer_addr={:?}",
+                            &listen_addr, &peer_addr
+                        ),
+                    );
+                    return;
+                }
+                thread::sleep(reattempt_delay);
+            }
 
-        info(
-            &target!(),
-            &format!("Client connected: peer_addr={:?}", &peer_addr),
-        );
+            let tls_conn = rustls::StreamOwned::new(tls_srv_conn, tcp_stream);
 
-        self.visitor.lock().unwrap().on_conn_accepted(connection)?;
+            let connection = match visitor.lock().unwrap().create_client_conn(tls_conn) {
+                Ok(connection) => connection,
+                Err(err) => {
+                    error(
+                        &target!(),
+                        &format!(
+                            "Error creating TLS connection: server_addr={:?}, peer_addr={:?}, err={:?}",
+                            &listen_addr, &peer_addr, &err
+                        ),
+                    );
+                    return;
+                }
+            };
+
+            info(
+                &target!(),
+                &format!("Client connected: peer_addr={:?}", &peer_addr),
+            );
+
+            if let Err(err) = visitor.lock().unwrap().on_conn_accepted(connection) {
+                error(
+                    &target!(),
+                    &format!(
+                        "Error invoking TLS connection accepted hook: server_addr={:?}, peer_addr={:?}, err={:?}",
+                        &listen_addr, &peer_addr, &err
+                    ),
+                );
+            }
+        });
 
         Ok(())
     }

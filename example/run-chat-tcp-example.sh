@@ -3,17 +3,18 @@
 set -euo pipefail
 
 EXAMPLE_DIR=$(dirname "$0")
-NCAT_CMD=ncat
-TMUX_CMD=tmux
+GMAKE_CMD=${GMAKE_CMD:-gmake}
+NCAT_CMD=${NCAT_CMD:-ncat}
+TMUX_CMD=${TMUX_CMD:-tmux}
 
 # Build binaries/pki/db/...
 
 "${EXAMPLE_DIR}"/run-configure.sh
-make clean-all
-make gateway-server-pki
-make client-pki
-make trust0-gateway
-make trust0-client
+"${GMAKE_CMD}" clean-all
+"${GMAKE_CMD}" gateway-server-pki
+"${GMAKE_CMD}" client-pki
+"${GMAKE_CMD}" trust0-gateway
+"${GMAKE_CMD}" trust0-client
 
 # Run example in tmux session
 
@@ -32,9 +33,9 @@ PS1='$ ' ${TMUX_CMD} new-session -s trust0-chat-tcp-example \; \
   set -g mouse on \; \
   send-keys '(clear && read -p "Step 1: Hit <Enter> to run chat server (or prior to executing chat client)" && '"${NCAT_CMD}"' -v -k -l -p '"${CHAT_SERVICE__PORT}"' --chat)' C-m \; \
   split-window -v -l 83% \; \
-  send-keys '(clear && read -p "Step 2: Hit <Enter> to run trust0 gateway" && make run-trust0-gateway-nodeps EXECBIN_EXTRA_ARGS="'"${GATEWAY_BIN_ARGS}"'")' C-m \; \
+  send-keys '(clear && read -p "Step 2: Hit <Enter> to run trust0 gateway" && '"${GMAKE_CMD}"' run-trust0-gateway-nodeps EXECBIN_EXTRA_ARGS="'"${GATEWAY_BIN_ARGS}"'")' C-m \; \
   split-window -v -l 67% \; \
-  send-keys '(clear && echo "Step 3.1: Hit <Enter> to run trust0 client (after gateway is up)" && read -p "Step 3.2: Enter \"start -s chat-tcp -p '"${CHAT_PROXY__PORT}"'\" (to start service proxy)" && make run-trust0-client-nodeps EXECBIN_EXTRA_ARGS="'"${CLIENT_BIN_ARGS}"'")' C-m \; \
+  send-keys '(clear && echo "Step 3.1: Hit <Enter> to run trust0 client (after gateway is up)" && read -p "Step 3.2: Enter \"start -s chat-tcp -p '"${CHAT_PROXY__PORT}"'\" (to start service proxy)" && '"${GMAKE_CMD}"' run-trust0-client-nodeps EXECBIN_EXTRA_ARGS="'"${CLIENT_BIN_ARGS}"'")' C-m \; \
   split-window -v -l 50% \; \
   send-keys '(clear && read -p "Step 4: Hit <Enter> to run 1st chat client (after service proxy has started)" && '"${NCAT_CMD}"' -v localhost '"${CHAT_PROXY__PORT}"')' C-m \; \
   split-window -h -l 50% \; \
