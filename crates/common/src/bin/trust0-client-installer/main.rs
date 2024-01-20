@@ -239,6 +239,7 @@ pub mod tests {
             ),
             "GATEWAY_HOST=gwhost1".to_string(),
             "GATEWAY_PORT=8000".to_string(),
+            "HOST=127.0.0.1".to_string(),
             "INSECURE=true".to_string(),
             "MAX_FRAG_SIZE=1024".to_string(),
             "NO_SNI=true".to_string(),

@@ -27,12 +27,16 @@ pub struct TcpClientProxy {
 impl TcpClientProxy {
     /// TcpClientProxy constructor
     pub fn new(
-        _app_config: Arc<AppConfig>,
+        app_config: Arc<AppConfig>,
         server_visitor: Arc<Mutex<TcpClientProxyServerVisitor>>,
         proxy_port: u16,
     ) -> Self {
         Self {
-            tcp_server: server_std::Server::new(server_visitor.clone(), proxy_port),
+            tcp_server: server_std::Server::new(
+                server_visitor.clone(),
+                &app_config.client_host,
+                proxy_port,
+            ),
             _server_visitor: server_visitor,
         }
     }

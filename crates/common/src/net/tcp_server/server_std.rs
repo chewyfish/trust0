@@ -13,7 +13,6 @@ use crate::target;
 /// This is a TCP server, which will listen/accept client connections
 pub struct Server {
     visitor: Arc<Mutex<dyn ServerVisitor>>,
-    _server_port: u16,
     tcp_listener: Option<TcpListener>,
     listen_addr: String,
     polling: bool,
@@ -23,12 +22,15 @@ pub struct Server {
 
 impl Server {
     /// Server constructor
-    pub fn new(visitor: Arc<Mutex<dyn ServerVisitor>>, server_port: u16) -> Self {
+    pub fn new(
+        visitor: Arc<Mutex<dyn ServerVisitor>>,
+        server_host: &str,
+        server_port: u16,
+    ) -> Self {
         Self {
             visitor,
-            _server_port: server_port,
             tcp_listener: None,
-            listen_addr: format!("[::]:{}", server_port),
+            listen_addr: format!("{}:{}", server_host, server_port),
             polling: false,
             closing: false,
             closed: false,
@@ -302,11 +304,14 @@ pub mod tests {
 
     #[test]
     fn server_new() {
-        let server = Server::new(Arc::new(Mutex::new(MockServerVisit::new())), 1234);
+        let server = Server::new(
+            Arc::new(Mutex::new(MockServerVisit::new())),
+            "127.0.0.1",
+            1234,
+        );
 
-        assert_eq!(server._server_port, 1234);
         assert!(server.tcp_listener.is_none());
-        assert_eq!(server.listen_addr, "[::]:1234");
+        assert_eq!(server.listen_addr, "127.0.0.1:1234");
         assert!(!server.polling);
         assert!(!server.closing);
         assert!(!server.closed);
@@ -321,7 +326,6 @@ pub mod tests {
             .return_once(|| Ok(()));
         let mut server = Server {
             visitor: Arc::new(Mutex::new(visitor)),
-            _server_port: 1234,
             tcp_listener: None,
             listen_addr: "127.0.0.1:0".to_string(),
             polling: false,
@@ -343,7 +347,6 @@ pub mod tests {
     fn server_poll_new_connections_when_not_listening() {
         let mut server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),
-            _server_port: 1234,
             tcp_listener: None,
             listen_addr: "127.0.0.1:0".to_string(),
             polling: false,
@@ -367,7 +370,6 @@ pub mod tests {
         tcp_listener.set_nonblocking(true).unwrap();
         let mut server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),
-            _server_port: 1234,
             tcp_listener: Some(tcp_listener),
             listen_addr: "127.0.0.1:0".to_string(),
             polling: true,
@@ -400,7 +402,6 @@ pub mod tests {
             .return_once(|| true);
         let mut server = Server {
             visitor: Arc::new(Mutex::new(visitor)),
-            _server_port: 1234,
             tcp_listener: Some(tcp_listener),
             listen_addr: "127.0.0.1:0".to_string(),
             polling: false,
@@ -422,7 +423,6 @@ pub mod tests {
     fn server_assert_listening_when_not_listening() {
         let server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),
-            _server_port: 1234,
             tcp_listener: None,
             listen_addr: "addr1".to_string(),
             polling: false,
@@ -439,7 +439,6 @@ pub mod tests {
     fn server_shutdown_when_not_polling() {
         let mut server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),
-            _server_port: 1234,
             tcp_listener: None,
             listen_addr: "addr1".to_string(),
             polling: false,
@@ -459,7 +458,6 @@ pub mod tests {
     fn server_shutdown_when_polling() {
         let mut server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),
-            _server_port: 1234,
             tcp_listener: None,
             listen_addr: "addr1".to_string(),
             polling: true,
@@ -479,7 +477,6 @@ pub mod tests {
     fn server_stop_poller_when_polling() {
         let mut server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),
-            _server_port: 1234,
             tcp_listener: None,
             listen_addr: "addr1".to_string(),
             polling: true,

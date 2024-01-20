@@ -19,7 +19,6 @@ const RECV_BUFFER_SIZE: usize = 64 * 1024;
 /// This is a UDP server, which will listen/accept client connections
 pub struct Server {
     visitor: Arc<Mutex<dyn ServerVisitor>>,
-    _server_port: u16,
     server_socket: Option<UdpSocket>,
     server_addr: SocketAddr,
     polling: bool,
@@ -29,8 +28,12 @@ pub struct Server {
 
 impl Server {
     /// Server constructor
-    pub fn new(visitor: Arc<Mutex<dyn ServerVisitor>>, server_port: u16) -> Result<Self, AppError> {
-        let server_addr_str = format!("[::]:{}", server_port);
+    pub fn new(
+        visitor: Arc<Mutex<dyn ServerVisitor>>,
+        server_host: &str,
+        server_port: u16,
+    ) -> Result<Self, AppError> {
+        let server_addr_str = format!("{}:{}", server_host, server_port);
         let server_addr = SocketAddr::from_str(&server_addr_str).map_err(|err| {
             AppError::GenWithMsgAndErr(
                 format!(
@@ -43,7 +46,6 @@ impl Server {
 
         Ok(Self {
             visitor,
-            _server_port: server_port,
             server_socket: None,
             server_addr,
             polling: false,
@@ -324,6 +326,7 @@ pub trait ServerVisitor: Send {
 pub mod tests {
     use super::*;
     use mockall::mock;
+    use std::net::{Ipv4Addr, SocketAddrV4};
 
     // mocks
     // =====
@@ -341,10 +344,32 @@ pub mod tests {
     // ====
 
     #[test]
+    fn server_new() {
+        let server = Server::new(
+            Arc::new(Mutex::new(MockServerVisit::new())),
+            "127.0.0.1",
+            1234,
+        );
+
+        if let Err(err) = &server {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+        let server = server.unwrap();
+
+        assert!(server.server_socket.is_none());
+        assert_eq!(
+            server.server_addr,
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 1234))
+        );
+        assert!(!server.polling);
+        assert!(!server.closing);
+        assert!(!server.closed);
+    }
+
+    #[test]
     fn server_assert_listening_when_not_listening() {
         let server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),
-            _server_port: 1234,
             server_socket: None,
             server_addr: "127.0.0.1:8080".parse().unwrap(),
             polling: false,
@@ -363,7 +388,6 @@ pub mod tests {
         visitor.expect_on_listening().never();
         let mut server = Server {
             visitor: Arc::new(Mutex::new(visitor)),
-            _server_port: 1,
             server_socket: None,
             server_addr: "127.0.0.1:1".parse().unwrap(),
             polling: false,
@@ -385,7 +409,6 @@ pub mod tests {
             .return_once(|| Ok(()));
         let mut server = Server {
             visitor: Arc::new(Mutex::new(visitor)),
-            _server_port: 1,
             server_socket: None,
             server_addr: "127.0.0.1:0".parse().unwrap(),
             polling: false,
@@ -406,7 +429,6 @@ pub mod tests {
     fn server_clone_server_socket_when_no_socket() {
         let server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),
-            _server_port: 1,
             server_socket: None,
             server_addr: "127.0.0.1:0".parse().unwrap(),
             polling: false,
@@ -424,7 +446,6 @@ pub mod tests {
         let server_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),
-            _server_port: 1,
             server_socket: Some(UdpSocket::bind(server_addr.clone()).unwrap()),
             server_addr,
             polling: false,
@@ -466,7 +487,6 @@ pub mod tests {
         let server_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let mut server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),
-            _server_port: 1,
             server_socket: None,
             server_addr,
             polling: false,
@@ -495,7 +515,6 @@ pub mod tests {
         server_socket.set_nonblocking(true).unwrap();
         let mut server = Server {
             visitor: Arc::new(Mutex::new(visitor)),
-            _server_port: 1,
             server_socket: Some(server_socket),
             server_addr,
             polling: false,
@@ -516,7 +535,6 @@ pub mod tests {
     fn server_shutdown_when_not_polling() {
         let mut server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),
-            _server_port: 1234,
             server_socket: None,
             server_addr: "127.0.0.1:8080".parse().unwrap(),
             polling: false,
@@ -536,7 +554,6 @@ pub mod tests {
     fn server_shutdown_when_polling() {
         let mut server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),
-            _server_port: 1234,
             server_socket: None,
             server_addr: "127.0.0.1:8080".parse().unwrap(),
             polling: true,
@@ -556,7 +573,6 @@ pub mod tests {
     fn server_stop_poller_when_polling() {
         let mut server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),
-            _server_port: 1234,
             server_socket: None,
             server_addr: "127.0.0.1:8080".parse().unwrap(),
             polling: true,

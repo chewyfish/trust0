@@ -13,7 +13,8 @@ use trust0_common::error::AppError;
 /// Connects to the Trust0 gateway server at HOSTNAME:PORT (default PORT is 443).
 /// An control plane REPL shell allows service proxies to be opened (among other features).
 #[derive(Parser, Debug)]
-#[command(author, version, long_about)]
+#[command(author, version, long_about, disable_help_flag = true)]
+
 pub struct AppConfigArgs {
     /// Config file (as a shell environment file), using program's environment variable naming (see below).
     /// Note - Each config file variable entry may be overriden via their respective command-line arguments
@@ -26,6 +27,10 @@ pub struct AppConfigArgs {
         verbatim_doc_comment
     )]
     pub config_file: Option<String>,
+
+    /// The <HOST> address used by the client's socket binds for UDP/TCP service client connections
+    #[arg(required = true, short = 'h', long = "host", env)]
+    pub host: String,
 
     /// Connect to <GATEWAY_HOST>
     #[arg(required = true, short = 'g', long = "gateway-host", env)]
@@ -86,9 +91,14 @@ pub struct AppConfigArgs {
     /// Enable verbose logging
     #[arg(required = false, long = "verbose", env)]
     pub verbose: bool,
+
+    /// Print help
+    #[clap(long, action = clap::ArgAction::HelpLong)]
+    help: Option<bool>,
 }
 
 pub struct AppConfig {
+    pub client_host: String,
     pub gateway_host: String,
     pub gateway_port: u16,
     pub tls_client_config: rustls::ClientConfig,
@@ -177,6 +187,7 @@ impl AppConfig {
 
         // Instantiate AppConfig
         Ok(AppConfig {
+            client_host: config_args.host.clone(),
             gateway_host: config_args.gateway_host.clone(),
             gateway_port: config_args.gateway_port,
             tls_client_config,
@@ -328,6 +339,7 @@ pub mod tests {
         let shell_output_writer = shell_output_writer.unwrap_or(ShellOutputWriter::new(None));
 
         Ok(AppConfig {
+            client_host: "127.0.0.1".to_string(),
             gateway_host: "gwhost1".to_string(),
             gateway_port: 2000,
             tls_client_config,
@@ -338,6 +350,7 @@ pub mod tests {
 
     fn clear_env_vars() {
         env::remove_var("CONFIG_FILE");
+        env::remove_var("HOST");
         env::remove_var("GATEWAY_HOST");
         env::remove_var("GATEWAY_PORT");
         env::remove_var("AUTH_KEY_FILE");
@@ -369,6 +382,7 @@ pub mod tests {
             let mutex = TEST_MUTEX.clone();
             let _lock = mutex.lock().unwrap();
             clear_env_vars();
+            env::set_var("HOST", "127.0.0.1");
             env::set_var("GATEWAY_HOST", "gwhost1");
             env::set_var("GATEWAY_PORT", "8000");
             env::set_var("AUTH_KEY_FILE", client_key_file_str);
@@ -391,6 +405,7 @@ pub mod tests {
         }
         let config = result.unwrap();
 
+        assert_eq!(config.client_host, "127.0.0.1".to_string());
         assert_eq!(config.gateway_host, "gwhost1".to_string());
         assert_eq!(config.gateway_port, 8000);
         assert!(config
@@ -424,6 +439,7 @@ pub mod tests {
             let _lock = mutex.lock().unwrap();
             clear_env_vars();
             env::set_var("CONFIG_FILE", config_file_str);
+            env::set_var("HOST", "127.0.0.1");
             env::set_var("GATEWAY_HOST", "gwhost1");
             env::set_var("AUTH_KEY_FILE", client_key_file_str);
             env::set_var("AUTH_CERT_FILE", client_cert_file_str);
@@ -444,6 +460,7 @@ pub mod tests {
         }
         let config = result.unwrap();
 
+        assert_eq!(config.client_host, "127.0.0.1".to_string());
         assert_eq!(config.gateway_host, "gwhost1".to_string());
         assert_eq!(config.gateway_port, 8888);
         assert!(config
