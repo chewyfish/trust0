@@ -3,7 +3,7 @@ use std::env;
 use std::sync::{Arc, Mutex};
 
 use clap::*;
-use dnsclient::sync::DNSClient;
+use hickory_resolver::Resolver;
 use lazy_static::lazy_static;
 use pki_types::{
     CertificateDer, CertificateRevocationListDer, PrivateKeyDer, PrivatePkcs1KeyDer,
@@ -323,7 +323,7 @@ pub struct AppConfig {
     pub gateway_service_ports: Option<(u16, u16)>,
     pub gateway_service_reply_host: String,
     pub mask_addresses: bool,
-    pub dns_client: DNSClient,
+    pub dns_client: Resolver,
 }
 
 impl AppConfig {
@@ -402,20 +402,12 @@ impl AppConfig {
         };
 
         // Miscellaneous
-        let dns_client;
-        #[cfg(unix)]
-        {
-            dns_client = DNSClient::new_with_system_resolvers().map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    "Error instantiating DNSClient".to_string(),
-                    Box::new(err),
-                )
-            })?;
-        }
-        #[cfg(windows)]
-        {
-            dns_client = DNSClient::new(vec![]);
-        }
+        let dns_client = Resolver::from_system_conf().map_err(|err| {
+            AppError::GenWithMsgAndErr(
+                "Error instantiating DNS resolver".to_string(),
+                Box::new(err),
+            )
+        })?;
 
         // Instantiate AppConfig
         Ok(AppConfig {
@@ -610,20 +602,12 @@ pub mod tests {
             alpn_protocols,
         };
 
-        let dns_client;
-        #[cfg(unix)]
-        {
-            dns_client = DNSClient::new_with_system_resolvers().map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    "Error instantiating DNSClient".to_string(),
-                    Box::new(err),
-                )
-            })?;
-        }
-        #[cfg(windows)]
-        {
-            dns_client = DNSClient::new(vec![]);
-        }
+        let dns_client = Resolver::from_system_conf().map_err(|err| {
+            AppError::GenWithMsgAndErr(
+                "Error instantiating DNS resolver".to_string(),
+                Box::new(err),
+            )
+        })?;
 
         Ok(AppConfig {
             server_port: 2000,
@@ -637,7 +621,7 @@ pub mod tests {
             user_repo,
             gateway_service_host: None,
             gateway_service_ports: None,
-            gateway_service_reply_host: "localhost".to_string(),
+            gateway_service_reply_host: "127.0.0.1".to_string(),
             mask_addresses: false,
             dns_client,
         })
