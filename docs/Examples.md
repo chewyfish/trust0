@@ -49,16 +49,29 @@ Tested with Linux Fedora 39. Other (main) Linux distributions will be tested (ev
 
 #### macOS
 
-Tested with macOS Big Sur. The following [MacPorts](https://www.macports.org) ports were installed:
+Tested with macOS Big Sur.
+
+The testing utilized [MacPorts](https://www.macports.org). The following ports were installed:
 
 * `bash`
 * `gmake`
-* `tmux`
 * `nmap`
+* `tmux`
 
 #### Windows
 
-Support will be added soon for Windows.
+Tested with Windows 11. Currently only TCP services have been verified to work.
+
+The testing utilized [MSYS2](https://www.msys2.org/), using the `UCRT64` environment. The following packages were installed:
+
+* `make`
+* `m4`
+* `openssl`
+* `tmux`
+
+Note - The GNU make command is `make` and not `gmake`. Either add `gmake` as a symlink or override the `GMAKE_CMD` variable (as mentioned above).
+
+Additionally, [NMAP](https://nmap.org/download#windows) was installed (not available as a `MSYS2` package as of the time of this writing).
 
 ### Example - Chat TCP service
 

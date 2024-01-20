@@ -175,7 +175,7 @@ impl server_std::ServerVisitor for TcpGatewayProxyServerVisitor {
         let resolved_host = self
             .app_config
             .dns_client
-            .query_addrs(self.service.host.as_str())
+            .lookup_ip(self.service.host.as_str())
             .map_err(|err| {
                 AppError::GenWithMsgAndErr(
                     format!("Failed resolving host: host={}", &self.service.host),
@@ -197,19 +197,21 @@ impl server_std::ServerVisitor for TcpGatewayProxyServerVisitor {
                     service_stream = Some(socket);
                     break;
                 }
-                Err(err) => response_err = Some(err),
+                Err(err) => {
+                    response_err = Some(AppError::GenWithMsgAndErr(
+                        format!(
+                            "Failed connect to service endpoint(s): addr={:?}, svc={:?}",
+                            &service_addr, &self.service
+                        ),
+                        Box::new(err),
+                    ))
+                }
             }
         }
 
         if service_stream.is_none() {
             return match response_err {
-                Some(err) => Err(AppError::GenWithMsgAndErr(
-                    format!(
-                        "Failed connect to service endpoint(s): svc={:?}",
-                        &self.service
-                    ),
-                    Box::new(err),
-                )),
+                Some(err) => Err(err),
                 None => Err(AppError::General(format!(
                     "No resolved service endpoints: svc={:?}",
                     &self.service
@@ -640,7 +642,7 @@ pub mod tests {
         let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
         let connected_tcp_peer_addr = connected_tcp_stream.server_stream.0.peer_addr().unwrap();
         let connected_tcp_local_addr = connected_tcp_stream.server_stream.0.local_addr().unwrap();
-        let server_listener = std::net::TcpListener::bind("localhost:0").unwrap();
+        let server_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let service_port = server_listener.local_addr().unwrap().port();
         let service_mgr = Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
         let expected_user_id = 100;
