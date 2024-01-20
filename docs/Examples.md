@@ -25,15 +25,15 @@ The following examples are provided in the `examples` directory:
 
 To run the examples, the following commands are required:
 
-| Facility       | Original tested version        | Notes                                   |
-|----------------|--------------------------------|-----------------------------------------|
-| Rust toolchain | Linux, macOS: `1.74.0`         |                                         |
-| `bash`         | Linux, macOS: `5.2.21`         | Code will assert version is 4 or higher |
-| `gmake`        | Linux, macOS: `4.4.1`          |                                         |
-| `openssl`      | Linux: `3.3.1`, macOS: `3.2.0` |                                         |
-| `m4`           | Linux: `1.4.19` macOS: `1.4.6` |                                         |
-| `tmux`         | Linux, macOS: `3.3a`           |                                         |
-| `ncat`         | Linux: `7.93`, macOS: `7.94`   | This can be found in the `nmap` package |
+| Facility       | Original tested version                   | Notes                                   |
+|----------------|-------------------------------------------|-----------------------------------------|
+| Rust toolchain | Linux, macOS: `1.74.0`, Windows: `1.75.0` |                                         |
+| `bash`         | Linux, macOS, Windows: `5.2.21`           | Code will assert version is 4 or higher |
+| `gmake`        | Linux, macOS, Windows: `4.4.1`            |                                         |
+| `openssl`      | Linux: `3.3.1`, macOS, Windows: `3.2.0`   |                                         |
+| `m4`           | Linux, Windows: `1.4.19` macOS: `1.4.6`   |                                         |
+| `tmux`         | Linux, macOS, Windows: `3.3a`             |                                         |
+| `ncat`         | Linux: `7.93`, macOS, Windows: `7.94`     | This can be found in the `nmap` package |
 
 If you wish to override the command used by the example script, merely supply the environment variable(s) for the respective commands (refer to `run-configure.sh` for a listing of command variables).  For example:
 
