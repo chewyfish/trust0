@@ -33,7 +33,7 @@ Here is the usage description:
 ```
 Installs the core Trust0 Client files in a well-known user installation path structure appropriate for the target OS platform.
 
-Usage: trust0-client-installer [OPTIONS] --client-binary-file <CLIENT_BINARY_FILE> --gateway-host <GATEWAY_HOST> --gateway-port <GATEWAY_PORT> --auth-key-file <AUTH_KEY_FILE> --auth-cert-file <AUTH_CERT_FILE> --ca-root-cert-file <CA_ROOT_CERT_FILE>
+Usage: trust0-client-installer [OPTIONS] --client-binary-file <CLIENT_BINARY_FILE> --host <HOST> --gateway-host <GATEWAY_HOST> --gateway-port <GATEWAY_PORT> --auth-key-file <AUTH_KEY_FILE> --auth-cert-file <AUTH_CERT_FILE> --ca-root-cert-file <CA_ROOT_CERT_FILE>
 
 Options:
   -f, --config-file <CONFIG_FILE>
@@ -47,6 +47,11 @@ Options:
           Trust0 client binary file
           
           [env: CLIENT_BINARY_FILE=]
+
+  -h, --host <HOST>
+          The <HOST> address used by the client's socket binds for UDP/TCP service client connections
+          
+          [env: HOST=]
 
   -g, --gateway-host <GATEWAY_HOST>
           Connect to <GATEWAY_HOST>
@@ -116,8 +121,8 @@ Options:
           
           [env: VERBOSE=]
 
-  -h, --help
-          Print help (see a summary with '-h')
+      --help
+          Print help
 
   -V, --version
           Print version
@@ -126,7 +131,7 @@ Options:
 Here is a simple invocation of this tool:
 
 ```
-<TRUST0_REPO>/target/debug$ ./trust0-client-installer --client-binary-file ./trust0-client --gateway-host localhost --gateway-port 8400 --auth-key-file ./client.key.pem --auth-cert-file ./client.crt.pem --ca-root-cert-file ./rootca.crt.pem
+<TRUST0_REPO>/target/debug$ ./trust0-client-installer --client-binary-file ./trust0-client --host localhost --gateway-host localhost --gateway-port 8400 --auth-key-file ./client.key.pem --auth-cert-file ./client.crt.pem --ca-root-cert-file ./rootca.crt.pem
 Installed CA root certificate: path="<USER_HOME>/.local/share/Trust0/pki/ca-root.cert.pem"
 Installed client binary: path="<USER_HOME>/.local/share/Trust0/bin/trust0-client"
 Installed client certificate: path="<USER_HOME>/.local/share/Trust0/pki/trust0-client.cert.pem"
