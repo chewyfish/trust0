@@ -1,6 +1,6 @@
 [package]
 name = "trust0-common"
-version = "0.4.0-alpha"
+version = "0.5.0-alpha"
 description = "Trust0 SDP Shared Codebase"
 repository = "https://github.com/chewyfish/trust0"
 edition = "2021"
