@@ -3,13 +3,10 @@
 set -euo pipefail
 
 EXAMPLE_DIR=$(dirname "$0")
-GMAKE_CMD=${GMAKE_CMD:-gmake}
-NCAT_CMD=${NCAT_CMD:-ncat}
-TMUX_CMD=${TMUX_CMD:-tmux}
 
-# Build binaries/pki/db/...
+# Build binaries/pki/config/db/...
 
-"${EXAMPLE_DIR}"/run-configure.sh
+source "${EXAMPLE_DIR}"/run-configure.sh
 "${GMAKE_CMD}" clean-all
 "${GMAKE_CMD}" gateway-server-pki
 "${GMAKE_CMD}" client-pki
@@ -35,7 +32,7 @@ PS1='$ ' ${TMUX_CMD} new-session -s trust0-echo-udp-example \; \
   split-window -v -l 65% \; \
   send-keys '(clear && echo "Step 2.1: Hit <Enter> to run trust0 client (after gateway is up)" && read -p "Step 2.2: Enter \"start -s echo-udp -p '"${ECHO_PROXY__PORT}"'\" (to start service proxy)" && '"${GMAKE_CMD}"' run-trust0-client-nodeps EXECBIN_EXTRA_ARGS="'"${CLIENT_BIN_ARGS}"'")' C-m \; \
   split-window -v -l 43% \; \
-  send-keys '(clear && read -p "Step 3: Hit <Enter> to run echo server" && '"${NCAT_CMD}"' -v -u -k -l -p '"${ECHO_SERVICE__PORT}"' --exec "/bin/cat")' C-m \; \
+  send-keys '(clear && read -p "Step 3: Hit <Enter> to run echo server" && '"${NCAT_CMD}"' -v -u -k -l -p '"${ECHO_SERVICE__PORT}"' --exec '"${CAT_CMD}"')' C-m \; \
   split-window -h -l 65% \; \
   send-keys '(clear && read -p "Step 4: Hit <Enter> to run echo client (after service proxy has started)" && '"${NCAT_CMD}"' -v -u localhost '"${ECHO_PROXY__PORT}"')' C-m \; \
   split-window -h -l 38% \; \

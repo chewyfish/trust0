@@ -21,6 +21,7 @@ OPENSSL_CMD=${OPENSSL_CMD:-openssl}
 M4_CMD=${M4_CMD:-m4}
 TMUX_CMD=${TMUX_CMD:-tmux}
 NCAT_CMD=${NCAT_CMD:-ncat}
+CAT_CMD=${CAT_CMD:-cat}
 
 # Check pre-requisites
 
@@ -36,15 +37,18 @@ function check_command_exists() {
   if ! which "${command}" 2> /dev/null > /dev/null; then
     echo "Command '${command}' missing, please install"
     PREREQ_MISSING=1
+    return 1
   fi
+  return 0
 }
 
-check_command_exists "${GMAKE_CMD}"
-check_command_exists "${CARGO_CMD}"
-check_command_exists "${OPENSSL_CMD}"
-check_command_exists "${M4_CMD}"
-check_command_exists "${TMUX_CMD}"
-check_command_exists "${NCAT_CMD}"
+check_command_exists "${GMAKE_CMD}" && GMAKE_CMD=$(which "${GMAKE_CMD}")
+check_command_exists "${CARGO_CMD}" && CARGO_CMD=$(which "${CARGO_CMD}")
+check_command_exists "${OPENSSL_CMD}" && OPENSSL_CMD=$(which "${OPENSSL_CMD}")
+check_command_exists "${M4_CMD}" && M4_CMD=$(which "${M4_CMD}")
+check_command_exists "${TMUX_CMD}" && TMUX_CMD=$(which "${TMUX_CMD}")
+check_command_exists "${NCAT_CMD}" && NCAT_CMD=$(which "${NCAT_CMD}")
+check_command_exists "${CAT_CMD}" && CAT_CMD=$(which "${CAT_CMD}")
 
 if [ "${PREREQ_MISSING}" == "1" ]; then
   exit 1

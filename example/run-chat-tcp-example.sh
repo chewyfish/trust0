@@ -3,13 +3,10 @@
 set -euo pipefail
 
 EXAMPLE_DIR=$(dirname "$0")
-GMAKE_CMD=${GMAKE_CMD:-gmake}
-NCAT_CMD=${NCAT_CMD:-ncat}
-TMUX_CMD=${TMUX_CMD:-tmux}
 
-# Build binaries/pki/db/...
+# Build binaries/pki/config/db/...
 
-"${EXAMPLE_DIR}"/run-configure.sh
+source "${EXAMPLE_DIR}"/run-configure.sh
 "${GMAKE_CMD}" clean-all
 "${GMAKE_CMD}" gateway-server-pki
 "${GMAKE_CMD}" client-pki
