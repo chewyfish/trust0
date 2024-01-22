@@ -773,6 +773,102 @@ pub mod test {
     // tests
 
     #[test]
+    fn scramsha256_hash_password_when_base64_encoded() {
+        assert_eq!(
+            hash_password("user1", "pass1", true,),
+            vec![
+                51, 48, 110, 97, 115, 71, 120, 102, 87, 57, 74, 122, 84, 104, 115, 106, 115, 71,
+                83, 117, 116, 97, 121, 78, 104, 84, 103, 82, 78, 86, 120, 107, 118, 95, 81, 109,
+                54, 90, 85, 108, 87, 50, 85, 61,
+            ],
+        );
+    }
+
+    #[test]
+    fn scramsha256_hash_password_when_not_base64_encoded() {
+        assert_eq!(
+            hash_password("user1", "pass1", false,),
+            vec![
+                223, 73, 218, 176, 108, 95, 91, 210, 115, 78, 27, 35, 176, 100, 174, 181, 172, 141,
+                133, 56, 17, 53, 92, 100, 191, 244, 38, 233, 149, 37, 91, 101,
+            ],
+        );
+    }
+
+    #[test]
+    fn scramsha256_process_error_when_has_sender_and_app_error() {
+        let channel = mpsc::channel();
+
+        let result = process_error(
+            &Some(channel.0.clone()),
+            Some(AppError::GenWithCode(123)),
+            None,
+        );
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+        let authn_msg = result.unwrap();
+
+        assert_eq!(
+            authn_msg,
+            AuthnMessage::Error("GenWithCode(123)".to_string())
+        );
+
+        match channel.1.try_recv() {
+            Ok(authn_msg) => assert_eq!(
+                authn_msg,
+                AuthnMessage::Error("GenWithCode(123)".to_string())
+            ),
+            Err(err) => panic!("Unexpected channel result: err={:?}", &err),
+        }
+    }
+
+    #[test]
+    fn scramsha256_process_error_when_has_sender_and_scram_error() {
+        let channel = mpsc::channel();
+
+        let result = process_error(
+            &Some(channel.0.clone()),
+            None,
+            Some(scram::Error::InvalidServer),
+        );
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+        let authn_msg = result.unwrap();
+
+        assert_eq!(
+            authn_msg,
+            AuthnMessage::Unauthenticated("InvalidServer".to_string())
+        );
+
+        match channel.1.try_recv() {
+            Ok(authn_msg) => assert_eq!(
+                authn_msg,
+                AuthnMessage::Unauthenticated("InvalidServer".to_string())
+            ),
+            Err(err) => panic!("Unexpected channel result: err={:?}", &err),
+        }
+    }
+
+    #[test]
+    fn scramsha256_process_error_when_no_sender_and_app_error() {
+        let result = process_error(&None, Some(AppError::GenWithCode(123)), None);
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+        let authn_msg = result.unwrap();
+
+        assert_eq!(
+            authn_msg,
+            AuthnMessage::Error("GenWithCode(123)".to_string())
+        );
+    }
+
+    #[test]
     fn scramsha256cli_new() {
         let auth_client =
             ScramSha256AuthenticatorClient::new("user1", "pass1", Duration::from_millis(1500));

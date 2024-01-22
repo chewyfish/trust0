@@ -305,6 +305,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reqproc_parse_when_bad_format_request() {
+        let request_processor = RequestProcessor::new();
+
+        match request_processor.parse("\"INVALID") {
+            Ok(request) => panic!("Unexpected successful result: req={:?}", request),
+            Err(err) => {
+                assert!(err.get_code().is_some());
+                assert_eq!(err.get_code().unwrap(), response::CODE_BAD_REQUEST);
+            }
+        }
+    }
+
+    #[test]
     fn reqproc_parse_when_invalid_request() {
         let request_processor = RequestProcessor::new();
 

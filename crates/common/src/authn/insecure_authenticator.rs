@@ -97,6 +97,11 @@ mod test {
     }
 
     #[test]
+    fn insecurecli_default() {
+        let _ = InsecureAuthenticatorClient::default();
+    }
+
+    #[test]
     fn insecurecli_spawn_authentication() {
         let mut auth_client = InsecureAuthenticatorClient;
         let message = auth_client.spawn_authentication();
@@ -132,6 +137,11 @@ mod test {
     #[test]
     fn insecuresvr_new() {
         let _ = InsecureAuthenticatorServer::new();
+    }
+
+    #[test]
+    fn insecuresvr_default() {
+        let _ = InsecureAuthenticatorServer::default();
     }
 
     #[test]
