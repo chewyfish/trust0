@@ -34,36 +34,57 @@ const COMMAND_TEMPLATE: &str = "\
         {all-args}{after-help}\
     ";
 
+/// Control plane REPL request actions
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Request {
+    /// Represents non-supplied request
     #[default]
     None,
+    /// Contextual information about connection
     About,
+    /// Service connections information
     Connections,
+    /// Used to disable any request processing whatsoever
     Ignore,
+    /// Initiate secondary authentication flow
     Login,
+    /// Contains login flow message data
     LoginData {
+        /// The exchanged message object
         message: AuthnMessage,
     },
+    /// Simple request to detect liveliness of connection
     Ping,
+    /// Service proxies initiated (successfully) by user
     Proxies,
+    /// Accessible services authorized for this connection
     Services,
+    /// Request a new service proxy to be started
     Start {
+        /// Well-known service name
         service_name: String,
+        /// Client bind socket (UDP/TCP) port for service client connections
         local_port: u16,
     },
-    Stop {
-        service_name: String,
-    },
+    /// Request to stop service proxy (and any respective outstanding connections)
+    Stop { service_name: String },
+    /// Stop control plane REPL and all service connections for this session
     Quit,
 }
 
+/// REPL shell command line processor
 pub struct RequestProcessor {
+    /// Clap [`Command`] object used to parse command string
     command_processor: Command,
 }
 
 impl RequestProcessor {
     /// ReplProtocol constructor
+    ///
+    /// # Returns
+    ///
+    /// A newly contructed [`RequestProcessor`] object.
+    ///
     pub fn new() -> Self {
         Self {
             command_processor: Self::create_command(),
@@ -71,6 +92,15 @@ impl RequestProcessor {
     }
 
     /// Parse request command request text
+    ///
+    /// # Arguments
+    ///
+    /// * `line` - Command line string, which should represent a valid [`Request`]
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the corresponding [`Request`] for the given command line string.
+    ///
     pub fn parse(&self, line: &str) -> Result<Request, AppError> {
         let line = line.trim();
         let line_as_args = shlex::split(line).ok_or(AppError::GenWithCodeAndMsg(
@@ -273,6 +303,19 @@ impl Default for RequestProcessor {
 mod tests {
 
     use super::*;
+
+    #[test]
+    fn reqproc_parse_when_bad_format_request() {
+        let request_processor = RequestProcessor::new();
+
+        match request_processor.parse("\"INVALID") {
+            Ok(request) => panic!("Unexpected successful result: req={:?}", request),
+            Err(err) => {
+                assert!(err.get_code().is_some());
+                assert_eq!(err.get_code().unwrap(), response::CODE_BAD_REQUEST);
+            }
+        }
+    }
 
     #[test]
     fn reqproc_parse_when_invalid_request() {

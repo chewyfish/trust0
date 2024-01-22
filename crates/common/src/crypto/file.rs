@@ -13,6 +13,15 @@ use crate::error::AppError;
 use crate::file;
 
 /// Verify validity of certificates for the given PEM file
+///
+/// # Arguments
+///
+/// * `filepath` - Certificate file pathspec
+///
+/// # Returns
+///
+/// A [`Result`] containing the same filepath, if it is a valid certificate file.
+///
 pub fn verify_certificates(filepath: &str) -> Result<String, AppError> {
     match load_certificates(filepath.to_string()) {
         Ok(_) => Ok(filepath.to_string()),
@@ -21,6 +30,15 @@ pub fn verify_certificates(filepath: &str) -> Result<String, AppError> {
 }
 
 /// Load certificates from the given PEM file
+///
+/// # Arguments
+///
+/// * `filepath` - Certificate file pathspec
+///
+/// # Returns
+///
+/// A [`Result`] containing the certificates in the file, if it is a valid certificate file
+///
 pub fn load_certificates(filepath: String) -> Result<Vec<CertificateDer<'static>>, AppError> {
     match fs::File::open(filepath.clone()).map_err(|err| {
         AppError::GenWithMsgAndErr(
@@ -46,6 +64,15 @@ pub fn load_certificates(filepath: String) -> Result<Vec<CertificateDer<'static>
 }
 
 /// Verify the validity of the private key in the given PEM file
+///
+/// # Arguments
+///
+/// * `filepath` - Private key file pathspec
+///
+/// # Returns
+///
+/// A [`Result`] containing the same filepath, if it is a valid private key file.
+///
 pub fn verify_private_key_file(filepath: &str) -> Result<String, AppError> {
     match load_private_key(filepath.to_string()) {
         Ok(_) => Ok(filepath.to_string()),
@@ -54,6 +81,15 @@ pub fn verify_private_key_file(filepath: &str) -> Result<String, AppError> {
 }
 
 /// Load the private key from the given PEM file
+///
+/// # Arguments
+///
+/// * `filepath` - Private key file pathspec
+///
+/// # Returns
+///
+/// A [`Result`] containing the private keys in the file, if it is a valid private key file
+///
 pub fn load_private_key(filepath: String) -> Result<PrivateKeyDer<'static>, AppError> {
     match fs::File::open(filepath.clone()).map_err(|err| {
         AppError::IoWithMsg(
@@ -82,6 +118,15 @@ pub fn load_private_key(filepath: String) -> Result<PrivateKeyDer<'static>, AppE
 }
 
 /// Verify the validity certificate revocation list (CRL) entries from the given file
+///
+/// # Arguments
+///
+/// * `filepath` - CRL file pathspec
+///
+/// # Returns
+///
+/// A [`Result`] containing the same filepath, if it is a valid CRL file.
+///
 pub fn verify_crl_list(filepath: &str) -> Result<String, AppError> {
     match load_crl_list(filepath) {
         Ok(_) => Ok(filepath.to_string()),
@@ -90,6 +135,15 @@ pub fn verify_crl_list(filepath: &str) -> Result<String, AppError> {
 }
 
 /// Load the certificate revocation list (CRL) entries from the given file
+///
+/// # Arguments
+///
+/// * `filepath` - CRL file pathspec
+///
+/// # Returns
+///
+/// A [`Result`] containing the file content (as bytes), if it is a valid CRL file
+///
 pub fn load_crl_list(filepath: &str) -> Result<Vec<u8>, AppError> {
     match fs::File::open(filepath).map_err(|err| {
         AppError::IoWithMsg(format!("failed to open CRL file: file={}", filepath), err)
@@ -113,14 +167,30 @@ pub fn load_crl_list(filepath: &str) -> Result<Vec<u8>, AppError> {
 /// Represents a certificate revocation list (CRL) file.
 /// Exposes the ability to re-parse entries when file has changed.
 pub struct CRLFile {
+    /// Path to CRL file
     path: PathBuf,
+    /// Last modified file time (used to determine reloading)
     last_mtime: SystemTime,
+    /// Last loaded CRL object list
     crl_list: Arc<Mutex<Vec<CertificateRevocationListDer<'static>>>>,
+    /// Controls whether reloading loop is active
     reloading: Arc<Mutex<bool>>,
 }
 
 impl CRLFile {
     /// CRLFile constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `filepath_str` - CRL file pathspec
+    /// * `crl_list` - CRL objects list (potentially updated on changes)
+    /// * `reloading` - Controls whether reloading loop is active
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the new constructed [`CRLFile`] object.
+    /// If the file path is not valid, will return an error.
+    ///
     pub fn new(
         filepath_str: &str,
         crl_list: &Arc<Mutex<Vec<CertificateRevocationListDer<'static>>>>,
@@ -144,6 +214,11 @@ impl CRLFile {
     }
 
     /// CRL list accessor
+    ///
+    /// # Returns
+    ///
+    /// The CRL objects list
+    ///
     pub fn crl_list(&mut self) -> Arc<Mutex<Vec<CertificateRevocationListDer<'static>>>> {
         self.crl_list.clone()
     }

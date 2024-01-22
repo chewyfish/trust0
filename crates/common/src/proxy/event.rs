@@ -4,12 +4,25 @@ use std::net::SocketAddr;
 /// Proxy-related events (to be used as channel messages)
 #[derive(Debug)]
 pub enum ProxyEvent {
-    Closed(String),                       // argument: proxy key
-    Message(String, SocketAddr, Vec<u8>), // arguments: proxy key, destination addr, and data
+    /// Closed proxy event (contains the corresponding proxy key value)
+    Closed(String),
+    /// Data message to send on proxy (contains: proxy key; destination socket address; message data)
+    Message(String, SocketAddr, Vec<u8>),
 }
 
 impl ProxyEvent {
     /// Produces key value for given proxy address context
+    ///
+    /// # Arguments
+    ///
+    /// * `proxy_type` - Type of proxy
+    /// * `socket_addr1` - (optional) Connected socket pair address 1
+    /// * `socket_addr2` - (optional) Connected socket pair address 2
+    ///
+    /// # Returns
+    ///
+    /// A proxy key value, which will be unique across all currently active proxies.
+    ///
     pub fn key_value(
         proxy_type: &ProxyType,
         socket_addr1: Option<SocketAddr>,

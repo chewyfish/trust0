@@ -19,18 +19,40 @@ const POLLING_DURATION_MSECS: u64 = 1000;
 
 /// Proxy based on 2 connected TCP streams
 pub struct TcpAndTcpStreamProxy {
+    /// Unique key for this proxy
     proxy_key: String,
+    /// TCP stream for the 1st TCP proxy entity
     tcp_stream1: std::net::TcpStream,
+    /// TCP stream for the 2nd TCP proxy entity
     tcp_stream2: std::net::TcpStream,
+    /// Stream reader/writer for the 1st TCP proxy entity
     stream1_reader_writer: Arc<Mutex<Box<dyn StreamReaderWriter>>>,
+    /// Stream reader/writer for the 2nd TCP proxy entity
     stream2_reader_writer: Arc<Mutex<Box<dyn StreamReaderWriter>>>,
+    /// Channel sender for proxy (management) events
     proxy_channel_sender: sync::mpsc::Sender<ProxyEvent>,
+    /// Indicates a request to close the proxy
     closing: Arc<Mutex<bool>>,
+    /// Proxy closed/shutdown state value
     closed: Arc<Mutex<bool>>,
 }
 
 impl TcpAndTcpStreamProxy {
     /// TcpAndTcpStreamProxy constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `proxy_key` - Unique key for this proxy
+    /// * `tcp_stream1` - TCP stream for the 1st TCP proxy entity
+    /// * `tcp_stream2` - TCP stream for the 2nd TCP proxy entity
+    /// * `stream1_reader_writer` - Stream reader/writer for the 1st TCP proxy entity
+    /// * `stream2_reader_writer` - Stream reader/writer for the 2nd TCP proxy entity
+    /// * `proxy_channel_sender` - Channel sender for proxy (management) events
+    ///
+    ///  # Returns
+    ///
+    /// A [`Result`] containing a newly constructed [`TcpAndTcpStreamProxy`] object.
+    ///
     pub fn new(
         proxy_key: &str,
         tcp_stream1: std::net::TcpStream,
@@ -76,6 +98,11 @@ impl TcpAndTcpStreamProxy {
     }
 
     /// Connect tcp IO streams (spawn task to bidirectionally copy data)
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of the connection.
+    ///
     pub fn connect(&mut self) -> Result<(), AppError> {
         info(
             &target!(),

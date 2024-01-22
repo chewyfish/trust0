@@ -1,24 +1,43 @@
 use serde_derive::{Deserialize, Serialize};
 
+/// RBAC entity type
 #[derive(Serialize, Deserialize, Clone, Debug, Default, Hash, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum EntityType {
+    /// No type specified
     #[default]
     None,
+    /// Role-based entity
     Role,
+    /// User-based entity
     User,
 }
 
+/// Service access model struct
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ServiceAccess {
+    /// Service ID (unique across services)
     pub service_id: u64,
+    /// RBAC entity type
     pub entity_type: EntityType,
+    /// Entity ID (either role ID or user ID)
     pub entity_id: u64,
 }
 
 impl ServiceAccess {
     /// ServiceAccess constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `service_id` - Service ID (unique across services)
+    /// * `entity_type` - RBAC entity type
+    /// * `entity_id` - Entity ID (either role ID or user ID)
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`ServiceAccess`] object.
+    ///
     pub fn new(service_id: u64, entity_type: EntityType, entity_id: u64) -> Self {
         Self {
             service_id,

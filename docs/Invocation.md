@@ -13,16 +13,17 @@
 ### Trust0 Gateway
 
 The gateway needs to be configured with the:
-* listener port
+
+* listener host and port
 * PKI certificates/keys (CA certificate, mTLS auth certificate, and its own certificate/key)
 * DB access information (may be left out, but client connections would be prohibited)
 
 Additional configuration is explained in the following usage display:
 
 ```
-Runs a Trust0 gateway server on :PORT.  The default PORT is 443.
+Runs a Trust0 gateway server on <HOST>:<PORT>
 
-Usage: trust0-gateway [OPTIONS] --port <PORT> --cert-file <CERT_FILE> --key-file <KEY_FILE> --auth-cert-file <AUTH_CERT_FILE> --gateway-service-host <GATEWAY_SERVICE_HOST>
+Usage: trust0-gateway [OPTIONS] --host <HOST> --port <PORT> --cert-file <CERT_FILE> --key-file <KEY_FILE> --auth-cert-file <AUTH_CERT_FILE> --gateway-service-host <GATEWAY_SERVICE_HOST>
 
 Options:
   -f, --config-file <CONFIG_FILE>
@@ -32,8 +33,13 @@ Options:
           
           [env: CONFIG_FILE=]
 
+  -h, --host <HOST>
+          The <HOST> address used by the gateway's listener binds for Trust0 client connections
+          
+          [env: HOST=]
+
   -p, --port <PORT>
-          Listen on PORT
+          The <PORT> used by the gateway's listener binds for Trust0 client connections
           
           [env: PORT=]
           [default: 443]
@@ -148,8 +154,8 @@ Options:
           
           [env: USER_DB_CONNECT=]
 
-  -h, --help
-          Print help (see a summary with '-h')
+      --help
+          Print help
 
   -V, --version
           Print version
@@ -158,12 +164,14 @@ Options:
 Here is an example invocation (taken from the provided [Chat TCP](./Examples.md#example---chat-tcp-service) example):
 
 ```
-<TRUST0_REPO>/example$ <TRUST0_REPO>/target/debug/trust0-gateway --port 8400 --cert-file target/example-gateway.local.crt.pem --key-file target/example-gateway.local.key.pem --auth-cert-file target/example-ca.local.crt.pem --gateway-service-host localhost  --datasource in-memory-db --access-db-connect example-db-access.json --service-db-connect target/example-db-service.json --user-db-connect example-db-user.json
+<TRUST0_REPO>/example$ <TRUST0_REPO>/target/debug/trust0-gateway --host localhost --port 8400 --cert-file target/example-gateway.local.crt.pem --key-file target/example-gateway.local.key.pem --auth-cert-file target/example-ca.local.crt.pem --gateway-service-host localhost  --datasource in-memory-db --access-db-connect example-db-access.json --service-db-connect target/example-db-service.json --user-db-connect example-db-user.json
 ```
 
 ### Trust0 Client
 
 The client needs to be configured with the:
+
+* host address used in bound sockets for UDP/TCP service client connections
 * gateway host and port
 * PKI certificates/keys (CA certificate, its own mTLS auth certificate/key)
 
@@ -172,7 +180,7 @@ Additional configuration is explained in the following usage display:
 ```
 Connects to the Trust0 gateway server at HOSTNAME:PORT (default PORT is 443). An control plane REPL shell allows service proxies to be opened (among other features).
 
-Usage: trust0-client [OPTIONS] --gateway-host <GATEWAY_HOST> --gateway-port <GATEWAY_PORT> --auth-key-file <AUTH_KEY_FILE> --auth-cert-file <AUTH_CERT_FILE> --ca-root-cert-file <CA_ROOT_CERT_FILE>
+Usage: trust0-client [OPTIONS] --host <HOST> --gateway-host <GATEWAY_HOST> --gateway-port <GATEWAY_PORT> --auth-key-file <AUTH_KEY_FILE> --auth-cert-file <AUTH_CERT_FILE> --ca-root-cert-file <CA_ROOT_CERT_FILE>
 
 Options:
   -f, --config-file <CONFIG_FILE>
@@ -181,6 +189,11 @@ Options:
           Note - Must be first argument (if provided)
           
           [env: CONFIG_FILE=]
+
+  -h, --host <HOST>
+          The <HOST> address used by the client's socket binds for UDP/TCP service client connections
+          
+          [env: HOST=localhost]
 
   -g, --gateway-host <GATEWAY_HOST>
           Connect to <GATEWAY_HOST>
@@ -250,8 +263,8 @@ Options:
           
           [env: VERBOSE=false]
 
-  -h, --help
-          Print help (see a summary with '-h')
+      --help
+          Print help
 
   -V, --version
           Print version
@@ -260,5 +273,5 @@ Options:
 Here is an example invocation (taken from the provided [Chat TCP](./Examples.md#example---chat-tcp-service) example):
 
 ```
-<TRUST0_REPO>/example$ <TRUST0_REPO>/target/debug/trust0-client --gateway-host localhost --gateway-port 8400 --auth-key-file target/example-client.local.key.pem --auth-cert-file target/example-client.local.crt.pem --ca-root-cert-file target/example-ca.local.crt.pem
+<TRUST0_REPO>/example$ <TRUST0_REPO>/target/debug/trust0-client --host localhost --gateway-host localhost --gateway-port 8400 --auth-key-file target/example-client.local.key.pem --auth-cert-file target/example-client.local.crt.pem --ca-root-cert-file target/example-ca.local.crt.pem
 ```

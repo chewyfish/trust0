@@ -9,6 +9,12 @@ use crate::config::AppConfig;
 use trust0_common::distro::AppInstallFile;
 use trust0_common::error::AppError;
 
+/// Run main process
+///
+/// # Returns
+///
+/// A [`Result`] indicating the success/failure of the processing operation.
+///
 fn process_runner() -> Result<(), AppError> {
     // Parse process invocation arguments
     let mut app_config = AppConfig::new()?;
@@ -83,6 +89,8 @@ fn process_runner() -> Result<(), AppError> {
     Ok(())
 }
 
+/// Main execution function
+///
 pub fn main() {
     match process_runner() {
         Ok(()) => {
@@ -239,6 +247,7 @@ pub mod tests {
             ),
             "GATEWAY_HOST=gwhost1".to_string(),
             "GATEWAY_PORT=8000".to_string(),
+            "HOST=127.0.0.1".to_string(),
             "INSECURE=true".to_string(),
             "MAX_FRAG_SIZE=1024".to_string(),
             "NO_SNI=true".to_string(),

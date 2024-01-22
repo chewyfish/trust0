@@ -50,6 +50,7 @@ TRUST0_GATEWAY__PKI_KEY_FILE=${EXAMPLE_BUILD_DIR}/${TRUST0_GATEWAY__PKI_NAME}.ke
 TRUST0_GATEWAY__BINARY_NAME=trust0-gateway
 TRUST0_GATEWAY__BINARY_FILE=${PROJECT_DIR}/target/debug/${TRUST0_GATEWAY__BINARY_NAME}
 TRUST0_GATEWAY__HOST=localhost
+TRUST0_GATEWAY__BIND_HOST=[::1]
 TRUST0_GATEWAY__SERVICE_HOST=${TRUST0_GATEWAY__HOST}
 
 # Params - Trust Client
@@ -68,6 +69,7 @@ TRUST0_CLIENT__PKI_CERT_FILE=${EXAMPLE_BUILD_DIR}/${TRUST0_CLIENT__PKI_NAME}.crt
 TRUST0_CLIENT__PKI_KEY_FILE=${EXAMPLE_BUILD_DIR}/${TRUST0_CLIENT__PKI_NAME}.key.pem
 TRUST0_CLIENT__BINARY_NAME=trust0-client
 TRUST0_CLIENT__BINARY_FILE=${PROJECT_DIR}/target/debug/${TRUST0_CLIENT__BINARY_NAME}
+TRUST0_CLIENT__BIND_HOST=127.0.0.1
 
 # Params - Datasource
 
@@ -159,10 +161,10 @@ trust0-gateway:
 	${CARGO_CMD} build --color=always --bin trust0-gateway --manifest-path ${PROJECT_DIR}/crates/gateway/Cargo.toml ${CARGOBUILD_EXTRA_ARGS}
 
 run-trust0-gateway: gateway-server-pki trust0-gateway
-	${TRUST0_GATEWAY__BINARY_FILE} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource in-memory-db --access-db-connect ${DATASOURCE_INMEMDB_ACCESS_FILE} --service-db-connect ${DATASOURCE_INMEMDB_SERVICE_FILE} --role-db-connect ${DATASOURCE_INMEMDB_ROLE_FILE} --user-db-connect ${DATASOURCE_INMEMDB_USER_FILE}
+	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource in-memory-db --access-db-connect ${DATASOURCE_INMEMDB_ACCESS_FILE} --service-db-connect ${DATASOURCE_INMEMDB_SERVICE_FILE} --role-db-connect ${DATASOURCE_INMEMDB_ROLE_FILE} --user-db-connect ${DATASOURCE_INMEMDB_USER_FILE}
 
 run-trust0-gateway-nodeps:
-	${TRUST0_GATEWAY__BINARY_FILE} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource in-memory-db --access-db-connect ${DATASOURCE_INMEMDB_ACCESS_FILE} --service-db-connect ${DATASOURCE_INMEMDB_SERVICE_FILE} --role-db-connect ${DATASOURCE_INMEMDB_ROLE_FILE} --user-db-connect ${DATASOURCE_INMEMDB_USER_FILE}
+	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource in-memory-db --access-db-connect ${DATASOURCE_INMEMDB_ACCESS_FILE} --service-db-connect ${DATASOURCE_INMEMDB_SERVICE_FILE} --role-db-connect ${DATASOURCE_INMEMDB_ROLE_FILE} --user-db-connect ${DATASOURCE_INMEMDB_USER_FILE}
 
 # Targets - Trust Client
 
@@ -178,10 +180,10 @@ trust0-client:
 	${CARGO_CMD} build --color=always --bin trust0-client --manifest-path ${PROJECT_DIR}/crates/client/Cargo.toml ${CARGOBUILD_EXTRA_ARGS}
 
 run-trust0-client: trust0-client client-pki
-	${TRUST0_CLIENT__BINARY_FILE} --gateway-host ${TRUST0_GATEWAY__HOST} --gateway-port ${TRUST0_GATEWAY__PORT} --auth-key-file ${TRUST0_CLIENT__PKI_KEY_FILE} --auth-cert-file ${TRUST0_CLIENT__PKI_CERT_FILE} --ca-root-cert-file ${ROOT_CA__PKI_CERT_FILE} ${EXECBIN_EXTRA_ARGS}
+	${TRUST0_CLIENT__BINARY_FILE} --host ${TRUST0_CLIENT__BIND_HOST} --gateway-host ${TRUST0_GATEWAY__HOST} --gateway-port ${TRUST0_GATEWAY__PORT} --auth-key-file ${TRUST0_CLIENT__PKI_KEY_FILE} --auth-cert-file ${TRUST0_CLIENT__PKI_CERT_FILE} --ca-root-cert-file ${ROOT_CA__PKI_CERT_FILE} ${EXECBIN_EXTRA_ARGS}
 
 run-trust0-client-nodeps:
-	${TRUST0_CLIENT__BINARY_FILE} --gateway-host ${TRUST0_GATEWAY__HOST} --gateway-port ${TRUST0_GATEWAY__PORT} --auth-key-file ${TRUST0_CLIENT__PKI_KEY_FILE} --auth-cert-file ${TRUST0_CLIENT__PKI_CERT_FILE} --ca-root-cert-file ${ROOT_CA__PKI_CERT_FILE} ${EXECBIN_EXTRA_ARGS}
+	${TRUST0_CLIENT__BINARY_FILE} --host ${TRUST0_CLIENT__BIND_HOST} --gateway-host ${TRUST0_GATEWAY__HOST} --gateway-port ${TRUST0_GATEWAY__PORT} --auth-key-file ${TRUST0_CLIENT__PKI_KEY_FILE} --auth-cert-file ${TRUST0_CLIENT__PKI_CERT_FILE} --ca-root-cert-file ${ROOT_CA__PKI_CERT_FILE} ${EXECBIN_EXTRA_ARGS}
 
 # Targets - CRL
 

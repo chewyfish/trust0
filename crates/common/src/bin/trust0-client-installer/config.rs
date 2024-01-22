@@ -7,7 +7,7 @@ use trust0_common::error::AppError;
 
 /// Installs the core Trust0 Client files in a well-known user installation path structure appropriate for the target OS platform.
 #[derive(Parser, Debug)]
-#[command(author, version, long_about)]
+#[command(author, version, long_about, disable_help_flag = true)]
 pub struct AppConfigArgs {
     /// Config file (as a shell environment file), using program's environment variable naming (see below).
     /// Note - Each config file variable entry may be overriden via their respective command-line arguments
@@ -24,6 +24,10 @@ pub struct AppConfigArgs {
     /// Trust0 client binary file
     #[arg(required = true, short = 'b', long = "client-binary-file", env)]
     pub client_binary_file: String,
+
+    /// The <HOST> address used by the client's socket binds for UDP/TCP service client connections
+    #[arg(required = true, short = 'h', long = "host", env)]
+    pub host: String,
 
     /// Connect to <GATEWAY_HOST>
     #[arg(required = true, short = 'g', long = "gateway-host", env)]
@@ -84,6 +88,10 @@ pub struct AppConfigArgs {
     /// Enable verbose logging
     #[arg(required = false, long = "verbose", env)]
     pub verbose: bool,
+
+    /// Print help
+    #[clap(long, action = clap::ArgAction::HelpLong)]
+    help: Option<bool>,
 }
 
 impl AppConfigArgs {
@@ -94,6 +102,7 @@ impl AppConfigArgs {
             "CLIENT_BINARY_FILE".to_string(),
             self.client_binary_file.clone(),
         );
+        env_map.insert("HOST".to_string(), self.host.clone());
         env_map.insert("GATEWAY_HOST".to_string(), self.gateway_host.clone());
         env_map.insert("GATEWAY_PORT".to_string(), self.gateway_port.to_string());
         env_map.insert("AUTH_KEY_FILE".to_string(), self.auth_key_file.clone());
@@ -132,12 +141,19 @@ impl AppConfigArgs {
     }
 }
 
+/// Application configuration object
 pub struct AppConfig {
+    /// The [`AppConfigArgs`] object created by the Clap parser
     pub args: AppConfigArgs,
 }
 
 impl AppConfig {
-    // load config
+    /// AppConfig constructor
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the newly constructed [`AppConfig`] object.
+    ///
     pub fn new() -> Result<Self, AppError> {
         // Populate environment w/given config file (if provided)
         let mut config_file = env::var_os("CONFIG_FILE");
@@ -203,6 +219,7 @@ pub mod tests {
     fn clear_env_vars() {
         env::remove_var("CONFIG_FILE");
         env::remove_var("CLIENT_BINARY_FILE");
+        env::remove_var("HOST");
         env::remove_var("GATEWAY_HOST");
         env::remove_var("GATEWAY_PORT");
         env::remove_var("AUTH_KEY_FILE");
@@ -233,6 +250,7 @@ pub mod tests {
         clear_env_vars();
         env::set_var("CONFIG_FILE", config_file_str);
         env::set_var("CLIENT_BINARY_FILE", client_binary_file_str);
+        env::set_var("HOST", "127.0.0.1");
         env::set_var("GATEWAY_HOST", "gwhost1");
         env::set_var("GATEWAY_PORT", "8000");
         env::set_var("AUTH_KEY_FILE", client_key_file_str);
@@ -274,6 +292,7 @@ pub mod tests {
         let config = result.unwrap();
 
         assert_eq!(config.args.client_binary_file, client_binary_file_str);
+        assert_eq!(config.args.host, "127.0.0.1");
         assert_eq!(config.args.gateway_host, "gwhost1");
         assert_eq!(config.args.gateway_port, 8000);
         assert_eq!(config.args.auth_key_file, client_key_file_str);
@@ -329,6 +348,7 @@ pub mod tests {
         assert!(config.args.config_file.is_some());
         assert_eq!(config.args.config_file.unwrap(), config_file_str);
         assert_eq!(config.args.client_binary_file, client_binary_file_str);
+        assert_eq!(config.args.host, "127.0.0.1");
         assert_eq!(config.args.gateway_host, "gwhost1");
         assert_eq!(config.args.gateway_port, 8888);
         assert_eq!(config.args.auth_key_file, client_key_file_str);
@@ -360,6 +380,7 @@ pub mod tests {
         let expected_bool_field_val = true;
         let expected_env_map = HashMap::from([
             ("CLIENT_BINARY_FILE".to_string(), "clientbin1".to_string()),
+            ("HOST".to_string(), "127.0.0.1".to_string()),
             ("GATEWAY_HOST".to_string(), "gwhost1".to_string()),
             (
                 "GATEWAY_PORT".to_string(),
@@ -395,6 +416,7 @@ pub mod tests {
                 .get("CLIENT_BINARY_FILE")
                 .unwrap()
                 .to_string(),
+            host: expected_env_map.get("HOST").unwrap().to_string(),
             gateway_host: expected_env_map.get("GATEWAY_HOST").unwrap().to_string(),
             gateway_port: expected_gateway_port,
             auth_key_file: expected_env_map.get("AUTH_KEY_FILE").unwrap().to_string(),
@@ -425,6 +447,7 @@ pub mod tests {
             no_sni: expected_bool_field_val,
             insecure: expected_bool_field_val,
             verbose: expected_bool_field_val,
+            help: None,
         };
 
         let env_map = app_cfg.into_env_map();

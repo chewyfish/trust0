@@ -2,6 +2,16 @@ use x509_parser::der_parser::asn1_rs::{Any, Tag};
 
 use crate::error::AppError;
 
+/// Serialize `BER`/`DER` header tag value
+///
+/// # Arguments
+///
+/// * `asn_attr` - an `ASN.1` type for a `BER`/`DER` attribute
+///
+/// # Returns
+///
+/// The serialized string value for `ASN.1` attribute header tag value (if supported).
+///
 pub fn stringify_asn_value(asn_attr: &Any<'_>) -> Result<String, AppError> {
     let convert_err_fn = |err| {
         Err(AppError::GenWithMsgAndErr(

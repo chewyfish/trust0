@@ -18,19 +18,43 @@ const POLLING_DURATION_MSECS: u64 = 1000;
 
 /// Proxy based on a sync channel and a TCP stream
 pub struct ChannelAndTcpStreamProxy {
+    /// Unique key for this proxy
     proxy_key: String,
+    /// Socket address corresponding to channel proxy entity
     socket_channel_addr: SocketAddr,
+    /// Channel receiver for inbound proxy events for the channel proxy entity
     socket_channel_receiver: Arc<Mutex<sync::mpsc::Receiver<ProxyEvent>>>,
+    /// Channel sender for outbound proxy events for the channel proxy entity
     server_socket_channel_sender: sync::mpsc::Sender<ProxyEvent>,
+    /// TCP stream for the TCP proxy entity
     tcp_stream: std::net::TcpStream,
+    /// Stream reader/writer for the TCP proxy entity
     tcp_stream_reader_writer: Arc<Mutex<Box<dyn StreamReaderWriter>>>,
+    /// Channel sender for proxy (management) events
     proxy_channel_sender: sync::mpsc::Sender<ProxyEvent>,
+    /// Indicates a request to close the proxy
     closing: Arc<Mutex<bool>>,
+    /// Proxy closed/shutdown state value
     closed: Arc<Mutex<bool>>,
 }
 
 impl ChannelAndTcpStreamProxy {
     /// ChannelAndTcpStreamProxy constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `proxy_key` - Unique key for this proxy
+    /// * `socket_channel_addr` - Socket address corresponding to channel proxy entity
+    /// * `socket_channel_receiver` - Channel receiver for inbound proxy events for the channel proxy entity
+    /// * `socket_channel_sender` - Channel sender for outbound proxy events for the channel proxy entity
+    /// * `tcp_stream` - TCP stream for the TCP proxy entity
+    /// * `tcp_stream_reader_writer` - Stream reader/writer for the TCP proxy entity
+    /// * `proxy_channel_sender` - Channel sender for proxy (management) events
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing a newly constructed [`ChannelAndTcpStreamProxy`] object.
+    ///
     pub fn new(
         proxy_key: &str,
         socket_channel_addr: SocketAddr,
@@ -68,6 +92,11 @@ impl ChannelAndTcpStreamProxy {
     }
 
     /// Connect client and server IO streams (spawn tasks to bidirectionally copy data)
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of the connection.
+    ///
     pub fn connect(&mut self) -> Result<(), AppError> {
         info(
             &target!(),

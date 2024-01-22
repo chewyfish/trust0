@@ -13,7 +13,16 @@ use crate::target;
 
 const RELOADABLEFILE_RECHECK_DELAY_MSECS: Duration = Duration::from_millis(30_000);
 
-/// Return file modification time
+/// Get file modification time
+///
+/// # Arguments
+///
+/// * `filepath` - A [`Path`] to retrieve file mtime
+///
+/// # Returns
+///
+/// A [`Result`] containing the [`SystemTime`] representing the file's modification time.
+///
 pub fn file_mtime(filepath: &Path) -> Result<SystemTime, AppError> {
     match filepath.metadata() {
         Ok(meta) => match meta.modified() {
@@ -32,6 +41,15 @@ pub fn file_mtime(filepath: &Path) -> Result<SystemTime, AppError> {
 }
 
 /// Load data as text string from given file
+///
+/// # Arguments
+///
+/// * `filepath_str` - File pathspec string
+///
+/// # Returns
+///
+/// A [`Result`] containing the respective file's contents as a string.
+///
 pub fn load_text_data(filepath_str: &str) -> Result<String, AppError> {
     fs::read_to_string(filepath_str).map_err(|err| {
         AppError::GenWithMsgAndErr(
@@ -44,21 +62,51 @@ pub fn load_text_data(filepath_str: &str) -> Result<String, AppError> {
 /// Represents a file resource that is reloadable upon file change events.
 pub trait ReloadableFile: Send {
     /// file path accessor
+    ///
+    /// # Returns
+    ///
+    /// The [`PathBuf`] for the file pathspec
+    ///
     fn filepath(&self) -> &PathBuf;
 
     /// Stores the last file modified time seen
+    ///
+    /// # Returns
+    ///
+    /// The [`SystemTime`] representing the last checked file modification time
+    ///
     fn last_file_mtime(&mut self) -> &mut SystemTime;
 
     /// reload data callback function
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of the function call.
+    ///
     fn on_reload_data(&mut self) -> Result<(), AppError>;
 
     /// critical-level error callback function
+    ///
+    /// # Arguments
+    ///
+    /// * `err` - Critical error to process
+    ///
     fn on_critical_error(&mut self, err: &AppError);
 
     /// reloading loop processing state
+    ///
+    /// # Returns
+    ///
+    /// The reloading state value (which can be used to stop reloading).
+    ///
     fn reloading(&self) -> &Arc<Mutex<bool>>;
 
     /// Trigger file reload, if file has changed. Returns true if file was reloaded
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing whether or not the file has changed and has the reload operation was invoked.
+    ///
     fn process_reload(&mut self) -> Result<bool, AppError> {
         // Check if file has changed
         let filepath = self.filepath().clone();
@@ -84,6 +132,11 @@ pub trait ReloadableFile: Send {
 
     /// Spawn a thread to handle re-loading if file changes.
     /// If recheck delay is not supplied, a default of 30s will be used.
+    ///
+    /// # Arguments
+    ///
+    /// * `reloadable_file` - A [`ReloadableFile`] to use for reloading operation
+    ///
     fn spawn_reloader(
         mut reloadable_file: impl ReloadableFile + 'static,
         recheck_delay: Option<Duration>,
@@ -135,14 +188,29 @@ pub trait ReloadableFile: Send {
 
 /// Represents a reloadable text file
 pub struct ReloadableTextFile {
+    /// Text file path
     path: PathBuf,
+    /// Last file modification time seen
     last_mtime: SystemTime,
+    /// Holds most recent file text contents
     text_data: Arc<Mutex<String>>,
+    /// Controls whether reloading loop is active
     reloading: Arc<Mutex<bool>>,
 }
 
 impl ReloadableTextFile {
     /// ReloadableTextFile constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `filepath_str` - Text file pathspec
+    /// * `text_data` Holds most recent file text contents
+    /// * `reloading` - Controls whether reloading loop is active
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing a newly constructed [`ReloadableTextFile`] object.
+    ///
     pub fn new(
         filepath_str: &str,
         text_data: &Arc<Mutex<String>>,

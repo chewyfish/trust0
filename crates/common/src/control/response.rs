@@ -8,7 +8,6 @@ use crate::control::request::Request;
 use crate::error::AppError;
 use crate::model;
 
-/// Container struct for controller responses
 pub const CODE_OK: u16 = 200;
 pub const CODE_CREATED: u16 = 201;
 pub const CODE_BAD_REQUEST: u16 = 400;
@@ -17,16 +16,33 @@ pub const CODE_FORBIDDEN: u16 = 403;
 pub const CODE_NOT_FOUND: u16 = 404;
 pub const CODE_INTERNAL_SERVER_ERROR: u16 = 500;
 
+/// Control plane REPL response
 #[derive(Serialize, Deserialize, Clone, Default, Debug)]
 pub struct Response {
+    /// Indicates well-known code facility for response
     pub code: u16,
+    /// If necessary, contains a top-level response message
     pub message: Option<String>,
+    /// Will match the exact request for this response
     pub request: Request,
+    /// Response data (different depending on request type)
     pub data: Option<Value>,
 }
 
 impl Response {
     /// Response constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `code` - Well-known code facility for response
+    /// * `message` - (optional) Top-level response message
+    /// * `request` - Corresponding request for this response
+    /// * `data` - (optional) Response data object (generic as is different per request-type)
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`Response`] object.
+    ///
     pub fn new(
         code: u16,
         message: &Option<String>,
@@ -42,6 +58,15 @@ impl Response {
     }
 
     /// Process command response text
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - JSON string, which should be a serialized [`Response`] object
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the deserialized [`Response`] object for the given data string.
+    ///
     pub fn parse(data: &str) -> Result<Response, AppError> {
         serde_json::from_str(data).map_err(|err| {
             AppError::GenWithMsgAndErr(
@@ -52,16 +77,30 @@ impl Response {
     }
 }
 
-/// Represents the contextual mTLS client connection
+/// User corresponding to the client connection
 #[derive(Serialize, Deserialize, Clone, PartialEq, Default, Debug)]
 pub struct User {
+    /// User ID (unique across users)
     user_id: u64,
+    /// Friendly name for user
     name: String,
+    /// Indicates the current status of the user
     status: String,
 }
 
 impl User {
-    /// About constructor
+    /// User constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - User ID value
+    /// * `name` - Friendly name for user
+    /// * `status` - Current status for user
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`User`] object.
+    ///
     pub fn new(user_id: u64, name: &str, status: &str) -> Self {
         Self {
             user_id,
@@ -94,16 +133,33 @@ impl TryInto<Value> for &User {
     }
 }
 
+/// Contextual mTLS client connection information
 #[derive(Serialize, Deserialize, Clone, PartialEq, Default, Debug)]
 pub struct About {
+    /// Certificate `subject` information
     cert_subject: Option<String>,
+    /// Certificate `subject-alternative-name` information
     cert_alt_subj: Option<String>,
+    /// Core (operational) client authentication information
     cert_context: Option<String>,
+    /// Corresponding [`User`] object for connection
     user: Option<User>,
 }
 
 impl About {
     /// About constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `cert_subject` - Certificate `subject` information
+    /// * `cert_alt_subj` - Certificate `subject-alternative-name` information
+    /// * `cert_context` - Core (operational) client authentication information
+    /// * `user` - Corresponding [`User`] object for connection
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`About`] object.
+    ///
     pub fn new(
         cert_subject: &Option<String>,
         cert_alt_subj: &Option<String>,
@@ -142,17 +198,33 @@ impl TryInto<Value> for &About {
     }
 }
 
-/// Represents an active service proxy, available for use by client
+/// Active service proxy, available for use by client
 #[derive(Serialize, Deserialize, Clone, PartialEq, Default, Debug)]
 pub struct Proxy {
+    /// [`Service`] object for proxy
     pub service: Service,
+    /// Trust0 gateway address host
     pub gateway_host: Option<String>,
+    /// Trust0 gateway address port
     pub gateway_port: u16,
+    /// Trust0 client socket bind port (for service client connections)
     pub client_port: Option<u16>,
 }
 
 impl Proxy {
     /// Service constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `service` - [`Service`] object for proxy
+    /// * `gateway_host` - Trust0 gateway address host
+    /// * `gateway_port` - Trust0 gateway address port
+    /// * `client_port` - Trust0 client socket bind port (for service client connections)
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`Service`] object.
+    ///
     pub fn new(
         service: &Service,
         gateway_host: &Option<String>,
@@ -168,6 +240,15 @@ impl Proxy {
     }
 
     /// Construct Proxy(ies) from serde Value
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - A JSON object representing either a JSON array of [`Proxy`] or a single [`Proxy`]
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing a vector of corresponding [`Proxy`] objects.
+    ///
     pub fn from_serde_value(value: &Value) -> Result<Vec<Proxy>, AppError> {
         if let Value::Array(values) = &value {
             Ok(values
@@ -217,17 +298,33 @@ impl TryInto<Value> for &Proxy {
     }
 }
 
-/// Represents an authorized service for connected mTLS device user
+/// An authorized service for connected mTLS device user
 #[derive(Serialize, Deserialize, Clone, PartialEq, Default, Debug)]
 pub struct Service {
+    /// Service ID (unique across services)
     pub id: u64,
+    /// Well-known service key name (unique across services)
     pub name: String,
+    /// Network transport type (`TCP`, `UDP`)
     pub transport: model::service::Transport,
+    /// Remote service address (not returned if gateway masks addresses)
     pub address: Option<String>,
 }
 
 impl Service {
     /// Service constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - Service ID
+    /// * `name` - Well-known service key name
+    /// * `transport` - Network transport type (`TCP`, `UDP`)
+    /// * `address` - Potentially masked (optional) remote service address
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`Service`] object.
+    ///
     pub fn new(
         id: u64,
         name: &str,
@@ -243,6 +340,15 @@ impl Service {
     }
 
     /// Construct Service(s) from serde Value
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - A JSON object representing either a JSON array of [`Service`] or a single [`Service`]
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing a vector of corresponding [`Service`] objects.
+    ///
     pub fn from_serde_value(value: &Value) -> Result<Vec<Service>, AppError> {
         if let Value::Array(values) = &value {
             Ok(values
@@ -329,16 +435,28 @@ impl TryInto<Value> for &Service {
     }
 }
 
-/// Represents object to be used in an authentication exchange
+/// Message data object used in an authentication exchange
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginData {
+    /// Authentication scheme
     pub authn_type: authenticator::AuthnType,
+    /// Authentication flow message
     pub message: Option<authenticator::AuthnMessage>,
 }
 
 impl LoginData {
     /// LoginData constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `authn_type` - Authentication scheme
+    /// * `message` - (optional) Authentication flow message
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`LoginData`] object.
+    ///
     pub fn new(
         authn_type: authenticator::AuthnType,
         message: Option<authenticator::AuthnMessage>,
@@ -350,6 +468,15 @@ impl LoginData {
     }
 
     /// Construct LoginData(s) from serde Value
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - A JSON object representing either a JSON array of [`LoginData`] or a single [`LoginData`]
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing a vector of corresponding [`LoginData`] objects.
+    ///
     pub fn from_serde_value(value: &Value) -> Result<Vec<LoginData>, AppError> {
         if let Value::Array(values) = &value {
             Ok(values
@@ -399,15 +526,27 @@ impl TryInto<Value> for &LoginData {
     }
 }
 
-/// Represents active service proxy connections for connected mTLS device user
+/// An active service proxy connections for connected mTLS device user
 #[derive(Serialize, Deserialize, Clone, PartialEq, Default, Debug)]
 pub struct Connection {
+    /// Service key name value
     pub service_name: String,
+    /// List of current connection bind address pairs
     pub binds: Vec<Vec<String>>,
 }
 
 impl Connection {
     /// Connection constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `service_name` - Service key name value
+    /// * `binds` - List of current connection bind address pairs
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`Connection`] object.
+    ///
     pub fn new(service_name: &str, binds: Vec<Vec<String>>) -> Self {
         Self {
             service_name: service_name.to_string(),
@@ -416,6 +555,15 @@ impl Connection {
     }
 
     /// Construct Connection(s) from serde Value
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - A JSON object representing either a JSON array of [`Connection`] or a single [`Connection`]
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing a vector of corresponding [`Connection`] objects.
+    ///
     pub fn from_serde_value(value: &Value) -> Result<Vec<Connection>, AppError> {
         if let Value::Array(values) = &value {
             Ok(values

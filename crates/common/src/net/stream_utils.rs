@@ -10,6 +10,7 @@ use crate::error::AppError;
 const TCP_READ_BLOCK_SIZE: usize = 1024;
 const UDP_RECV_BUFFER_SIZE: usize = 64 * 1024;
 
+/// Represents a stream, which implements [`io::Read`] and [`io::Write`]
 pub trait StreamReaderWriter: io::Read + io::Write + Send {}
 
 impl StreamReaderWriter for std::net::TcpStream {}
@@ -17,6 +18,15 @@ impl StreamReaderWriter for StreamOwned<ClientConnection, std::net::TcpStream> {
 impl StreamReaderWriter for StreamOwned<ServerConnection, std::net::TcpStream> {}
 
 /// Read TCP stream content
+///
+/// # Arguments
+///
+/// * `stream_reader` - Stream to read from
+///
+/// # Returns
+///
+/// A [`Result`] containing a data byte vector read from given stream.
+///
 pub fn read_tcp_stream(
     stream_reader: &mut Arc<Mutex<Box<dyn StreamReaderWriter>>>,
 ) -> Result<Vec<u8>, AppError> {
@@ -54,6 +64,14 @@ pub fn read_tcp_stream(
 }
 
 /// Write TCP stream content
+///
+/// * `stream_writer` - Stream to write to
+/// * `buffer` - Data byte array to write to stream
+///
+/// # Returns
+///
+/// A [`Result`] indicating success/failure of write operation.
+///
 pub fn write_tcp_stream(
     stream_writer: &mut Arc<Mutex<Box<dyn StreamReaderWriter>>>,
     buffer: &[u8],
@@ -73,6 +91,15 @@ pub fn write_tcp_stream(
 }
 
 /// Read (MIO) UDP socket content
+///
+/// # Arguments
+///
+/// * `udp_socket` - (MIO) UDP socket, which can receive messages
+///
+/// # Returns
+///
+/// A [`Result`] containing a tuple of the remote socket address and the data byte vector read from given socket.
+///
 pub fn read_mio_udp_socket(
     udp_socket: &mio::net::UdpSocket,
 ) -> Result<(std::net::SocketAddr, Vec<u8>), AppError> {
@@ -93,6 +120,15 @@ pub fn read_mio_udp_socket(
 }
 
 /// Write UDP socket content
+///
+/// # Arguments
+///
+/// * `udp_socket` - (MIO) UDP socket to send messages from
+///
+/// # Returns
+///
+/// A [`Result`] indicating success/failure of write operation.
+///
 pub fn write_mio_udp_socket(
     udp_socket: &mio::net::UdpSocket,
     buffer: &[u8],
@@ -112,6 +148,15 @@ pub fn write_mio_udp_socket(
 }
 
 /// Clone std TcpStream
+///
+/// # Arguments
+///
+/// * `tcp_stream` - TCP stream to clone
+///
+/// # Returns
+///
+/// A [`Result`] containing the cloned TCP stream.
+///
 pub fn clone_std_tcp_stream(
     tcp_stream: &std::net::TcpStream,
 ) -> Result<std::net::TcpStream, AppError> {
@@ -124,6 +169,15 @@ pub fn clone_std_tcp_stream(
 }
 
 /// Clone std UdpSocket
+///
+/// # Arguments
+///
+/// * `udp_stream` - UDP socket to clone
+///
+/// # Returns
+///
+/// A [`Result`] containing the cloned UDP socket.
+///
 pub fn clone_std_udp_socket(
     udp_socket: &std::net::UdpSocket,
 ) -> Result<std::net::UdpSocket, AppError> {
@@ -137,13 +191,21 @@ pub fn clone_std_udp_socket(
 
 /// Connected TCP stream pair creator
 pub struct ConnectedTcpStream {
+    /// TCP listener used in creating the connected TCP streams
     pub listener: Arc<std::net::TcpListener>,
+    /// The TCP stream for the server (of the connected stream pair)
     pub server_stream: (std::net::TcpStream, std::net::SocketAddr),
+    /// The TCP stream for the client (of the connected stream pair)
     pub client_stream: (std::net::TcpStream, std::net::SocketAddr),
 }
 
 impl ConnectedTcpStream {
     /// ConnectedTcpStream constructor, create a connected socket pair
+    ///
+    /// # Returns
+    ///
+    /// A [`anyhow::Result`] of a newly created [`ConnectedTcpStream`] object.
+    ///
     pub fn new() -> anyhow::Result<Self> {
         // spawn server listener
         let listener = Arc::new(std::net::TcpListener::bind("127.0.0.1:0")?);
@@ -186,12 +248,19 @@ impl Drop for ConnectedTcpStream {
 
 /// Connected UDP socket pair creator
 pub struct ConnectedUdpSocket {
+    /// The UDP socket for the server (of the connected socket pair)
     pub server_socket: (std::net::UdpSocket, std::net::SocketAddr),
+    /// The UDP socket for the server (of the connected socket pair)
     pub client_socket: (std::net::UdpSocket, std::net::SocketAddr),
 }
 
 impl ConnectedUdpSocket {
     /// ConnectedUdpStream constructor, create a connected socket pair
+    ///
+    /// # Returns
+    ///
+    /// A [`anyhow::Result`] of a newly created [`ConnectedUdpSocket`] object.
+    ///
     pub fn new() -> anyhow::Result<Self> {
         // bind server/client socket
         let server_socket = std::net::UdpSocket::bind("127.0.0.1:0")?;

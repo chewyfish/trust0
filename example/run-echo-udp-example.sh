@@ -34,7 +34,7 @@ PS1='$ ' "${TMUX_CMD}" new-session -s trust0-echo-udp-example \; \
   split-window -v -l 43% \; \
   send-keys '(clear && read -p "Step 3: Hit <Enter> to run echo server" && "'"${NCAT_CMD}"'" -v -u -k -l -p '"${ECHO_SERVICE__PORT}"' --exec "'"${CAT_CMD}"'")' C-m \; \
   split-window -h -l 65% \; \
-  send-keys '(clear && read -p "Step 4: Hit <Enter> to run echo client (after service proxy has started)" && "'"${NCAT_CMD}"'" -v -u localhost '"${ECHO_PROXY__PORT}"')' C-m \; \
+  send-keys '(clear && read -p "Step 4: Hit <Enter> to run echo client (after service proxy has started)" && "'"${NCAT_CMD}"'" -v -u 127.0.0.1 '"${ECHO_PROXY__PORT}"')' C-m \; \
   split-window -h -l 38% \; \
   send-keys '(clear && read -p "Step Last: Hit <Enter> to shutdown example" && ("'"${TMUX_CMD}"'" kill-session -t trust0-echo-udp-example))' C-m \; \
   select-pane -t 0 \;

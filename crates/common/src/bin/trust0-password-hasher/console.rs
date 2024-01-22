@@ -12,13 +12,25 @@ pub const LINE_ENDING: &str = "\n";
 
 /// Handles console input, output
 pub struct Console {
+    /// Reader for console input
     reader: Box<dyn BufRead>,
+    /// Write for console output
     writer: Box<dyn Write>,
 }
 
 impl Console {
     /// Console constructor
     /// If reader or writer object is not given, will use STDIN and STDOUT respectively
+    ///
+    /// # Arguments
+    ///
+    /// * `reader` - Console reader object
+    /// * `writer` - Console writer object
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`Console`] object.
+    ///
     pub fn new(reader: Option<Box<dyn BufRead>>, writer: Option<Box<dyn Write>>) -> Self {
         Self {
             reader: reader.unwrap_or(Box::new(stdin().lock())),
@@ -51,7 +63,7 @@ impl ConsoleIO for Console {
     fn read_next_line(&mut self, is_password_input: bool) -> Result<String, AppError> {
         match is_password_input {
             true => match rpassword::read_password() {
-                Ok(line) => Ok(line),
+                Ok(line) => Ok(line.trim_end().to_string()),
                 Err(err) => Err(AppError::GenWithMsgAndErr(
                     "Error reading console (pwd) line".to_string(),
                     Box::new(err),
@@ -71,14 +83,39 @@ impl ConsoleIO for Console {
     }
 }
 
+/// Console IO operations for the tool
 pub trait ConsoleIO {
     /// Display application title
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating the success/failure of the write operation.
+    ///
     fn write_title(&mut self) -> Result<(), AppError>;
 
     /// Write content
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Byte array to be written
+    /// * `flush_output` - Whether to flush output handle
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating the success/failure of the write operation.
+    ///
     fn write_data(&mut self, data: &[u8], flush_output: bool) -> Result<(), AppError>;
 
     /// Blocking read for next input line, which will be sent to channel for processing
+    ///
+    /// # Arguments
+    ///
+    /// * `is_password_input` - Indicates whether the next line's input should be hidden from being displayed
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the next line of data read. End-of-line (and whitespce) characters will be removed.
+    ///
     fn read_next_line(&mut self, is_password_input: bool) -> Result<String, AppError>;
 }
 

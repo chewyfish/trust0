@@ -2,7 +2,14 @@ use clap::error::ErrorKind;
 use clap::Command;
 use log::error;
 
-/// invocation error: print usage and panic
+/// Invocation error: print usage and panic
+///
+/// # Arguments
+///
+/// * `error` - Clap error kind value
+/// * `command` - Clap command object (used to generate help)
+/// * `message` - Specific/contextual error message
+///
 pub fn exit_on_usage_error(error: ErrorKind, command: &mut Command, message: &str) {
     error!("{:?}", command.render_help());
     panic!("{}: {}", error, message);

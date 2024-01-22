@@ -13,6 +13,19 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 /// Hash password (as is expected by this implementation)
+///
+/// The hash is computed using `SHA-256`, salted with the given `username` and using 4096 iterations.
+///
+/// # Arguments
+///
+/// * `username` - Username corresponding to the password being hashed
+/// * `password` - Cleartext (unencoded) password to be hashed
+/// * `base64_encode` - Whether or not to base64 encode the resultant hashed value
+///
+/// # Returns
+///
+/// A vector of bytes of the hashed password (either base64 encoded or not)
+///
 pub fn hash_password(username: &str, password: &str, base64_encode: bool) -> Vec<u8> {
     let hashed_password = scram::hash_password(
         password,
@@ -75,29 +88,54 @@ fn process_error(
 #[derive(Debug, PartialEq)]
 /// Client authentication "challenge-response" state flow
 enum ClientStateFlow {
+    /// Prior to any processing
     New,
+    /// Client initial message computed and sent to outbound queue
     ClientInitialSent,
+    /// Server challenge message received (in response to client initial)
     ServerChallengeRecvd,
+    /// Client response message to server challenge computed and sent to outbound queue
     ClientResponseSent,
+    /// Server final message received (in response to client challenge response)
     ServerFinalRecvd,
 }
 
 /// Client authenticator utilizing SCRAM SHA256 SASL authentication
 pub struct ScramSha256AuthenticatorClient {
+    /// Channel queue to send client processing message responses (used in processing thread)
     client_response_sender: Option<mpsc::Sender<AuthnMessage>>,
+    /// Channel queue to receive client processing message responses (outside of processing thread)
     client_response_receiver: Option<mpsc::Receiver<AuthnMessage>>,
+    /// Channel queue to send server processing message responses (outside of processing thread)
     server_response_sender: Option<mpsc::Sender<AuthnMessage>>,
+    /// Channel queue to receive server processing message responses (used in processing thread)
     server_response_receiver: Option<mpsc::Receiver<AuthnMessage>>,
+    /// Username for the user being authenticated
     username: String,
+    /// Cleartext (unencoded) password for the user being authenticated
     password: String,
+    /// A timeout duration to be used when attempting to read from channels
     channel_timeout: Duration,
+    /// Current authentication state
     authenticated: Arc<Mutex<bool>>,
     #[cfg(test)]
+    /// Processing state (used in testing)
     state: Arc<Mutex<ClientStateFlow>>,
 }
 
 impl ScramSha256AuthenticatorClient {
     /// ScramSha256AuthenticatorClient constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `username` - Username for the user being authenticated
+    /// * `password` - Cleartext (unencoded) password for the user being authenticated
+    /// * `channel_timeout` - A timeout duration to be used when attempting to read from channels
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`ScramSha256AuthenticatorClient`] object.
+    ///
     pub fn new(username: &str, password: &str, channel_timeout: Duration) -> Self {
         let client_response_channel = mpsc::channel();
         let server_response_channel = mpsc::channel();
@@ -308,10 +346,15 @@ impl AuthenticatorClient for ScramSha256AuthenticatorClient {
 #[derive(Debug, PartialEq)]
 /// Server authentication "challenge-response" state flow
 enum ServerStateFlow {
+    /// Prior to any processing
     New,
+    /// Client initial message received
     ClientInitialRecvd,
+    /// Server challenge message (in response to client initial)
     ServerChallengeSent,
+    /// Client challenge response message received
     ClientResponseRecvd,
+    /// Server final message sent to client
     ServerFinalSent,
 }
 
@@ -320,14 +363,22 @@ pub struct ScramSha256AuthenticatorServer<P>
 where
     P: scram::AuthenticationProvider + Sized,
 {
+    /// Channel queue to send server processing message responses (used in processing thread)
     server_response_sender: Option<mpsc::Sender<AuthnMessage>>,
+    /// Channel queue to receive inbound server processing message responses (outside of processing thread)
     server_response_receiver: Option<mpsc::Receiver<AuthnMessage>>,
+    /// Channel queue to send client processing message responses (outside of processing thread)
     client_response_sender: Option<mpsc::Sender<AuthnMessage>>,
+    /// Channel queue to receive client processing message responses (used in processing thread)
     client_response_receiver: Option<mpsc::Receiver<AuthnMessage>>,
+    /// A (username/) password database respository
     auth_provider: Option<Box<P>>,
+    /// A timeout duration to be used when attempting to read from channels
     channel_timeout: Duration,
+    /// Current authentication state
     authenticated: Arc<Mutex<bool>>,
     #[cfg(test)]
+    /// Processing state (used in testing)
     state: Arc<Mutex<ServerStateFlow>>,
 }
 
@@ -336,6 +387,16 @@ where
     P: scram::AuthenticationProvider + Send + Sized + 'static,
 {
     /// ScramSha256AuthenticatorServer constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `auth_provider` - A (username/) password database repository (used to verify credentials)
+    /// * `channel_timeout` - A timeout duration to be used when attempting to read from channels
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`ScramSha256AuthenticatorServer`] object.
+    ///
     pub fn new(auth_provider: P, channel_timeout: Duration) -> Self {
         let server_response_channel = mpsc::channel();
         let client_response_channel = mpsc::channel();
@@ -710,6 +771,102 @@ pub mod test {
     }
 
     // tests
+
+    #[test]
+    fn scramsha256_hash_password_when_base64_encoded() {
+        assert_eq!(
+            hash_password("user1", "pass1", true,),
+            vec![
+                51, 48, 110, 97, 115, 71, 120, 102, 87, 57, 74, 122, 84, 104, 115, 106, 115, 71,
+                83, 117, 116, 97, 121, 78, 104, 84, 103, 82, 78, 86, 120, 107, 118, 95, 81, 109,
+                54, 90, 85, 108, 87, 50, 85, 61,
+            ],
+        );
+    }
+
+    #[test]
+    fn scramsha256_hash_password_when_not_base64_encoded() {
+        assert_eq!(
+            hash_password("user1", "pass1", false,),
+            vec![
+                223, 73, 218, 176, 108, 95, 91, 210, 115, 78, 27, 35, 176, 100, 174, 181, 172, 141,
+                133, 56, 17, 53, 92, 100, 191, 244, 38, 233, 149, 37, 91, 101,
+            ],
+        );
+    }
+
+    #[test]
+    fn scramsha256_process_error_when_has_sender_and_app_error() {
+        let channel = mpsc::channel();
+
+        let result = process_error(
+            &Some(channel.0.clone()),
+            Some(AppError::GenWithCode(123)),
+            None,
+        );
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+        let authn_msg = result.unwrap();
+
+        assert_eq!(
+            authn_msg,
+            AuthnMessage::Error("GenWithCode(123)".to_string())
+        );
+
+        match channel.1.try_recv() {
+            Ok(authn_msg) => assert_eq!(
+                authn_msg,
+                AuthnMessage::Error("GenWithCode(123)".to_string())
+            ),
+            Err(err) => panic!("Unexpected channel result: err={:?}", &err),
+        }
+    }
+
+    #[test]
+    fn scramsha256_process_error_when_has_sender_and_scram_error() {
+        let channel = mpsc::channel();
+
+        let result = process_error(
+            &Some(channel.0.clone()),
+            None,
+            Some(scram::Error::InvalidServer),
+        );
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+        let authn_msg = result.unwrap();
+
+        assert_eq!(
+            authn_msg,
+            AuthnMessage::Unauthenticated("InvalidServer".to_string())
+        );
+
+        match channel.1.try_recv() {
+            Ok(authn_msg) => assert_eq!(
+                authn_msg,
+                AuthnMessage::Unauthenticated("InvalidServer".to_string())
+            ),
+            Err(err) => panic!("Unexpected channel result: err={:?}", &err),
+        }
+    }
+
+    #[test]
+    fn scramsha256_process_error_when_no_sender_and_app_error() {
+        let result = process_error(&None, Some(AppError::GenWithCode(123)), None);
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+        let authn_msg = result.unwrap();
+
+        assert_eq!(
+            authn_msg,
+            AuthnMessage::Error("GenWithCode(123)".to_string())
+        );
+    }
 
     #[test]
     fn scramsha256cli_new() {

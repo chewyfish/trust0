@@ -31,13 +31,17 @@ pub struct UdpClientProxy {
 impl UdpClientProxy {
     /// UdpClientProxy constructor
     pub fn new(
-        _app_config: Arc<AppConfig>,
+        app_config: Arc<AppConfig>,
         server_socket_channel_receiver: Receiver<ProxyEvent>,
         server_visitor: Arc<Mutex<UdpClientProxyServerVisitor>>,
         proxy_port: u16,
     ) -> Result<Self, AppError> {
         Ok(Self {
-            udp_server: server_std::Server::new(server_visitor.clone(), proxy_port)?,
+            udp_server: server_std::Server::new(
+                server_visitor.clone(),
+                &app_config.client_host,
+                proxy_port,
+            )?,
             server_socket_channel_receiver: Arc::new(Mutex::new(server_socket_channel_receiver)),
             _server_visitor: server_visitor,
         })

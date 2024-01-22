@@ -33,12 +33,16 @@ pub struct TcpGatewayProxy {
 impl TcpGatewayProxy {
     /// TcpGatewayProxy constructor
     pub fn new(
-        _app_config: Arc<AppConfig>,
+        app_config: Arc<AppConfig>,
         server_visitor: Arc<Mutex<TcpGatewayProxyServerVisitor>>,
         proxy_port: u16,
     ) -> Self {
         Self {
-            tls_server: server_std::Server::new(server_visitor.clone(), proxy_port),
+            tls_server: server_std::Server::new(
+                server_visitor.clone(),
+                &app_config.server_host,
+                proxy_port,
+            ),
             _server_visitor: server_visitor,
         }
     }

@@ -1,6 +1,7 @@
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::mpsc;
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::Duration;
 use std::{io, thread};
 
@@ -30,10 +31,22 @@ pub trait TlsConnection {
 }
 
 impl TlsConnection for TlsServerConnection {
+    /// Returns connection's peer's certificate(s)
+    ///
+    /// # Returns
+    ///
+    /// An (optional) vector of peer certificates.
+    ///
     fn peer_certificates(&self) -> Option<Vec<CertificateDer>> {
         self.conn.peer_certificates().map(|certs| certs.to_vec())
     }
 
+    /// Returns connection's ALPN protocol(s)
+    ///
+    /// # Returns
+    ///
+    /// An (optional) vector of connection's ALPN protocols (as byte vectors).
+    ///
     fn alpn_protocol(&self) -> Option<Vec<u8>> {
         self.conn
             .alpn_protocol()
@@ -44,40 +57,53 @@ impl TlsConnection for TlsServerConnection {
 /// Connection event message channel
 #[derive(Debug)]
 pub enum ConnectionEvent {
+    /// Request to close connection
     Closing,
+    /// Connection closed event
     Closed,
+    /// Request to send data on connection
     Write(Vec<u8>),
 }
 
-impl ConnectionEvent {
-    /// Create multiple producer, single consumer message channel
-    pub fn create_channel() -> (Sender<ConnectionEvent>, Receiver<ConnectionEvent>) {
-        mpsc::channel()
-    }
-}
-
-/// This is a TLS client connection which has been accepted by the server, and is currently being served.
-///
-/// It has a TCP-level stream, a TLS-level connection state, and some other state/metadata.
+/// TLS client connection which has been accepted by the server, and is currently being served.
 pub struct Connection {
+    /// Connection visitor pattern object
     visitor: Box<dyn ConnectionVisitor>,
+    /// Corresponding TLS connection object
     tls_conn: Option<TlsServerConnection>,
+    /// Corresponding TLS connection object (alternative version used in testing)
     #[allow(dead_code)]
     tls_conn_alt: Option<Box<dyn StreamReaderWriter>>,
+    /// Corresponding TCP connection stream
     tcp_stream: Option<TcpStream>,
+    /// Event message channel
     event_channel: (Sender<ConnectionEvent>, Receiver<ConnectionEvent>),
+    /// Connection ALPN protocol
     alpn_protocol: alpn::Protocol,
+    /// Connection closed state value
     closed: bool,
 }
 
 impl Connection {
     /// Connection constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `visitor` - Connection visitor pattern object
+    /// * `tls_conn` - Corresponding TLS connection object
+    /// * `alpn_protocol` - ALPN protocol for connection
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] of a newly constructed [`Connection`] object.
+    /// Error is returned if there are issues cloning the TCP stream.
+    //
     pub fn new(
         mut visitor: Box<dyn ConnectionVisitor>,
         tls_conn: TlsServerConnection,
         alpn_protocol: alpn::Protocol,
     ) -> Result<Self, AppError> {
-        let event_channel = ConnectionEvent::create_channel();
+        let event_channel = mpsc::channel();
         visitor.set_event_channel_sender(event_channel.0.clone())?;
         visitor.on_connected()?;
 
@@ -95,36 +121,71 @@ impl Connection {
     }
 
     /// Connection 'closed' state accessor
+    ///
+    /// # Returns
+    ///
+    /// Whether or not the connection is closed.
+    ///
     pub fn is_closed(&self) -> bool {
         self.closed
     }
 
     /// Connection 'closed' state mutator
+    ///
+    /// # Arguments
+    ///
+    /// * `closed` - Connection closed state value to set for object's corresponding state attribute
+    ///
     pub fn set_closed(&mut self, closed: bool) {
         self.closed = closed;
     }
 
     /// Connection 'tls_conn' (immutable) accessor
+    ///
+    /// # Returns
+    ///
+    /// A reference to the TLS connection object. Assumes value is present, otherwise will panic.
+    ///
     pub fn get_tls_conn_as_ref(&self) -> &TlsServerConnection {
         self.tls_conn.as_ref().unwrap()
     }
 
     /// Connection 'tcp_stream' (immutable) accessor
+    ///
+    /// # Returns
+    ///
+    /// A reference to the TCP stream object. Assumes value is present, otherwise will panic.
+    ///
     pub fn get_tcp_stream(&self) -> &TcpStream {
         self.tcp_stream.as_ref().unwrap()
     }
 
     /// Connection 'alpn_protocol' accessor
+    ///
+    /// # Returns
+    ///
+    /// A reference to the connection's ALPN protocol.
+    ///
     pub fn get_alpn_protocol(&self) -> &alpn::Protocol {
         &self.alpn_protocol
     }
 
-    /// Get copy of event channel sender
+    /// Get event channel sender
+    ///
+    /// # Returns
+    ///
+    /// A clone of the event message channel sender.
+    ///
     pub fn clone_event_channel_sender(&self) -> Sender<ConnectionEvent> {
         self.event_channel.0.clone()
     }
 
     /// Poll connection events loop
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of the connection processing loop.
+    ///
     pub fn poll_connection(&mut self) -> Result<(), AppError> {
         loop {
             // Read connection data (if avail)
@@ -180,6 +241,12 @@ impl Connection {
     }
 
     /// Read and process client connection content
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing a byte vector of data read from TCP stream.
+    /// If connection would block, then not data is returned.
+    ///
     pub fn read(&mut self) -> Result<Vec<u8>, AppError> {
         let mut return_buffer = vec![];
         let mut error: Option<AppError> = None;
@@ -217,6 +284,15 @@ impl Connection {
     }
 
     /// Write content to client connection
+    ///
+    /// # Arguments
+    ///
+    /// * `buffer` - A byte array of data to write to TCP stream.
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of write operation.
+    ///
     pub fn write(&mut self, buffer: &[u8]) -> Result<(), AppError> {
         let mut error: Option<AppError> = None;
 
@@ -244,6 +320,11 @@ impl Connection {
     }
 
     /// Shut down TLS connection
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of shutdown operation.
+    ///
     pub fn shutdown(&mut self) -> Result<(), AppError> {
         if self.closed {
             return Ok(());
@@ -388,12 +469,26 @@ impl From<Connection> for TlsServerConnection {
 
 /// Visitor pattern used to customize connection implementation strategy.
 pub trait ConnectionVisitor: Send {
-    /// Session connected
+    /// Session connected event handler
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of function call.
+    ///
     fn on_connected(&mut self) -> Result<(), AppError> {
         Ok(())
     }
 
     /// Setup event channel sender
+    ///
+    /// # Arguments
+    ///
+    /// * `event_channel_sender` - A clone of the event message channel sender
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of function call.
+    ///
     fn set_event_channel_sender(
         &mut self,
         _event_channel_sender: Sender<ConnectionEvent>,
@@ -402,21 +497,45 @@ pub trait ConnectionVisitor: Send {
     }
 
     /// Incoming connection content processing event handler
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - Data byte array, which was read from TCP stream
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of function call.
+    ///
     fn on_connection_read(&mut self, _data: &[u8]) -> Result<(), AppError> {
         Ok(())
     }
 
     /// Polling cycle tick handler
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of function call.
+    ///
     fn on_polling_cycle(&mut self) -> Result<(), AppError> {
         Ok(())
     }
 
     /// Connection shutdown event handler
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of function call.
+    ///
     fn on_shutdown(&mut self) -> Result<(), AppError> {
         Ok(())
     }
 
     /// Send error response message to client
+    ///
+    /// # Arguments
+    ///
+    /// * `err` - Processing error to handle
+    ///
     fn send_error_response(&mut self, err: &AppError);
 }
 

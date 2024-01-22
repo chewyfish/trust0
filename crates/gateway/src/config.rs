@@ -124,9 +124,9 @@ impl DataSource {
     }
 }
 
-/// Runs a Trust0 gateway server on :PORT.  The default PORT is 443.
+/// Runs a Trust0 gateway server on <HOST>:<PORT>
 #[derive(Parser)]
-#[command(author, version, long_about)]
+#[command(author, version, long_about, disable_help_flag = true)]
 pub struct AppConfigArgs {
     /// Config file (as a shell environment file), using program's environment variable naming (see below).
     /// Note - Each config file variable entry may be overriden via their respective command-line arguments
@@ -140,7 +140,11 @@ pub struct AppConfigArgs {
     )]
     pub config_file: Option<String>,
 
-    /// Listen on PORT
+    /// The <HOST> address used by the gateway's listener binds for Trust0 client connections
+    #[arg(required = true, short = 'h', long = "host", env)]
+    pub host: String,
+
+    /// The <PORT> used by the gateway's listener binds for Trust0 client connections
     #[arg(
         required = true,
         short = 'p',
@@ -234,6 +238,10 @@ pub struct AppConfigArgs {
     /// User entity store connect specifier string
     #[arg(required = false, long = "user-db-connect", env)]
     pub user_db_connect: Option<String>,
+
+    /// Print help
+    #[clap(long, action = clap::ArgAction::HelpLong)]
+    help: Option<bool>,
 }
 
 /// TLS server configuration builder
@@ -310,6 +318,7 @@ impl TlsServerConfigBuilder {
 
 /// Main application configuration/context struct
 pub struct AppConfig {
+    pub server_host: String,
     pub server_port: u16,
     pub tls_server_config_builder: TlsServerConfigBuilder,
     pub crl_reloader_loading: Arc<Mutex<bool>>,
@@ -411,6 +420,7 @@ impl AppConfig {
 
         // Instantiate AppConfig
         Ok(AppConfig {
+            server_host: config_args.host,
             server_port: config_args.port,
             tls_server_config_builder,
             crl_reloader_loading,
@@ -610,6 +620,7 @@ pub mod tests {
         })?;
 
         Ok(AppConfig {
+            server_host: "127.0.0.1".to_string(),
             server_port: 2000,
             tls_server_config_builder,
             crl_reloader_loading: Arc::new(Mutex::new(false)),
@@ -629,6 +640,7 @@ pub mod tests {
 
     fn clear_env_vars() {
         env::remove_var("CONFIG_FILE");
+        env::remove_var("HOST");
         env::remove_var("PORT");
         env::remove_var("KEY_FILE");
         env::remove_var("CERT_FILE");
@@ -672,6 +684,7 @@ pub mod tests {
             let mutex = TEST_MUTEX.clone();
             let _lock = mutex.lock().unwrap();
             clear_env_vars();
+            env::set_var("HOST", "127.0.0.1");
             env::set_var("PORT", "8000");
             env::set_var("KEY_FILE", gateway_key_file_str);
             env::set_var("CERT_FILE", gateway_cert_file_str);
@@ -700,6 +713,7 @@ pub mod tests {
         }
         let config = result.unwrap();
 
+        assert_eq!(config.server_host, "127.0.0.1");
         assert_eq!(config.server_port, 8000);
         assert!(config.gateway_service_host.is_some());
         assert_eq!(config.gateway_service_host.unwrap(), "gwhost1".to_string());
@@ -732,6 +746,7 @@ pub mod tests {
             let _lock = mutex.lock().unwrap();
             clear_env_vars();
             env::set_var("CONFIG_FILE", config_file_str);
+            env::set_var("HOST", "127.0.0.1");
             env::set_var("KEY_FILE", gateway_key_file_str);
             env::set_var("CERT_FILE", gateway_cert_file_str);
             env::set_var("AUTH_CERT_FILE", gateway_cert_file_str);
@@ -757,6 +772,7 @@ pub mod tests {
         }
         let config = result.unwrap();
 
+        assert_eq!(config.server_host, "127.0.0.1");
         assert_eq!(config.server_port, 8888);
         assert!(config.gateway_service_host.is_some());
         assert_eq!(config.gateway_service_host.unwrap(), "gwhost1a".to_string());

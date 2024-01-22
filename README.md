@@ -25,9 +25,8 @@ This is early alpha, use with care.
 * Add Windows UDP support. Tested: macOS (Big Sur); Linux (Fedora 39), Windows (11 - TCP supported only)
 * Enhance gateway for runtime client certificate reissuance (on expiry or on demand)
 * Incorporate device posture trust assessment and rules processor for security enforcement
-* Build (more) testing: unit, integration, performance, ...
+* Build (more) testing: integration, performance, ...
 * Strategize non-name resolution (DNS/hosts file/...) approach to handle client hostname verification for TLS-type service connections
-* Supply more comprehensive source commenting
 * Consider supporting UDP multicast services
 * Consider gateway-to-gateway service proxy routing (reasons of proximity, security, ...)
 * Consider gateway load-balancing, via client redirect (reasons of load, rollout deployment, ...)
