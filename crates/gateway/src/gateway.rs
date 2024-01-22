@@ -26,7 +26,11 @@ impl Gateway {
     pub fn new(app_config: Arc<AppConfig>, visitor: Arc<Mutex<ServerVisitor>>) -> Self {
         Self {
             _app_config: Arc::clone(&app_config),
-            tls_server: server_std::Server::new(visitor.clone(), app_config.server_port),
+            tls_server: server_std::Server::new(
+                visitor.clone(),
+                &app_config.server_host,
+                app_config.server_port,
+            ),
             _visitor: visitor,
         }
     }

@@ -18,12 +18,10 @@ const CONN_COMPLETION_REATTEMPT_DELAY_MSECS: u64 = 30;
 pub struct Server {
     /// Server visitor pattern object
     visitor: Arc<Mutex<dyn ServerVisitor>>,
-    /// Address port used to bind listener
-    _server_port: u16,
+    /// Address (string) used to bind listener
+    listen_addr: String,
     /// TCP listener for server
     tcp_listener: Option<TcpListener>,
-    /// address (string) used to bind listener
-    listen_addr: String,
     /// Indicates whether currently polling new connections
     polling: bool,
     /// Indicates a request to close/shutdown server
@@ -38,18 +36,22 @@ impl Server {
     /// # Arguments
     ///
     /// * `visitor` - Server visitor pattern object
+    /// * `server_host` - Address host to use in bound socket
     /// * `server_port` - Address port to use in listener socket address
     ///
     /// # Returns
     ///
     /// A newly constructed [`Server`] object.
     ///
-    pub fn new(visitor: Arc<Mutex<dyn ServerVisitor>>, server_port: u16) -> Self {
+    pub fn new(
+        visitor: Arc<Mutex<dyn ServerVisitor>>,
+        server_host: &str,
+        server_port: u16,
+    ) -> Self {
         Self {
             visitor,
-            _server_port: server_port,
+            listen_addr: format!("{}:{}", server_host, server_port),
             tcp_listener: None,
-            listen_addr: format!("[::]:{}", server_port),
             polling: false,
             closing: false,
             closed: false,
@@ -571,11 +573,14 @@ pub mod tests {
     // ====
     #[test]
     fn server_new() {
-        let server = Server::new(Arc::new(Mutex::new(MockServerVisit::new())), 1234);
+        let server = Server::new(
+            Arc::new(Mutex::new(MockServerVisit::new())),
+            "127.0.0.1",
+            1234,
+        );
 
-        assert_eq!(server._server_port, 1234);
         assert!(server.tcp_listener.is_none());
-        assert_eq!(server.listen_addr, "[::]:1234");
+        assert_eq!(server.listen_addr, "127.0.0.1:1234");
         assert!(!server.polling);
         assert!(!server.closing);
         assert!(!server.closed);
@@ -590,9 +595,8 @@ pub mod tests {
             .return_once(|| Ok(()));
         let mut server = Server {
             visitor: Arc::new(Mutex::new(visitor)),
-            _server_port: 1234,
-            tcp_listener: None,
             listen_addr: "127.0.0.1:0".to_string(),
+            tcp_listener: None,
             polling: false,
             closing: false,
             closed: false,
@@ -612,9 +616,8 @@ pub mod tests {
     fn server_poll_new_connections_when_not_listening() {
         let mut server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),
-            _server_port: 1234,
-            tcp_listener: None,
             listen_addr: "127.0.0.1:0".to_string(),
+            tcp_listener: None,
             polling: false,
             closing: false,
             closed: false,
@@ -636,9 +639,8 @@ pub mod tests {
         tcp_listener.set_nonblocking(true).unwrap();
         let mut server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),
-            _server_port: 1234,
-            tcp_listener: Some(tcp_listener),
             listen_addr: "127.0.0.1:0".to_string(),
+            tcp_listener: Some(tcp_listener),
             polling: true,
             closing: false,
             closed: false,
@@ -669,9 +671,8 @@ pub mod tests {
             .return_once(|| true);
         let mut server = Server {
             visitor: Arc::new(Mutex::new(visitor)),
-            _server_port: 1234,
-            tcp_listener: Some(tcp_listener),
             listen_addr: "127.0.0.1:0".to_string(),
+            tcp_listener: Some(tcp_listener),
             polling: false,
             closing: false,
             closed: false,
@@ -751,9 +752,8 @@ pub mod tests {
 
         let server = Arc::new(Mutex::new(Server {
             visitor: visitor.clone(),
-            _server_port: 1234,
-            tcp_listener: Some(tcp_listener),
             listen_addr: "127.0.0.1:0".to_string(),
+            tcp_listener: Some(tcp_listener),
             polling: false,
             closing: false,
             closed: false,
@@ -792,9 +792,8 @@ pub mod tests {
     fn server_assert_listening_when_not_listening() {
         let server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),
-            _server_port: 1234,
-            tcp_listener: None,
             listen_addr: "addr1".to_string(),
+            tcp_listener: None,
             polling: false,
             closing: false,
             closed: false,
@@ -809,9 +808,8 @@ pub mod tests {
     fn server_shutdown_when_not_polling() {
         let mut server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),
-            _server_port: 1234,
-            tcp_listener: None,
             listen_addr: "addr1".to_string(),
+            tcp_listener: None,
             polling: false,
             closing: false,
             closed: false,
@@ -829,9 +827,8 @@ pub mod tests {
     fn server_shutdown_when_polling() {
         let mut server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),
-            _server_port: 1234,
-            tcp_listener: None,
             listen_addr: "addr1".to_string(),
+            tcp_listener: None,
             polling: true,
             closing: false,
             closed: false,
@@ -849,9 +846,8 @@ pub mod tests {
     fn server_stop_poller_when_polling() {
         let mut server = Server {
             visitor: Arc::new(Mutex::new(MockServerVisit::new())),
-            _server_port: 1234,
-            tcp_listener: None,
             listen_addr: "addr1".to_string(),
+            tcp_listener: None,
             polling: true,
             closing: false,
             closed: false,
