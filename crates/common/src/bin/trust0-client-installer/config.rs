@@ -141,12 +141,19 @@ impl AppConfigArgs {
     }
 }
 
+/// Application configuration object
 pub struct AppConfig {
+    /// The [`AppConfigArgs`] object created by the Clap parser
     pub args: AppConfigArgs,
 }
 
 impl AppConfig {
-    // load config
+    /// AppConfig constructor
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the newly constructed [`AppConfig`] object.
+    ///
     pub fn new() -> Result<Self, AppError> {
         // Populate environment w/given config file (if provided)
         let mut config_file = env::var_os("CONFIG_FILE");

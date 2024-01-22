@@ -12,6 +12,12 @@ use crate::console::{Console, ConsoleIO, LINE_ENDING};
 const LABEL_USERNAME: &[u8] = "Username: ".as_bytes();
 const LABEL_PASSWORD: &[u8] = "Password: ".as_bytes();
 
+/// Run main process
+///
+/// # Returns
+///
+/// A [`Result`] indicating the success/failure of the processing operation.
+///
 fn process_runner(app_config: &AppConfig, console: &mut dyn ConsoleIO) -> Result<()> {
     console.write_title()?;
 
@@ -41,6 +47,8 @@ fn process_runner(app_config: &AppConfig, console: &mut dyn ConsoleIO) -> Result
     Ok(())
 }
 
+/// Main execution function
+///
 pub fn main() {
     let app_config = AppConfig::new().unwrap();
     let mut console = Console::new(None, None);

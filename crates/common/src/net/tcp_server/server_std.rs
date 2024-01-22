@@ -10,18 +10,35 @@ use crate::logging::{error, info};
 use crate::net::tcp_server::conn_std;
 use crate::target;
 
-/// This is a TCP server, which will listen/accept client connections
+/// TCP server, which will listen/accept client connections
 pub struct Server {
+    /// Server visitor pattern object
     visitor: Arc<Mutex<dyn ServerVisitor>>,
+    /// TCP listener for server
     tcp_listener: Option<TcpListener>,
+    /// address (string) used to bind listener
     listen_addr: String,
+    /// Indicates whether currently polling new connections
     polling: bool,
+    /// Indicates a request to close/shutdown server
     closing: bool,
+    /// Indicates that the server has closed/shutdown
     closed: bool,
 }
 
 impl Server {
     /// Server constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `visitor` - Server visitor pattern object
+    /// * `server_host` - Address host to use in listener socket address
+    /// * `server_port` - Address port to use in listener socket address
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`Server`] object.
+    ///
     pub fn new(
         visitor: Arc<Mutex<dyn ServerVisitor>>,
         server_host: &str,
@@ -38,6 +55,11 @@ impl Server {
     }
 
     /// Bind/listen on port
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure to bind listener.
+    ///
     pub fn bind_listener(&mut self) -> Result<(), AppError> {
         let server_addr: SocketAddr = self.listen_addr.parse()?;
 
@@ -72,6 +94,7 @@ impl Server {
     }
 
     /// Request shutdown for poller and listener
+    ///
     pub fn shutdown(&mut self) {
         if !self.polling {
             self.perform_shutdown();
@@ -81,11 +104,17 @@ impl Server {
     }
 
     /// Request shutdown for poller
+    ///
     pub fn stop_poller(&mut self) {
         self.polling = false;
     }
 
     /// Poll and dispatch new listener connections
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of poller operation.
+    ///
     pub fn poll_new_connections(&mut self) -> Result<(), AppError> {
         self.assert_listening()?;
 
@@ -257,23 +286,51 @@ unsafe impl Send for Server {}
 /// Visitor pattern used to customize server implementation strategy.
 pub trait ServerVisitor: Send {
     /// TCP client connection factory
+    ///
+    /// # Arguments
+    ///
+    /// * `tcp_stream` - TCP stream of client connection
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] of the [`conn_std::Connection`] for this client connection.
+    ///
     fn create_client_conn(
         &mut self,
         tcp_stream: TcpStream,
     ) -> Result<conn_std::Connection, AppError>;
 
-    /// Server listener bound
+    /// Server listener bound event handler
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of function call.
+    ///
     fn on_listening(&mut self) -> Result<(), AppError> {
         Ok(())
     }
 
-    /// Connection accepted
+    /// Connection accepted event handler
+    ///
+    /// # Arguments
+    ///
+    /// * `connection` - [`conn_std::Connection`] object which was successfully accepted.
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of function call.
+    ///
     fn on_conn_accepted(&mut self, connection: conn_std::Connection) -> Result<(), AppError> {
         Server::spawn_connection_processor(connection);
         Ok(())
     }
 
     /// Returns whether listener shutdown is required
+    ///
+    /// # Returns
+    ///
+    /// Whether or not a shutdown should be performed.
+    ///
     fn get_shutdown_requested(&self) -> bool;
 }
 

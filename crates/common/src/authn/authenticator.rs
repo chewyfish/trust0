@@ -7,7 +7,9 @@ use std::thread::JoinHandle;
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum AuthnType {
+    /// Represents no authentication
     Insecure,
+    /// SCRAM SHA-256 authentication scheme
     ScramSha256,
 }
 
@@ -45,14 +47,27 @@ impl From<&str> for AuthnType {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub enum AuthnMessage {
+    /// Data message
     Payload(String),
+    /// Error message
     Error(String),
+    /// Authenticated event
     Authenticated,
+    /// Unauthenticated event
     Unauthenticated(String),
 }
 
 impl AuthnMessage {
     /// Parse JSON string message value
+    ///
+    /// # Arguments
+    ///
+    /// * `message_str` - String-serialized JSON for an [`AuthnMessage`] object
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the corresponding deserialzed [`AuthnMessage`] object
+    ///
     pub fn parse_json_str(message_str: &str) -> Result<AuthnMessage, AppError> {
         serde_json::from_str(message_str).map_err(|err| {
             AppError::GenWithMsgAndErr(
@@ -63,6 +78,11 @@ impl AuthnMessage {
     }
 
     /// Convert message to JSON string value
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the String-serialized JSON for this object.
+    ///
     pub fn to_json_str(&self) -> Result<String, AppError> {
         serde_json::to_string(self).map_err(|err| {
             AppError::GenWithMsgAndErr(
@@ -73,41 +93,95 @@ impl AuthnMessage {
     }
 }
 
-/// Authentication flow processing for the client party
+/// Authentication flow processing interface for the client party
 pub trait AuthenticatorClient {
     /// Spawn authentication flow thread (non-blocking)
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the final resultant [`AuthnMessage`] for the completed
+    /// authentication processing flow.
+    ///
     fn spawn_authentication(&mut self) -> Option<JoinHandle<Result<AuthnMessage, AppError>>>;
 
     /// Perform authentication flow (blocking)
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the final resultant [`AuthnMessage`] for the completed
+    /// authentication processing flow.
+    ///
     fn authenticate(&mut self) -> Result<AuthnMessage, AppError>;
 
     /// Exchange authentication flow messages
-    /// Optionally send inbound message and optionally receive outbound message
+    ///
+    /// # Arguments
+    ///
+    /// * `inbound_msg` - An optional [`AuthnMessage`] to pass into the authentication processing.
+    /// The message should be appropriate for the current processing flow state.
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing an optional outbound [`AuthnMessage`] as is appropriate for the
+    /// current processing flow state.
+    ///
     fn exchange_messages(
         &mut self,
         inbound_msg: Option<AuthnMessage>,
     ) -> Result<Option<AuthnMessage>, AppError>;
 
     /// Returns authentication status
+    ///
+    /// # Returns
+    ///
+    /// Whether or not the authentication has been authenticated.
+    ///
     fn is_authenticated(&self) -> bool;
 }
 
-/// Authentication flow processing for the server party
+/// Authentication flow processing interface for the server party
 pub trait AuthenticatorServer {
     /// Spawn authentication flow thread (non-blocking)
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the final resultant [`AuthnMessage`] for the completed
+    /// authentication processing flow.
+    ///
     fn spawn_authentication(&mut self) -> Option<JoinHandle<Result<AuthnMessage, AppError>>>;
 
     /// Perform authentication flow (blocking)
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the final resultant [`AuthnMessage`] for the completed
+    /// authentication processing flow.
+    ///
     fn authenticate(&mut self) -> Result<AuthnMessage, AppError>;
 
     /// Exchange authentication flow messages
-    /// Optionally send inbound message and optionally receive outbound message
+    ///
+    /// # Arguments
+    ///
+    /// * `inbound_msg` - An optional [`AuthnMessage`] to pass into the authentication processing.
+    /// The message should be appropriate for the current processing flow state.
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing an optional outbound [`AuthnMessage`] as is appropriate for the
+    /// current processing flow state.
+    ///
     fn exchange_messages(
         &mut self,
         inbound_msg: Option<AuthnMessage>,
     ) -> Result<Option<AuthnMessage>, AppError>;
 
     /// Returns authentication status
+    ///
+    /// # Returns
+    ///
+    /// Whether or not the authentication has been authenticated.
+    ///
     fn is_authenticated(&self) -> bool;
 }
 

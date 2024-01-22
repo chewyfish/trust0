@@ -26,17 +26,29 @@ static APP_TRANSIENT_DIR: Lazy<PathBuf> = Lazy::new(AppInstallDir::transient_dir
 /// Application directory types
 #[derive(Clone, Debug)]
 pub enum AppInstallDir {
+    /// Backup/save files directory
     Backup,
+    /// Application binaries/executables directory
     Binary,
+    /// Configuration files directory
     Config,
+    /// Main application root directory
     Home,
+    /// Logs (and other variable/dynamic) files directory
     Logs,
+    /// PKI/sensitive files directory
     Pki,
+    /// Temporary files directory
     Transient,
 }
 
 impl AppInstallDir {
     /// Application root directory
+    ///
+    /// # Returns
+    ///
+    /// A [`PathBuf`] to the application parent (containing [`Self::home_dir`]) directory
+    ///
     fn parent_dir() -> PathBuf {
         #[cfg(windows)]
         {
@@ -57,6 +69,11 @@ impl AppInstallDir {
     }
 
     /// Application home directory
+    ///
+    /// # Returns
+    ///
+    /// A [`PathBuf`] to the application home directory
+    ///
     fn home_dir() -> PathBuf {
         match env::var("XDG_DATA_HOME") {
             Ok(data_dir) => Path::new(&data_dir).join(APP_BASE_FILENAME),
@@ -76,7 +93,12 @@ impl AppInstallDir {
         }
     }
 
-    /// Application config directory
+    /// Application configuration directory
+    ///
+    /// # Returns
+    ///
+    /// A [`PathBuf`] to the application configuration directory
+    ///
     fn config_dir() -> PathBuf {
         match env::var("XDG_CONFIG_HOME") {
             Ok(config_dir) => Path::new(&config_dir).join(APP_BASE_FILENAME),
@@ -94,6 +116,11 @@ impl AppInstallDir {
     }
 
     /// Application transient files directory
+    ///
+    /// # Returns
+    ///
+    /// A [`PathBuf`] to the application transient/temporary files directory
+    ///
     fn transient_dir() -> PathBuf {
         match env::var("XDG_CACHE_HOME") {
             Ok(cache_dir) => Path::new(&cache_dir).join(APP_BASE_FILENAME),
@@ -111,6 +138,11 @@ impl AppInstallDir {
     }
 
     /// Installation directory path
+    ///
+    /// # Returns
+    ///
+    /// A [`PathBuf`] corresponding to [`Self`]
+    ///
     pub fn pathspec(&self) -> PathBuf {
         match self {
             AppInstallDir::Backup => APP_TRANSIENT_DIR.clone().join("backup"),
@@ -127,20 +159,35 @@ impl AppInstallDir {
 /// Application file types
 #[derive(Clone, Debug)]
 pub enum AppInstallFile {
+    /// CA root certificate file
     CARootCertificate,
+    /// Client config file
     ClientConfig,
+    /// Client binary executable
     ClientBinary,
+    /// Client (auth) certificate file
     ClientCertificate,
+    /// Client (auth) private key file
     ClientKey,
+    /// Gateway config file
     GatewayConfig,
+    /// Gateway binary executable
     GatewayBinary,
+    /// Gateway certificate file
     GatewayCertificate,
+    /// Gateway private key file
     GatewayKey,
+    /// Custom file creator
     Custom(AppInstallDir, PathBuf, u32),
 }
 
 impl AppInstallFile {
     /// File pathspec
+    ///
+    /// # Returns
+    ///
+    /// A [`PathBuf`] corresponding to [`Self`].
+    ///
     pub fn pathspec(&self) -> PathBuf {
         match self {
             AppInstallFile::CARootCertificate => {
@@ -179,6 +226,11 @@ impl AppInstallFile {
     }
 
     /// File permissions
+    ///
+    /// # Returns
+    ///
+    /// The unix permissions bit mask for [`Self`].
+    ///
     fn permissions(&self) -> u32 {
         match self {
             AppInstallFile::CARootCertificate => 0o600,
@@ -195,6 +247,15 @@ impl AppInstallFile {
     }
 
     /// Create new file
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - File contents data byte array
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the corresponding [`File`] object for the successfully created file.
+    ///
     pub fn create(&self, data: &[u8]) -> Result<File, AppError> {
         // Create/truncate file
         let mut file = Self::create_impl(self.pathspec().as_path(), self.permissions())?;
@@ -223,6 +284,15 @@ impl AppInstallFile {
     }
 
     /// Create from existing file
+    ///
+    /// # Arguments
+    ///
+    /// * `pathspec` - File pathspec to copy contents from
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the corresponding [`File`] object for the successfully created file.
+    ///
     pub fn create_from_file(&self, pathspec: &PathBuf) -> Result<File, AppError> {
         self.create(
             fs::read(pathspec)

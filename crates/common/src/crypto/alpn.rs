@@ -9,12 +9,23 @@ pub const PROTOCOL_SERVICE_PARSE_REGEX: &str = r"^T0SRV(\d+)$";
 /// Trust0 utilized ALPN protocol negotiation to determine connection type: Control Plane; Service Proxy
 #[derive(Clone, Debug, PartialEq)]
 pub enum Protocol {
+    /// REPL control plane connection type
     ControlPlane,
+    /// Service (proxy) connection type
     Service(u64),
 }
 
 impl Protocol {
     /// Parse ALPN string
+    ///
+    /// # Arguments
+    ///
+    /// * `alpn_str` - Serialized [`Protocol`] value
+    ///
+    /// # Returns
+    ///
+    /// A deserialized [`Protocol`] object corresponding to given value. Otherwise if invalid, `None` is returned.
+    ///
     pub fn parse(alpn_str: &str) -> Option<Protocol> {
         if alpn_str.eq(PROTOCOL_CONTROL_PLANE) {
             return Some(Protocol::ControlPlane);
@@ -33,6 +44,15 @@ impl Protocol {
     }
 
     /// Create service protocol ALPN string
+    ///
+    /// # Arguments
+    ///
+    /// * `service_id` - A service ID value
+    ///
+    /// # Returns
+    ///
+    /// The serialized string value for the corresponding [`Protocol::Service`] for this service.
+    ///
     pub fn create_service_protocol(service_id: u64) -> String {
         format!("{}{}", PROTOCOL_SERVICE, service_id)
     }

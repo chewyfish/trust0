@@ -7,6 +7,11 @@ pub struct InsecureAuthenticatorClient;
 
 impl InsecureAuthenticatorClient {
     /// InsecureAuthenticatorClient constructor
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`InsecureAuthenticatorClient`] object.
+    ///
     pub fn new() -> Self {
         Self
     }
@@ -44,6 +49,11 @@ pub struct InsecureAuthenticatorServer;
 
 impl InsecureAuthenticatorServer {
     /// InsecureAuthenticatorServer constructor
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`InsecureAuthenticatorServer`] object.
+    ///
     pub fn new() -> Self {
         Self
     }

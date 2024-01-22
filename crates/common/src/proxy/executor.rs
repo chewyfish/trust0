@@ -19,51 +19,90 @@ use crate::target;
 pub type ProxyKey = String;
 
 /// Used to represent the context for the (Socket Channel <-> TCP) streams proxy
+///
+/// # Attributes
+///
+/// * Channel's respective socket address
+/// * Receiver for incoming socket channel messages
+/// * Sender to send messages to UDP server socket (for client delivery from service)
+/// * TCP stream corresponding to the TCP proxy entity
+/// * TCP stream reader/writer corresponding to the TCP proxy entity
+/// * Channel sender to send back proxy events
+///
 pub type ChannelAndTcpProxyContext = (
-    SocketAddr,                              // Channel's respective socket address
-    sync::mpsc::Receiver<ProxyEvent>,        // receiver for incoming socket channel messages
-    sync::mpsc::Sender<ProxyEvent>, // sender to send messages to UDP server socket (for client delivery from svc)
-    std::net::TcpStream,            // TCP stream
-    Arc<Mutex<Box<dyn StreamReaderWriter>>>, // TCP stream reader/writer
-    sync::mpsc::Sender<ProxyEvent>, // channel sender to send back proxy events
+    SocketAddr,
+    sync::mpsc::Receiver<ProxyEvent>,
+    sync::mpsc::Sender<ProxyEvent>,
+    std::net::TcpStream,
+    Arc<Mutex<Box<dyn StreamReaderWriter>>>,
+    sync::mpsc::Sender<ProxyEvent>,
 );
 
 /// Used to represent the context for the (TCP <-> TCP) streams proxy
+///
+/// # Attributes
+///
+/// * TCP stream corresponding to the 1st TCP proxy entity
+/// * TCP stream corresponding to the 2nd TCP proxy entity
+/// * Stream reader/writer corresponding to the 1st TCP proxy entity
+/// * Stream reader/writer corresponding to the 2nd TCP proxy entity
+/// * Channel sender to send back proxy events
+///
 pub type TcpAndTcpProxyContext = (
-    std::net::TcpStream,                     // 1st TCP stream
-    std::net::TcpStream,                     // 2nd TCP stream
-    Arc<Mutex<Box<dyn StreamReaderWriter>>>, // 1st stream reader/writer
-    Arc<Mutex<Box<dyn StreamReaderWriter>>>, // 2nd stream reader/writer
-    sync::mpsc::Sender<ProxyEvent>,          // channel sender to send back proxy events
+    std::net::TcpStream,
+    std::net::TcpStream,
+    Arc<Mutex<Box<dyn StreamReaderWriter>>>,
+    Arc<Mutex<Box<dyn StreamReaderWriter>>>,
+    sync::mpsc::Sender<ProxyEvent>,
 );
 
 /// Used to represent the context for the (TCP <-> UDP) streams proxy
+///
+/// # Attributes
+///
+/// * TCP stream corresponding to the TCP proxy entity
+/// * UDP socket corresponding to the UDP proxy entity
+/// * Stream reader/writer corresponding to the TCP proxy entity
+/// * Channel sender to send back proxy events
+///
 pub type TcpAndUdpProxyContext = (
-    std::net::TcpStream,                     // TCP stream
-    std::net::UdpSocket,                     // UDP socket
-    Arc<Mutex<Box<dyn StreamReaderWriter>>>, // tcp stream reader/writer
-    sync::mpsc::Sender<ProxyEvent>,          // channel sender to send back proxy events
+    std::net::TcpStream,
+    std::net::UdpSocket,
+    Arc<Mutex<Box<dyn StreamReaderWriter>>>,
+    sync::mpsc::Sender<ProxyEvent>,
 );
 
 /// Proxy executor event message
 pub enum ProxyExecutorEvent {
+    /// Request to open a new proxy for a channel and TCP entities
     OpenChannelAndTcpProxy(ProxyKey, ChannelAndTcpProxyContext),
+    /// Request to open a new proxy for 2 TCP entities
     OpenTcpAndTcpProxy(ProxyKey, TcpAndTcpProxyContext),
+    /// Request to open a new proxy for a TCP and UDP entities
     OpenTcpAndUdpProxy(ProxyKey, TcpAndUdpProxyContext),
+    /// Request to close an active proxy
     Close(ProxyKey),
 }
 
 /// Service proxy executor to handle proxy lifecycle (setup, teardown)
 pub struct ProxyExecutor {
-    proxy_tasks_sender: std::sync::mpsc::Sender<ProxyExecutorEvent>,
-    proxy_tasks_receiver: std::sync::mpsc::Receiver<ProxyExecutorEvent>,
+    /// Channel sender to send proxy task requests
+    proxy_tasks_sender: sync::mpsc::Sender<ProxyExecutorEvent>,
+    /// Channel receiver to receive proxy task requests
+    proxy_tasks_receiver: sync::mpsc::Receiver<ProxyExecutorEvent>,
+    /// Map of active proxy streams (by proxy key)
     proxy_streams: HashMap<ProxyKey, Arc<Mutex<dyn ProxyStream>>>,
 }
 
 impl ProxyExecutor {
     /// ProxyExecutor constructor
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`ProxyExecutor`] object.
+    ///
     pub fn new() -> Self {
-        let (proxy_tasks_sender, proxy_tasks_receiver) = std::sync::mpsc::channel();
+        let (proxy_tasks_sender, proxy_tasks_receiver) = sync::mpsc::channel();
 
         Self {
             proxy_tasks_sender,
@@ -72,12 +111,22 @@ impl ProxyExecutor {
         }
     }
 
-    /// Get a copy of the tasks sender
-    pub fn clone_proxy_tasks_sender(&self) -> std::sync::mpsc::Sender<ProxyExecutorEvent> {
+    /// Get the proxy tasks sender
+    ///
+    /// # Returns
+    ///
+    /// A clone of the proxy tasks channel sender.
+    ///
+    pub fn clone_proxy_tasks_sender(&self) -> sync::mpsc::Sender<ProxyExecutorEvent> {
         self.proxy_tasks_sender.clone()
     }
 
     /// Listen and process any new proxy request tasks (blocking)
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of poller operation.
+    ///
     pub fn poll_new_tasks(&mut self) -> Result<(), AppError> {
         loop {
             // Get next request task

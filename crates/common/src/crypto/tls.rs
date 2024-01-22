@@ -2,7 +2,17 @@ use anyhow::Result;
 
 use crate::error::AppError;
 
-/// Make a vector of ciphersuites named in `suites`
+/// Make a vector of cipher suites named in `suites`
+///
+/// # Arguments
+///
+/// * `suite_names` - Cipher suite names array in accordance to those in [`rustls::crypto::ring::ALL_CIPHER_SUITES`]
+///
+/// # Returns
+///
+/// A [`Result`] containing a vector of [`rustls::SupportedCipherSuite`] respective to given names
+/// If any of the given suite names is not found, an error is returned.
+///
 pub fn lookup_suites(
     suite_names: &[String],
 ) -> Result<Vec<rustls::SupportedCipherSuite>, AppError> {
@@ -19,7 +29,17 @@ pub fn lookup_suites(
     Ok(suites)
 }
 
-/// Find a ciphersuite with the given name
+/// Find a cipher suite with the given name
+///
+/// # Arguments
+///
+/// * `name` - Cipher suite name in accordance to those in [`rustls::crypto::ring::ALL_CIPHER_SUITES`]
+///
+/// # Returns
+///
+/// A [`Result`] containing a [`rustls::SupportedCipherSuite`] respective to given name
+/// If the name is not found, an error is returned.
+///
 pub fn lookup_suite(name: &str) -> Result<rustls::SupportedCipherSuite, AppError> {
     for suite in rustls::crypto::ring::ALL_CIPHER_SUITES {
         let sname = format!("{:?}", suite.suite()).to_lowercase();
@@ -35,13 +55,31 @@ pub fn lookup_suite(name: &str) -> Result<rustls::SupportedCipherSuite, AppError
     )))
 }
 
-/// Verify a ciphersuite with the given name
+/// Verify a cipher suite with the given name
+///
+/// # Arguments
+///
+/// * `name` - Cipher suite name in accordance to those in [`rustls::crypto::ring::ALL_CIPHER_SUITES`]
+///
+/// # Returns
+///
+/// A [`Result`] containing given suite name, if valid.
+/// If the name is not found, an error is returned.
+///
 pub fn verify_suite(name: &str) -> Result<String, AppError> {
     lookup_suite(name)?;
     Ok(name.to_string())
 }
 
 /// Make a vector of protocol versions named in `versions`
+///
+/// * `version names` - Protocol version names array. Valid values: `1.2`, `1.3`
+///
+/// # Returns
+///
+/// A [`Result`] containing a vector of [`rustls::SupportedProtocolVersion`] respective to given names
+/// If any of the given protocol names is not found, an error is returned.
+///
 pub fn lookup_versions(
     version_names: &[String],
 ) -> Result<Vec<&'static rustls::SupportedProtocolVersion>, AppError> {
@@ -55,6 +93,14 @@ pub fn lookup_versions(
 }
 
 /// Determine protocol version
+///
+/// * `name` - Protocol name. Valid values: `1.2`, `1.3`
+///
+/// # Returns
+///
+/// A [`Result`] containing a [`rustls::SupportedProtocolVersion`] respective to given name
+/// If the name is not found, an error is returned.
+///
 pub fn lookup_version(
     version: &str,
 ) -> Result<&'static rustls::SupportedProtocolVersion, AppError> {
@@ -69,12 +115,32 @@ pub fn lookup_version(
 }
 
 /// Verify protocol version
+///
+/// # Arguments
+///
+/// * `name` - Protocol name. Valid values:  `1.2`, `1.3`
+///
+/// # Returns
+///
+/// A [`Result`] containing given protocol name, if valid.
+/// If the name is not found, an error is returned.
+///
 pub fn verify_version(version: &str) -> Result<String, AppError> {
     lookup_version(version)?;
     Ok(version.to_string())
 }
 
 /// Convert ALPN protocol list to byte vectors
+///
+/// # Arguments
+///
+/// * `alpn_protocols`: - ALPN protocol names array
+///
+/// # Returns
+///
+/// A [`Result`] containing a vector of protocol names (as byte vectors) from the given list
+/// Currently this will always return `Ok` (no validation is performed).
+///
 pub fn parse_alpn_protocols(alpn_protocols: &[String]) -> Result<Vec<Vec<u8>>, AppError> {
     alpn_protocols
         .iter()
@@ -83,6 +149,16 @@ pub fn parse_alpn_protocols(alpn_protocols: &[String]) -> Result<Vec<Vec<u8>>, A
 }
 
 /// Convert ALPN protocol to byte vector
+///
+/// # Arguments
+///
+/// * `alpn_protocol`: - ALPN protocol name
+///
+/// # Returns
+///
+/// A [`Result`] containing a protocol name (as a byte vector) from the given name
+/// Currently this will always return `Ok` (no validation is performed).
+///
 pub fn parse_alpn_protocol(alpn_protocol: &str) -> Result<Vec<u8>, AppError> {
     Ok(alpn_protocol.as_bytes().into())
 }

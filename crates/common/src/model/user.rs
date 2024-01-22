@@ -1,26 +1,50 @@
 use serde_derive::{Deserialize, Serialize};
 
+/// User model struct
 #[derive(Serialize, Deserialize, Clone, Default, PartialEq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct User {
+    /// User ID (unique across users)
     pub user_id: u64,
+    /// Friendly name for user
     pub name: String,
+    /// User account status
     pub status: Status,
+    /// RBAC roles associated to user account
     pub roles: Vec<u64>,
+    /// (optional) Username used in secondary authentication
     pub user_name: Option<String>,
+    /// (optional) Password used in secondary authentication
     pub password: Option<String>,
 }
 
+/// User acccount status
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub enum Status {
+    /// Active account status
     #[default]
     Active,
+    /// Inactive account status
     Inactive,
 }
 
 impl User {
     /// User constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - User ID (unique across users)
+    /// * `user_name` - (optional) Username used in secondary authentication
+    /// * `password` - (optional) Password used in secondary authentication
+    /// * `name` - Friendly name for user
+    /// * `status` - User account status
+    /// * `roles` - RBAC roles associated to user account
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`User`] object.
+    ///
     pub fn new(
         user_id: u64,
         user_name: Option<&str>,

@@ -16,18 +16,35 @@ const POLL_DURATION_MSECS: u64 = 1000;
 
 const RECV_BUFFER_SIZE: usize = 64 * 1024;
 
-/// This is a UDP server, which will listen/accept client connections
+/// UDP server, which will listen/accept client connections
 pub struct Server {
+    /// Server visitor pattern object
     visitor: Arc<Mutex<dyn ServerVisitor>>,
+    /// Server socket
     server_socket: Option<UdpSocket>,
+    /// Server socket bind address
     server_addr: SocketAddr,
+    /// Indicates whether currently polling new connections
     polling: bool,
+    /// Indicates a request to close/shutdown server
     closing: bool,
+    /// Indicates that the server has closed/shutdown
     closed: bool,
 }
 
 impl Server {
     /// Server constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `visitor` - Server visitor pattern object
+    /// * `server_host` - Address host to use in bound socket
+    /// * `server_port` - Address port to use in bound socket
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`Server`] object.
+    ///
     pub fn new(
         visitor: Arc<Mutex<dyn ServerVisitor>>,
         server_host: &str,
@@ -54,7 +71,12 @@ impl Server {
         })
     }
 
-    /// Bind/listen on port
+    /// Bind server socket on port
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of binding.
+    ///
     pub fn bind_listener(&mut self) -> Result<(), AppError> {
         let server_socket = UdpSocket::bind(self.server_addr).map_err(|err| {
             AppError::GenWithMsgAndErr(
@@ -89,6 +111,7 @@ impl Server {
     }
 
     /// Request shutdown for poller and listener
+    ///
     pub fn shutdown(&mut self) {
         if !self.polling {
             self.perform_shutdown();
@@ -98,6 +121,11 @@ impl Server {
     }
 
     /// Get a copy of the server socket
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing a cloned server socket.
+    ///
     pub fn clone_server_socket(&self) -> Result<UdpSocket, AppError> {
         match &self.server_socket {
             Some(socket) => socket.try_clone().map_err(|err| {
@@ -114,11 +142,23 @@ impl Server {
     }
 
     /// Request shutdown for poller
+    ///
     pub fn stop_poller(&mut self) {
         self.polling = false;
     }
 
     /// Send message to client socket
+    ///
+    /// # Arguments
+    ///
+    /// * `server_socket` - Server UDP socket to send message from
+    /// * `socket_addr` - Remote UDP socket to send message to
+    /// * `data` - Data byte vector to send to remote socket
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the number of bytes successfully sent to remote socket.
+    ///
     pub fn send_message(
         server_socket: &UdpSocket,
         socket_addr: &SocketAddr,
@@ -138,6 +178,7 @@ impl Server {
     }
 
     /// Shutdown for poller and listener
+    ///
     fn perform_shutdown(&mut self) {
         self.closing = true;
         self.closed = true;
@@ -151,6 +192,11 @@ impl Server {
     }
 
     /// Poll and dispatch new incoming messages
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure for the message poller.
+    ///
     pub fn poll_new_messages(&mut self) -> Result<(), AppError> {
         self.assert_listening()?;
 
@@ -304,12 +350,26 @@ unsafe impl Send for Server {}
 
 /// Visitor pattern used to customize server implementation strategy.
 pub trait ServerVisitor: Send {
-    /// Server listener bound
+    /// Server listener bound event handler
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of function call.
+    ///
     fn on_listening(&mut self) -> Result<(), AppError> {
         Ok(())
     }
 
     /// Client message received
+    ///
+    /// # Arguments
+    ///
+    /// * `local_addr` - Server socket address
+    /// * `peer_addr` - Remote socket address
+    /// * `data` - Data byte vector representing message received
+    ///
+    /// A [`Result`] indicating success/failure of function call.
+    ///
     fn on_message_received(
         &mut self,
         local_addr: &SocketAddr,
@@ -318,6 +378,11 @@ pub trait ServerVisitor: Send {
     ) -> Result<(), AppError>;
 
     /// Returns whether listener shutdown is required
+    ///
+    /// # Returns
+    ///
+    /// Whether or not a shutdown should be performed.
+    ///
     fn get_shutdown_requested(&self) -> bool;
 }
 

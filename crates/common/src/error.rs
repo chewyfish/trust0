@@ -5,23 +5,40 @@ use std::io;
 /// Sanctioned error type used across workspace
 #[derive(Debug)]
 pub enum AppError {
+    /// Address parse error
     AddrParse(std::net::AddrParseError),
+    /// Error containing a message
     General(String),
+    /// Error representing by a code (number)
     GenWithCode(u16),
+    /// Error with a code and an [`Error`] object
     GenWithCodeAndErr(u16, Box<dyn Error + Send + Sync + 'static>),
+    /// Error with a code and a message
     GenWithCodeAndMsg(u16, String),
+    /// Error with a code, message and an [`Error`] object
     GenWithCodeAndMsgAndErr(u16, String, Box<dyn Error + Send + Sync + 'static>),
+    /// Error containing an [`Error`] object
     GenWithErr(Box<dyn Error + Send + Sync + 'static>),
+    /// Error with a message and an [`Error`] object
     GenWithMsgAndErr(String, Box<dyn Error + Send + Sync + 'static>),
+    /// IO error
     Io(io::Error),
+    /// IO error with a message
     IoWithMsg(String, io::Error),
+    /// TLS-related error
     Tls(rustls::Error),
+    /// Indicates IO would block error
     WouldBlock,
+    /// Indicates a (TCP) stream EOF
     StreamEOF,
 }
 
 impl AppError {
     /// Return intrinsic error code (if avail)
+    ///
+    /// # Returns
+    ///
+    /// A code for this error. If not appropriate for this error type, returns `None`.
     pub fn get_code(&self) -> Option<u16> {
         match self {
             AppError::GenWithCode(code) => Some(*code),

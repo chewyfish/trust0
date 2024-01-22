@@ -16,21 +16,45 @@ pub static LOG: Lazy<Mutex<Logger>> = Lazy::new(|| {
 });
 
 /// Logger debug log function
+///
+/// # Arguments
+///
+/// * `target` - source location context of logging event
+/// * `msg` - message content to log
+///
 pub fn debug(target: &str, msg: &str) {
     LOG.lock().unwrap().debug(target, msg);
 }
 
 /// Logger info log function
+///
+/// # Arguments
+///
+/// * `target` - source location context of logging event
+/// * `msg` - message content to log
+///
 pub fn info(target: &str, msg: &str) {
     LOG.lock().unwrap().info(target, msg);
 }
 
 /// Logger warn log function
+///
+/// # Arguments
+///
+/// * `target` - source location context of logging event
+/// * `msg` - message content to log
+///
 pub fn warn(target: &str, msg: &str) {
     LOG.lock().unwrap().warn(target, msg);
 }
 
 /// Logger error log function
+///
+/// # Arguments
+///
+/// * `target` - source location context of logging event
+/// * `msg` - message content to log
+///
 pub fn error(target: &str, msg: &str) {
     LOG.lock().unwrap().error(target, msg);
 }
@@ -48,21 +72,33 @@ pub use target;
 /// Construct logging implementation
 #[derive(Debug)]
 pub enum LogLevel {
+    /// Used for debugging, should not be employed in production
     DEBUG,
+    /// Informational event, does not indicate an issue
     INFO,
+    /// An non-expected event, however not indicative of a critical issue
     WARN,
+    /// An abnormal event, and will need to be addressed. Aspects of the system may not be functional
     ERROR,
 }
 
 pub type LogVisitor = dyn Fn(LogLevel, &str) + Send + 'static;
 
 pub struct Logger {
+    /// A [`log4rs`] logger handle
     handle: Option<Handle>,
+    /// Visitor pattern object for the logging events
     visitor: Option<Box<LogVisitor>>,
 }
 
 impl Logger {
-    /// configure logger
+    /// Configure logger
+    ///
+    /// # Arguments
+    ///
+    /// * `level_filter` - Specifies the log level threshold for what should be logged
+    /// * `visitor` - Visitor pattern object for the logging events
+    ///
     pub fn configure(&mut self, level_filter: LogLevel, visitor: Option<Box<LogVisitor>>) {
         let level_filter = match level_filter {
             LogLevel::DEBUG => LevelFilter::Debug,
@@ -84,6 +120,12 @@ impl Logger {
     }
 
     /// debug-level logging
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - source location context of logging event
+    /// * `msg` - message content to log
+    ///
     pub fn debug(&self, target: &str, msg: &str) {
         if log_enabled!(Level::Debug) {
             debug!(target: target, "{}", msg);
@@ -94,6 +136,12 @@ impl Logger {
     }
 
     /// info-level logging
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - source location context of logging event
+    /// * `msg` - message content to log
+    ///
     pub fn info(&self, target: &str, msg: &str) {
         if log_enabled!(Level::Info) {
             info!(target: target, "{}", msg);
@@ -104,6 +152,12 @@ impl Logger {
     }
 
     /// warn-level logging
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - source location context of logging event
+    /// * `msg` - message content to log
+    ///
     pub fn warn(&self, target: &str, msg: &str) {
         if log_enabled!(Level::Warn) {
             warn!(target: target, "{}", msg);
@@ -114,6 +168,12 @@ impl Logger {
     }
 
     /// info-level logging
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - source location context of logging event
+    /// * `msg` - message content to log
+    ///
     pub fn error(&self, target: &str, msg: &str) {
         if log_enabled!(Level::Error) {
             error!(target: target, "{}", msg);

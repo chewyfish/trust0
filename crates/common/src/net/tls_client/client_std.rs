@@ -10,19 +10,34 @@ use crate::net::tls_client::conn_std;
 use crate::net::tls_client::conn_std::TlsClientConnection;
 use crate::target;
 
-/// This is a TLS client, which will connect to a server and expose IO methods
-///
-/// It has a TCP-level stream, a TLS-level connection state, and some other state/metadata.
+/// TLS client, which will connect to a server and expose IO methods
 pub struct Client {
+    /// Client visitor pattern object
     visitor: Box<dyn ClientVisitor>,
+    /// TLS client configuration used in setting up TLS connections
     tls_client_config: Arc<rustls::ClientConfig>,
+    /// Gateway address host
     server_host: String,
+    /// Gateway address port
     server_port: u16,
+    /// Corresponding [`conn_std::Connection`] object for server connection
     connection: Option<conn_std::Connection>,
 }
 
 impl Client {
     /// Client constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `visitor` - Client visitor pattern object
+    /// * `tls_client_config` - TLS client configuration used in setting up TLS connections
+    /// * `server_host` - Gateway address host
+    /// * `server_port` - Gateway address port
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`Client`] object.
+    ///
     pub fn new(
         visitor: Box<dyn ClientVisitor>,
         tls_client_config: rustls::ClientConfig,
@@ -39,11 +54,21 @@ impl Client {
     }
 
     /// Connection accessor
+    ///
+    /// # Returns
+    ///
+    /// The corresponding connection's [`conn_std::Connection`].
+    ///
     pub fn get_connection(&self) -> &Option<conn_std::Connection> {
         &self.connection
     }
 
     /// Connect to server
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of the connection.
+    ///
     pub fn connect(&mut self) -> Result<(), AppError> {
         let server_host = ServerName::try_from(self.server_host.to_string()).map_err(|err| {
             AppError::GenWithMsgAndErr(
@@ -107,6 +132,11 @@ impl Client {
     }
 
     /// Poll connection events
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of the poller.
+    ///
     pub fn poll_connection(&mut self) -> Result<(), AppError> {
         self.assert_connected()?;
         self.connection.as_mut().unwrap().poll_connection()
@@ -131,12 +161,26 @@ impl From<Client> for TlsClientConnection {
 /// Visitor pattern used to customize client implementation strategy.
 pub trait ClientVisitor: Send {
     /// TLS server connection factory
+    ///
+    /// # Arguments
+    ///
+    /// * `tls_conn`: TLS connection object to use in creating server connection
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the newly constructed [`conn_std::Connection`] object.
+    ///
     fn create_server_conn(
         &mut self,
         tls_conn: TlsClientConnection,
     ) -> Result<conn_std::Connection, AppError>;
 
-    /// Session connected
+    /// Session connected event handler
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of the function call.
+    ///
     fn on_connected(&mut self) -> Result<(), AppError> {
         Ok(())
     }
