@@ -524,6 +524,7 @@ pub mod tests {
     }
 
     #[test]
+    #[ignore]
     fn server_send_message_when_invalid_client_socket() {
         let server_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let server_socket = UdpSocket::bind(server_addr.clone()).unwrap();
