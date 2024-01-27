@@ -524,7 +524,7 @@ pub mod tests {
         }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn server_send_message_when_invalid_client_socket() {
         let server_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
