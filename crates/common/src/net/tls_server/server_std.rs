@@ -711,10 +711,9 @@ pub mod tests {
             ) -> Result<Connection, AppError> {
                 let mut conn_visitor = conn_std::tests::MockConnVisit::new();
                 conn_visitor
-                    .expect_set_event_channel_sender()
+                    .expect_on_connected()
                     .with(predicate::always())
                     .return_once(|_| Ok(()));
-                conn_visitor.expect_on_connected().return_once(|| Ok(()));
                 let conn = Connection::new(
                     Box::new(conn_visitor),
                     tls_conn,
