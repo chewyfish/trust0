@@ -10,7 +10,7 @@ use anyhow::Result;
 
 use super::proxy::proxy_base::GatewayServiceProxy;
 use super::proxy::tcp_proxy::TcpGatewayProxy;
-use crate::client::controller::RequestProcessor;
+use crate::client::controller::MessageProcessor;
 use crate::config::AppConfig;
 use crate::service::proxy::proxy_base::GatewayServiceProxyVisitor;
 use crate::service::proxy::tcp_proxy::TcpGatewayProxyServerVisitor;
@@ -46,7 +46,7 @@ pub trait ServiceMgr: Send {
     fn add_control_plane(
         &mut self,
         user_id: u64,
-        control_plane: Arc<Mutex<dyn RequestProcessor>>,
+        control_plane: Arc<Mutex<dyn MessageProcessor>>,
     ) -> Result<(), AppError>;
 
     /// Clone proxy tasks sender
@@ -87,7 +87,7 @@ pub struct GatewayServiceMgr {
     last_service_port: u16,
     proxy_events_sender: Sender<ProxyEvent>,
     proxy_tasks_sender: Sender<ProxyExecutorEvent>,
-    control_planes: HashMap<u64, Arc<Mutex<dyn RequestProcessor>>>,
+    control_planes: HashMap<u64, Arc<Mutex<dyn MessageProcessor>>>,
 }
 
 impl GatewayServiceMgr {
@@ -187,7 +187,7 @@ impl ServiceMgr for GatewayServiceMgr {
     fn add_control_plane(
         &mut self,
         user_id: u64,
-        control_plane: Arc<Mutex<dyn RequestProcessor>>,
+        control_plane: Arc<Mutex<dyn MessageProcessor>>,
     ) -> Result<(), AppError> {
         if let Entry::Vacant(entry) = self.control_planes.entry(user_id) {
             let _ = entry.insert(control_plane);
@@ -378,7 +378,7 @@ impl ServiceMgr for GatewayServiceMgr {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::client::controller::tests::MockReqProcessor;
+    use crate::client::controller::tests::MockMsgProcessor;
     use crate::config;
     use crate::repository::access_repo::tests::MockAccessRepo;
     use crate::repository::role_repo::tests::MockRoleRepo;
@@ -398,7 +398,7 @@ pub mod tests {
             fn get_service_proxies(&self) -> Vec<Arc<Mutex<dyn GatewayServiceProxyVisitor>>>;
             fn get_service_proxy(&self, service_id: u64) -> Option<Arc<Mutex<dyn GatewayServiceProxyVisitor>>>;
             fn has_control_plane_for_user(&self, user_id: u64, assert_authenticated: bool) -> bool;
-            fn add_control_plane(&mut self, user_id: u64, control_plane: Arc<Mutex<dyn RequestProcessor>>) -> Result<(), AppError>;
+            fn add_control_plane(&mut self, user_id: u64, control_plane: Arc<Mutex<dyn MessageProcessor>>) -> Result<(), AppError>;
             fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent>;
             fn startup(&mut self, service_mgr: Arc<Mutex<dyn ServiceMgr>>, service: &Service) -> Result<(Option<String>, u16), AppError>;
             fn has_proxy_for_user_and_service(&mut self, user_id: u64, service_id: u64) -> bool;
@@ -474,7 +474,7 @@ pub mod tests {
     #[test]
     fn gwsvcmgr_has_control_plane_for_user_when_avail_and_assert_auth_and_unauthed() {
         let mut service_mgr = create_gw_service_mgr(true);
-        let mut req_processor = MockReqProcessor::new();
+        let mut req_processor = MockMsgProcessor::new();
         req_processor
             .expect_is_authenticated()
             .times(1)
@@ -489,7 +489,7 @@ pub mod tests {
     #[test]
     fn gwsvcmgr_has_control_plane_for_user_when_avail_and_no_assert_auth_and_unauthed() {
         let mut service_mgr = create_gw_service_mgr(true);
-        let mut req_processor = MockReqProcessor::new();
+        let mut req_processor = MockMsgProcessor::new();
         req_processor.expect_is_authenticated().never();
         assert!(service_mgr.control_planes.is_empty());
         service_mgr
@@ -501,7 +501,7 @@ pub mod tests {
     #[test]
     fn gwsvcmgr_has_control_plane_for_user_when_avail_and_assert_auth_and_authed() {
         let mut service_mgr = create_gw_service_mgr(true);
-        let mut req_processor = MockReqProcessor::new();
+        let mut req_processor = MockMsgProcessor::new();
         req_processor
             .expect_is_authenticated()
             .times(1)
@@ -516,7 +516,7 @@ pub mod tests {
     #[test]
     fn gwsvcmgr_has_control_plane_for_user_when_avail_and_no_assert_auth_and_authed() {
         let mut service_mgr = create_gw_service_mgr(true);
-        let mut req_processor = MockReqProcessor::new();
+        let mut req_processor = MockMsgProcessor::new();
         req_processor.expect_is_authenticated().never();
         assert!(service_mgr.control_planes.is_empty());
         service_mgr
@@ -538,7 +538,7 @@ pub mod tests {
         assert!(service_mgr.control_planes.is_empty());
 
         if let Err(err) =
-            service_mgr.add_control_plane(100, Arc::new(Mutex::new(MockReqProcessor::new())))
+            service_mgr.add_control_plane(100, Arc::new(Mutex::new(MockMsgProcessor::new())))
         {
             panic!("Unexpected result: err={:?}", &err);
         }
@@ -805,10 +805,10 @@ pub mod tests {
             .insert(201, Arc::new(Mutex::new(proxy201_visitor)));
         service_mgr
             .control_planes
-            .insert(100, Arc::new(Mutex::new(MockReqProcessor::new())));
+            .insert(100, Arc::new(Mutex::new(MockMsgProcessor::new())));
         service_mgr
             .control_planes
-            .insert(101, Arc::new(Mutex::new(MockReqProcessor::new())));
+            .insert(101, Arc::new(Mutex::new(MockMsgProcessor::new())));
 
         assert_eq!(service_mgr.control_planes.len(), 2);
 
@@ -844,10 +844,10 @@ pub mod tests {
             .insert(201, Arc::new(Mutex::new(proxy201_visitor)));
         service_mgr
             .control_planes
-            .insert(100, Arc::new(Mutex::new(MockReqProcessor::new())));
+            .insert(100, Arc::new(Mutex::new(MockMsgProcessor::new())));
         service_mgr
             .control_planes
-            .insert(101, Arc::new(Mutex::new(MockReqProcessor::new())));
+            .insert(101, Arc::new(Mutex::new(MockMsgProcessor::new())));
 
         assert_eq!(service_mgr.control_planes.len(), 2);
 
@@ -879,7 +879,7 @@ pub mod tests {
             .insert(201, Arc::new(Mutex::new(proxy201_visitor)));
         service_mgr
             .control_planes
-            .insert(100, Arc::new(Mutex::new(MockReqProcessor::new())));
+            .insert(100, Arc::new(Mutex::new(MockMsgProcessor::new())));
 
         assert_eq!(service_mgr.control_planes.len(), 1);
 

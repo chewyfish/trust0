@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use pki_types::CertificateDer;
 
-use crate::client::controller::{ControlPlane, RequestProcessor};
+use crate::client::controller::{ControlPlane, MessageProcessor};
 use crate::client::device::Device;
 use crate::config::{self, AppConfig};
 use crate::repository::access_repo::AccessRepository;
@@ -20,20 +20,40 @@ use trust0_common::{crypto, target};
 
 /// tls_server::std_conn::Connection strategy visitor pattern implementation
 pub struct ClientConnVisitor {
+    /// Application configuration object
     app_config: Arc<AppConfig>,
-    access_repo: Arc<Mutex<dyn AccessRepository>>,
-    service_repo: Arc<Mutex<dyn ServiceRepository>>,
-    user_repo: Arc<Mutex<dyn UserRepository>>,
-    event_channel_sender: Option<Sender<conn_std::ConnectionEvent>>,
-    request_processor: Option<Arc<Mutex<dyn RequestProcessor>>>,
-    device: Option<Device>,
-    user: Option<User>,
-    protocol: Option<alpn::Protocol>,
+    /// Service manager
     service_mgr: Arc<Mutex<dyn ServiceMgr>>,
+    /// Access DB repository
+    access_repo: Arc<Mutex<dyn AccessRepository>>,
+    /// Service DB repository
+    service_repo: Arc<Mutex<dyn ServiceRepository>>,
+    /// User DB repository
+    user_repo: Arc<Mutex<dyn UserRepository>>,
+    /// Channel sender for connection events
+    event_channel_sender: Option<Sender<conn_std::ConnectionEvent>>,
+    /// Control plane message processor
+    message_processor: Option<Arc<Mutex<dyn MessageProcessor>>>,
+    /// Connection/certificate device context
+    device: Option<Device>,
+    /// User model object
+    user: Option<User>,
+    /// ALPN connection protocol
+    protocol: Option<alpn::Protocol>,
 }
 
 impl ClientConnVisitor {
     /// ClientConnVisitor constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `app_config` - Application configuration object
+    /// * `service_mgr` - Service manager
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing a newly constructed [`ClientConnVisitor`] object.
+    ///
     pub fn new(app_config: Arc<AppConfig>, service_mgr: Arc<Mutex<dyn ServiceMgr>>) -> Self {
         let access_repo = Arc::clone(&app_config.access_repo);
         let service_repo = Arc::clone(&app_config.service_repo);
@@ -41,15 +61,15 @@ impl ClientConnVisitor {
 
         Self {
             app_config: app_config.clone(),
+            service_mgr,
             access_repo,
             service_repo,
             user_repo,
             event_channel_sender: None,
-            request_processor: None,
+            message_processor: None,
             device: None,
             user: None,
             protocol: None,
-            service_mgr,
         }
     }
 
@@ -236,7 +256,7 @@ impl ClientConnVisitor {
 }
 
 impl conn_std::ConnectionVisitor for ClientConnVisitor {
-    fn set_event_channel_sender(
+    fn on_connected(
         &mut self,
         event_channel_sender: Sender<conn_std::ConnectionEvent>,
     ) -> Result<(), AppError> {
@@ -247,9 +267,10 @@ impl conn_std::ConnectionVisitor for ClientConnVisitor {
             .unwrap()
             .eq(&alpn::Protocol::ControlPlane)
         {
-            let request_processor: Arc<Mutex<dyn RequestProcessor>> =
+            let message_processor: Arc<Mutex<dyn MessageProcessor>> =
                 Arc::new(Mutex::new(ControlPlane::new(
                     self.app_config.clone(),
+                    self.service_mgr.clone(),
                     self.access_repo.clone(),
                     self.service_repo.clone(),
                     self.user_repo.clone(),
@@ -260,8 +281,8 @@ impl conn_std::ConnectionVisitor for ClientConnVisitor {
             self.service_mgr
                 .lock()
                 .unwrap()
-                .add_control_plane(user.user_id, request_processor.clone())?;
-            self.request_processor = Some(request_processor);
+                .add_control_plane(user.user_id, message_processor.clone())?;
+            self.message_processor = Some(message_processor);
         }
         self.event_channel_sender = Some(event_channel_sender);
 
@@ -269,22 +290,21 @@ impl conn_std::ConnectionVisitor for ClientConnVisitor {
     }
 
     fn on_connection_read(&mut self, data: &[u8]) -> Result<(), AppError> {
-        let data_text = String::from_utf8(data.to_vec()).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Error converting client input as UTF8".to_string(),
-                Box::new(err),
-            )
-        })?;
-
-        let _ = self
-            .request_processor
+        self.message_processor
             .as_ref()
             .unwrap()
             .lock()
             .unwrap()
-            .process_request(&self.service_mgr, &data_text)?;
+            .process_inbound_messages(data)
+    }
 
-        Ok(())
+    fn on_polling_cycle(&mut self) -> Result<(), AppError> {
+        self.message_processor
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .process_outbound_messages()
     }
 
     fn on_shutdown(&mut self) -> Result<(), AppError> {
@@ -348,8 +368,7 @@ unsafe impl Send for ClientConnVisitor {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::controller::tests::MockReqProcessor;
-    use crate::client::device::CertAccessContext;
+    use crate::client::controller::tests::MockMsgProcessor;
     use crate::repository::access_repo::tests::MockAccessRepo;
     use crate::repository::role_repo::tests::MockRoleRepo;
     use crate::repository::role_repo::RoleRepository;
@@ -358,11 +377,9 @@ mod tests {
     use crate::service::manager::GatewayServiceMgr;
     use crate::testutils::MockTlsSvrConn;
     use mockall::predicate;
-    use std::collections::HashMap;
     use std::fmt;
     use std::path::PathBuf;
     use std::sync::mpsc;
-    use trust0_common::control::request;
     use trust0_common::crypto::file::load_certificates;
     use trust0_common::model::access::{EntityType, ServiceAccess};
     use trust0_common::net::tls_server::conn_std::{ConnectionEvent, ConnectionVisitor};
@@ -385,7 +402,7 @@ mod tests {
         service_repo: Arc<Mutex<dyn ServiceRepository>>,
         role_repo: Arc<Mutex<dyn RoleRepository>>,
         access_repo: Arc<Mutex<dyn AccessRepository>>,
-        user_control_plane: Option<(u64, Arc<Mutex<dyn RequestProcessor>>)>,
+        user_control_plane: Option<(u64, Arc<Mutex<dyn MessageProcessor>>)>,
     ) -> Result<ClientConnVisitor, AppError> {
         let app_config = Arc::new(config::tests::create_app_config_with_repos(
             user_repo,
@@ -410,13 +427,13 @@ mod tests {
         Ok(ClientConnVisitor::new(app_config, service_mgr))
     }
 
-    fn create_req_processor(is_authenticated: bool) -> Arc<Mutex<dyn RequestProcessor>> {
-        let mut req_processor = MockReqProcessor::new();
-        req_processor
+    fn create_msg_processor(is_authenticated: bool) -> Arc<Mutex<dyn MessageProcessor>> {
+        let mut msg_processor = MockMsgProcessor::new();
+        msg_processor
             .expect_is_authenticated()
             .times(1)
             .return_once(move || is_authenticated);
-        Arc::new(Mutex::new(req_processor))
+        Arc::new(Mutex::new(msg_processor))
     }
 
     #[test]
@@ -530,7 +547,7 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, Arc::new(Mutex::new(MockReqProcessor::new())))),
+            Some((100, Arc::new(Mutex::new(MockMsgProcessor::new())))),
         )?;
 
         assert!(cli_conn_visitor.device.is_none());
@@ -608,7 +625,7 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, create_req_processor(true))),
+            Some((100, create_msg_processor(true))),
         )?;
 
         assert!(cli_conn_visitor.device.is_none());
@@ -749,7 +766,7 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, create_req_processor(false))),
+            Some((100, create_msg_processor(false))),
         )?;
 
         assert!(cli_conn_visitor.device.is_none());
@@ -820,7 +837,7 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, create_req_processor(true))),
+            Some((100, create_msg_processor(true))),
         )?;
 
         assert!(cli_conn_visitor.device.is_none());
@@ -885,7 +902,7 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, create_req_processor(true))),
+            Some((100, create_msg_processor(true))),
         )?;
 
         assert!(cli_conn_visitor.device.is_none());
@@ -1118,145 +1135,23 @@ mod tests {
     }
 
     #[test]
-    fn cliconnvis_set_event_channel_sender_when_control_plane() -> Result<(), AppError> {
-        let user_repo = MockUserRepo::new();
-        let access_repo = MockAccessRepo::new();
-        let mut service_repo = MockServiceRepo::new();
-        service_repo
-            .expect_get_all()
-            .times(1)
-            .return_once(|| Ok(vec![]));
-        let role_repo = MockRoleRepo::new();
-        let user = User {
-            user_id: 100,
-            user_name: Some("user1".to_string()),
-            password: Some("pass1".to_string()),
-            name: "".to_string(),
-            status: Status::Inactive,
-            roles: vec![],
-        };
-        let device = Device {
-            cert_access_context: CertAccessContext {
-                user_id: 100,
-                platform: "Linux".to_string(),
-            },
-            cert_alt_subj: HashMap::new(),
-            cert_subj: HashMap::new(),
-        };
-
-        let mut cli_conn_visitor = create_cliconnvis(
-            Arc::new(Mutex::new(user_repo)),
-            Arc::new(Mutex::new(service_repo)),
-            Arc::new(Mutex::new(role_repo)),
-            Arc::new(Mutex::new(access_repo)),
-            None,
-        )?;
-        cli_conn_visitor.user = Some(user.clone());
-        cli_conn_visitor.device = Some(device);
-        cli_conn_visitor.protocol = Some(alpn::Protocol::ControlPlane);
-
-        assert!(cli_conn_visitor.event_channel_sender.is_none());
-        assert!(cli_conn_visitor.request_processor.is_none());
-        assert!(!cli_conn_visitor
-            .service_mgr
-            .lock()
-            .unwrap()
-            .has_control_plane_for_user(100, false));
-
-        if let Err(err) = cli_conn_visitor.set_event_channel_sender(mpsc::channel().0) {
-            panic!("Unexpected result: err={:?}", &err);
-        }
-
-        assert!(cli_conn_visitor.event_channel_sender.is_some());
-        assert!(cli_conn_visitor.request_processor.is_some());
-        assert!(cli_conn_visitor
-            .service_mgr
-            .lock()
-            .unwrap()
-            .has_control_plane_for_user(100, false));
-
-        Ok(())
-    }
-
-    #[test]
-    fn cliconnvis_set_event_channel_sender_when_service() -> Result<(), AppError> {
-        let user_repo = MockUserRepo::new();
-        let access_repo = MockAccessRepo::new();
-        let mut service_repo = MockServiceRepo::new();
-        service_repo.expect_get_all().never();
-        let role_repo = MockRoleRepo::new();
-        let user = User {
-            user_id: 100,
-            user_name: Some("user1".to_string()),
-            password: Some("pass1".to_string()),
-            name: "".to_string(),
-            status: Status::Inactive,
-            roles: vec![],
-        };
-        let device = Device {
-            cert_access_context: CertAccessContext {
-                user_id: 100,
-                platform: "Linux".to_string(),
-            },
-            cert_alt_subj: HashMap::new(),
-            cert_subj: HashMap::new(),
-        };
-
-        let mut cli_conn_visitor = create_cliconnvis(
-            Arc::new(Mutex::new(user_repo)),
-            Arc::new(Mutex::new(service_repo)),
-            Arc::new(Mutex::new(role_repo)),
-            Arc::new(Mutex::new(access_repo)),
-            None,
-        )?;
-        cli_conn_visitor.user = Some(user.clone());
-        cli_conn_visitor.device = Some(device);
-        cli_conn_visitor.protocol = Some(alpn::Protocol::Service(200));
-
-        assert!(cli_conn_visitor.event_channel_sender.is_none());
-        assert!(cli_conn_visitor.request_processor.is_none());
-        assert!(!cli_conn_visitor
-            .service_mgr
-            .lock()
-            .unwrap()
-            .has_control_plane_for_user(100, false));
-
-        if let Err(err) = cli_conn_visitor.set_event_channel_sender(mpsc::channel().0) {
-            panic!("Unexpected result: err={:?}", &err);
-        }
-
-        assert!(cli_conn_visitor.event_channel_sender.is_some());
-        assert!(cli_conn_visitor.request_processor.is_none());
-        assert!(!cli_conn_visitor
-            .service_mgr
-            .lock()
-            .unwrap()
-            .has_control_plane_for_user(100, false));
-
-        Ok(())
-    }
-
-    #[test]
     fn cliconnvis_on_connection_read_when_valid_data() -> Result<(), AppError> {
-        let user_repo = MockUserRepo::new();
-        let access_repo = MockAccessRepo::new();
-        let service_repo = MockServiceRepo::new();
-        let role_repo = MockRoleRepo::new();
-
         let mut cli_conn_visitor = create_cliconnvis(
-            Arc::new(Mutex::new(user_repo)),
-            Arc::new(Mutex::new(service_repo)),
-            Arc::new(Mutex::new(role_repo)),
-            Arc::new(Mutex::new(access_repo)),
+            Arc::new(Mutex::new(MockUserRepo::new())),
+            Arc::new(Mutex::new(MockServiceRepo::new())),
+            Arc::new(Mutex::new(MockRoleRepo::new())),
+            Arc::new(Mutex::new(MockAccessRepo::new())),
             None,
         )?;
+
         let data = "data1";
-        let mut request_procesor = MockReqProcessor::new();
+
+        let mut request_procesor = MockMsgProcessor::new();
         request_procesor
-            .expect_process_request()
-            .with(predicate::always(), predicate::eq(data.to_string()))
-            .return_once(|_, _| Ok(request::Request::Ignore));
-        cli_conn_visitor.request_processor = Some(Arc::new(Mutex::new(request_procesor)));
+            .expect_process_inbound_messages()
+            .with(predicate::eq(data.as_bytes()))
+            .return_once(|_| Ok(()));
+        cli_conn_visitor.message_processor = Some(Arc::new(Mutex::new(request_procesor)));
 
         if let Err(err) = cli_conn_visitor.on_connection_read(data.as_bytes()) {
             panic!("Unexpected result: err={:?}", &err);
@@ -1266,25 +1161,23 @@ mod tests {
     }
 
     #[test]
-    fn cliconnvis_on_connection_read_when_invalid_data() -> Result<(), AppError> {
-        let user_repo = MockUserRepo::new();
-        let access_repo = MockAccessRepo::new();
-        let service_repo = MockServiceRepo::new();
-        let role_repo = MockRoleRepo::new();
-
+    fn cliconnvis_on_polling_cycle() -> Result<(), AppError> {
         let mut cli_conn_visitor = create_cliconnvis(
-            Arc::new(Mutex::new(user_repo)),
-            Arc::new(Mutex::new(service_repo)),
-            Arc::new(Mutex::new(role_repo)),
-            Arc::new(Mutex::new(access_repo)),
+            Arc::new(Mutex::new(MockUserRepo::new())),
+            Arc::new(Mutex::new(MockServiceRepo::new())),
+            Arc::new(Mutex::new(MockRoleRepo::new())),
+            Arc::new(Mutex::new(MockAccessRepo::new())),
             None,
         )?;
-        let data = [0xff];
-        let mut request_procesor = MockReqProcessor::new();
-        request_procesor.expect_process_request().never();
 
-        if let Ok(()) = cli_conn_visitor.on_connection_read(&data) {
-            panic!("Unexpected successful result");
+        let mut request_procesor = MockMsgProcessor::new();
+        request_procesor
+            .expect_process_outbound_messages()
+            .return_once(|| Ok(()));
+        cli_conn_visitor.message_processor = Some(Arc::new(Mutex::new(request_procesor)));
+
+        if let Err(err) = cli_conn_visitor.on_polling_cycle() {
+            panic!("Unexpected result: err={:?}", &err);
         }
 
         Ok(())
@@ -1302,7 +1195,7 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, Arc::new(Mutex::new(MockReqProcessor::new())))),
+            Some((100, Arc::new(Mutex::new(MockMsgProcessor::new())))),
         )?;
         cli_conn_visitor.user = Some(User {
             user_id: 100,
@@ -1344,7 +1237,7 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, Arc::new(Mutex::new(MockReqProcessor::new())))),
+            Some((100, Arc::new(Mutex::new(MockMsgProcessor::new())))),
         )?;
         let event_channel = mpsc::channel();
         cli_conn_visitor.event_channel_sender = Some(event_channel.0);
@@ -1380,7 +1273,7 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, Arc::new(Mutex::new(MockReqProcessor::new())))),
+            Some((100, Arc::new(Mutex::new(MockMsgProcessor::new())))),
         )?;
         let event_channel = mpsc::channel();
         cli_conn_visitor.event_channel_sender = Some(event_channel.0);
@@ -1418,7 +1311,7 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, Arc::new(Mutex::new(MockReqProcessor::new())))),
+            Some((100, Arc::new(Mutex::new(MockMsgProcessor::new())))),
         )?;
         let event_channel = mpsc::channel();
         cli_conn_visitor.event_channel_sender = Some(event_channel.0);
@@ -1455,7 +1348,7 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, Arc::new(Mutex::new(MockReqProcessor::new())))),
+            Some((100, Arc::new(Mutex::new(MockMsgProcessor::new())))),
         )?;
         let event_channel = mpsc::channel();
         cli_conn_visitor.event_channel_sender = Some(event_channel.0);
@@ -1492,7 +1385,7 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, Arc::new(Mutex::new(MockReqProcessor::new())))),
+            Some((100, Arc::new(Mutex::new(MockMsgProcessor::new())))),
         )?;
         let event_channel = mpsc::channel();
         cli_conn_visitor.event_channel_sender = Some(event_channel.0);

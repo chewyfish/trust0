@@ -4,9 +4,9 @@ use std::sync::{Arc, Mutex};
 
 use trust0_common::error::AppError;
 
-const SHELL_MSG_APP_TITLE: &str = "Trust0 SDP Platform";
-const SHELL_MSG_APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-const SHELL_MSG_APP_HELP: &str = "(enter 'help' for commands)";
+pub const SHELL_MSG_APP_TITLE: &str = "Trust0 SDP Platform";
+pub const SHELL_MSG_APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const SHELL_MSG_APP_HELP: &str = "(enter 'help' for commands)";
 pub const SHELL_PROMPT: &str = "> ";
 
 #[cfg(windows)]
