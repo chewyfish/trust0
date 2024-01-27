@@ -132,7 +132,10 @@ mod test {
         let mut expected_password = String::from_utf8(LABEL_PASSWORD.to_vec()).unwrap();
         expected_username.push('!');
         expected_password.push('!');
-        let expected_hash = "30nasGxfW9JzThsjsGSutayNhTgRNVxkv_Qm6ZUlW2U=\n!".to_string();
+        let expected_hash = format!(
+            "30nasGxfW9JzThsjsGSutayNhTgRNVxkv_Qm6ZUlW2U={}!",
+            LINE_ENDING
+        );
 
         assert!(console.in_data.is_empty());
         assert_eq!(console.out_title, vec!["T"]);

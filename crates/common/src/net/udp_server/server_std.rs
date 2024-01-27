@@ -447,6 +447,7 @@ pub mod tests {
         }
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn server_bind_listener_when_invalid_address() {
         let mut visitor = MockServerVisit::new();
@@ -523,8 +524,8 @@ pub mod tests {
         }
     }
 
+    #[cfg(not(windows))]
     #[test]
-    #[ignore]
     fn server_send_message_when_invalid_client_socket() {
         let server_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let server_socket = UdpSocket::bind(server_addr.clone()).unwrap();
