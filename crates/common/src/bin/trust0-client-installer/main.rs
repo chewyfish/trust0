@@ -146,7 +146,7 @@ pub mod tests {
             );
         }
         let ca_root_cert_file_meta = ca_root_cert_file_meta.unwrap();
-        #[cfg(unix)]
+        #[cfg(not(windows))]
         {
             assert_eq!(ca_root_cert_file_meta.len(), 1834);
         }
@@ -164,7 +164,7 @@ pub mod tests {
             );
         }
         let client_binary_file_meta = client_binary_file_meta.unwrap();
-        #[cfg(unix)]
+        #[cfg(not(windows))]
         {
             assert_eq!(client_binary_file_meta.len(), 110);
         }
@@ -182,7 +182,7 @@ pub mod tests {
             );
         }
         let client_key_file_meta = client_key_file_meta.unwrap();
-        #[cfg(unix)]
+        #[cfg(not(windows))]
         {
             assert_eq!(client_key_file_meta.len(), 3272);
         }
@@ -200,7 +200,7 @@ pub mod tests {
             );
         }
         let client_cert_file_meta = client_cert_file_meta.unwrap();
-        #[cfg(unix)]
+        #[cfg(not(windows))]
         {
             assert_eq!(client_cert_file_meta.len(), 1911);
         }

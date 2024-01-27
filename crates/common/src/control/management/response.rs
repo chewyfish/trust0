@@ -4,17 +4,10 @@ use crate::authn::authenticator;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::control::request::Request;
+use crate::control::management::request::Request;
+use crate::control::message::{ControlChannel, MessageFrame};
 use crate::error::AppError;
 use crate::model;
-
-pub const CODE_OK: u16 = 200;
-pub const CODE_CREATED: u16 = 201;
-pub const CODE_BAD_REQUEST: u16 = 400;
-pub const CODE_UNAUTHORIZED: u16 = 401;
-pub const CODE_FORBIDDEN: u16 = 403;
-pub const CODE_NOT_FOUND: u16 = 404;
-pub const CODE_INTERNAL_SERVER_ERROR: u16 = 500;
 
 /// Control plane REPL response
 #[derive(Serialize, Deserialize, Clone, Default, Debug)]
@@ -74,6 +67,34 @@ impl Response {
                 Box::new(err),
             )
         })
+    }
+}
+
+impl TryInto<MessageFrame> for Response {
+    type Error = AppError;
+
+    fn try_into(self) -> Result<MessageFrame, Self::Error> {
+        self.borrow().try_into()
+    }
+}
+
+impl TryInto<MessageFrame> for &Response {
+    type Error = AppError;
+
+    fn try_into(self) -> Result<MessageFrame, Self::Error> {
+        let request = serde_json::to_value(self.request.clone()).map_err(|err| {
+            AppError::GenWithMsgAndErr(
+                "Error converting Request to Value".to_string(),
+                Box::new(err),
+            )
+        })?;
+        Ok(MessageFrame::new(
+            ControlChannel::Management,
+            self.code,
+            &self.message,
+            &Some(request),
+            &self.data,
+        ))
     }
 }
 

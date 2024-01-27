@@ -353,10 +353,10 @@ pub mod tests {
                 *self.conn_created.lock().unwrap() = true;
                 let mut conn_visitor = conn_std::tests::MockConnVisit::new();
                 conn_visitor
-                    .expect_set_event_channel_sender()
+                    .expect_on_connected()
                     .with(predicate::always())
-                    .return_once(|_| ());
-                conn_visitor.expect_on_connected().return_once(|| Ok(()));
+                    .times(1)
+                    .return_once(|_| Ok(()));
                 Connection::new(Box::new(conn_visitor), tls_conn)
             }
             fn on_connected(&mut self) -> Result<(), AppError> {

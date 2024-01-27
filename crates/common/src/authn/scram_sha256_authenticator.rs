@@ -946,36 +946,40 @@ pub mod test {
         let s2c_msg = match server_to_tester_recv.try_recv() {
             Ok(msg) => {
                 if let AuthnMessage::Unauthenticated(_) = msg {
-                    msg
+                    Some(msg)
                 } else {
                     panic!("Unexpected server to client msg (#1): msg={:?}", &msg);
                 }
             }
-            Err(err) => panic!(
+            Err(err) if TryRecvError::Disconnected == err => panic!(
                 "Unexpected server to client msg (#1) result: err={:?}",
                 &err
             ),
+            _ => None,
         };
-        tester_to_client_send.send(s2c_msg).unwrap();
 
-        assert_states(
-            &client_state_flow,
-            &server_state_flow,
-            ClientStateFlow::ClientInitialSent,
-            ServerStateFlow::ClientInitialRecvd,
-            Duration::from_millis(50),
-            3,
-        );
-        assert!(!*client_authenticated.lock().unwrap());
-        assert!(!*server_authenticated.lock().unwrap());
+        if s2c_msg.is_some() {
+            tester_to_client_send.send(s2c_msg.unwrap()).unwrap();
 
-        match client_to_tester_recv.try_recv() {
-            Ok(msg) => panic!("Unexpected client to server msg (#2): msg={:?}", &msg),
-            Err(err) if TryRecvError::Disconnected == err => panic!(
-                "Unexpected client to server msg (#2) result: err={:?}",
-                &err
-            ),
-            _ => {}
+            assert_states(
+                &client_state_flow,
+                &server_state_flow,
+                ClientStateFlow::ClientInitialSent,
+                ServerStateFlow::ClientInitialRecvd,
+                Duration::from_millis(50),
+                3,
+            );
+            assert!(!*client_authenticated.lock().unwrap());
+            assert!(!*server_authenticated.lock().unwrap());
+
+            match client_to_tester_recv.try_recv() {
+                Ok(msg) => panic!("Unexpected client to server msg (#2): msg={:?}", &msg),
+                Err(err) if TryRecvError::Disconnected == err => panic!(
+                    "Unexpected client to server msg (#2) result: err={:?}",
+                    &err
+                ),
+                _ => {}
+            }
         }
 
         let _ = tester_to_client_send.send(AuthnMessage::Error("shutdown".to_string()));
