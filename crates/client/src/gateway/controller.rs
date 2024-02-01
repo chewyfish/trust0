@@ -1,27 +1,27 @@
 mod management;
+mod signaling;
 
 use anyhow::Result;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
+use std::ops::DerefMut;
 use std::sync::{mpsc, Arc, Mutex};
 
 use crate::config::AppConfig;
 use crate::service::manager::ServiceMgr;
-use trust0_common::control::message::{ControlChannel, MessageFrame};
+use trust0_common::control::pdu::{ControlChannel, MessageFrame};
 use trust0_common::error::AppError;
 use trust0_common::net::tls_client::conn_std;
 
 /// Control plane processor. Handles management and signaling channel messages
 pub struct ControlPlane {
-    /// Service manager
-    _service_mgr: Arc<Mutex<dyn ServiceMgr>>,
     /// Channel sender for connection events
     event_channel_sender: Option<mpsc::Sender<conn_std::ConnectionEvent>>,
     /// Queued outbound PDU messages to be sent to gateway
     message_outbox: Arc<Mutex<VecDeque<Vec<u8>>>>,
     /// Queued inbound PDU messages bytes to be processed
     message_inbox: VecDeque<u8>,
-    /// Management channel controller
-    management_controller: Box<dyn ChannelProcessor>,
+    /// Control plane channel processors
+    channel_processors: HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>>,
 }
 
 impl ControlPlane {
@@ -34,21 +34,50 @@ impl ControlPlane {
     ///
     /// # Returns
     ///
-    /// A newly constructed [`ControlPlane`] object.
+    /// A [`Result`] containing a newly constructed [`ControlPlane`] object.
     ///
-    pub fn new(app_config: Arc<AppConfig>, service_mgr: &Arc<Mutex<dyn ServiceMgr>>) -> Self {
+    pub fn new(
+        app_config: Arc<AppConfig>,
+        service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
+    ) -> Result<Self, AppError> {
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
-        Self {
-            _service_mgr: service_mgr.clone(),
+
+        let management_controller = Arc::new(Mutex::new(management::ManagementController::new(
+            app_config,
+            service_mgr,
+            message_outbox.clone(),
+        )));
+        let signaling_controller = Arc::new(Mutex::new(signaling::SignalingController::new(
+            service_mgr,
+            message_outbox.clone(),
+        )));
+        Self::spawn_signaling_event_loop(&signaling_controller)?;
+
+        let mut channel_processors: HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>> =
+            HashMap::new();
+        channel_processors.insert(ControlChannel::Management, management_controller);
+        channel_processors.insert(ControlChannel::Signaling, signaling_controller);
+
+        Ok(Self {
             event_channel_sender: None,
-            message_outbox: message_outbox.clone(),
+            message_outbox,
             message_inbox: VecDeque::new(),
-            management_controller: Box::new(management::ManagementController::new(
-                app_config,
-                service_mgr,
-                message_outbox,
-            )),
-        }
+            channel_processors,
+        })
+    }
+
+    #[cfg(not(event))]
+    fn spawn_signaling_event_loop(
+        signal_controller: &Arc<Mutex<signaling::SignalingController>>,
+    ) -> Result<(), AppError> {
+        signaling::SignalingController::spawn_event_loop(signal_controller, None)
+    }
+
+    #[cfg(event)]
+    fn spawn_signaling_event_loop(
+        signal_controller: &Arc<Mutex<signaling::SignalingController>>,
+    ) -> Result<(), AppError> {
+        Ok(())
     }
 
     /// Send control plane connection event message
@@ -85,13 +114,27 @@ impl MessageProcessor for ControlPlane {
         event_channel_sender: mpsc::Sender<conn_std::ConnectionEvent>,
     ) -> Result<(), AppError> {
         self.event_channel_sender = Some(event_channel_sender.clone());
-        self.management_controller
-            .on_connected(event_channel_sender)
+
+        for processor in self.channel_processors.values() {
+            processor
+                .lock()
+                .unwrap()
+                .deref_mut()
+                .on_connected(event_channel_sender.clone())?;
+        }
+
+        Ok(())
     }
 
     fn process_outbound_messages(&mut self) -> Result<(), AppError> {
         // Process management request(s)
-        self.management_controller.process_outbound_messages()?;
+        for processor in self.channel_processors.values() {
+            processor
+                .lock()
+                .unwrap()
+                .deref_mut()
+                .process_outbound_messages()?;
+        }
 
         // Send pending outbound messages to gateway
         while let Some(pdu) = self.message_outbox.lock().unwrap().pop_front() {
@@ -112,13 +155,12 @@ impl MessageProcessor for ControlPlane {
             };
 
             // Process message by channel type
-            match &gateway_message.channel {
-                ControlChannel::Management => self
-                    .management_controller
-                    .process_inbound_messages(gateway_message)?,
-
-                ControlChannel::Signaling => {}
-            }
+            self.channel_processors
+                .get(&gateway_message.channel)
+                .unwrap()
+                .lock()
+                .unwrap()
+                .process_inbound_message(gateway_message)?;
         }
     }
 }
@@ -189,7 +231,7 @@ pub trait ChannelProcessor {
     ///
     /// A [`Result`] indicating success/failure of the processing operation.
     ///
-    fn process_inbound_messages(&mut self, message: MessageFrame) -> Result<(), AppError>;
+    fn process_inbound_message(&mut self, message: MessageFrame) -> Result<(), AppError>;
 }
 
 /// Unit tests
@@ -222,7 +264,7 @@ pub mod tests {
                 event_channel_sender: mpsc::Sender<conn_std::ConnectionEvent>,
             ) -> Result<(), AppError>;
             fn process_outbound_messages(&mut self) -> Result<(), AppError>;
-            fn process_inbound_messages(&mut self, message: MessageFrame) -> Result<(), AppError>;
+            fn process_inbound_message(&mut self, message: MessageFrame) -> Result<(), AppError>;
         }
     }
 
@@ -233,25 +275,38 @@ pub mod tests {
     fn ctlplane_new() {
         let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
             Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
-        let control_plane = ControlPlane::new(
+
+        let result = ControlPlane::new(
             Arc::new(config::tests::create_app_config(None).unwrap()),
             &service_mgr,
         );
 
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+        let control_plane = result.unwrap();
+
         assert!(control_plane.event_channel_sender.is_none());
-        assert!(control_plane.message_outbox.lock().unwrap().is_empty());
         assert!(control_plane.message_inbox.is_empty());
+        assert!(control_plane.message_outbox.lock().unwrap().is_empty());
+        assert!(control_plane
+            .channel_processors
+            .contains_key(&ControlChannel::Management));
+        assert!(control_plane
+            .channel_processors
+            .contains_key(&ControlChannel::Signaling));
     }
 
     #[test]
     fn ctlplane_send_connection_event_when_no_errors() {
-        let app_config = config::tests::create_app_config(None).unwrap();
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
         let event_channel = mpsc::channel();
 
-        let mut control_plane = ControlPlane::new(Arc::new(app_config), &service_mgr);
-        control_plane.event_channel_sender = Some(event_channel.0);
+        let control_plane = ControlPlane {
+            event_channel_sender: Some(event_channel.0),
+            message_outbox: Arc::new(Mutex::new(VecDeque::new())),
+            message_inbox: VecDeque::new(),
+            channel_processors: HashMap::new(),
+        };
 
         if let Err(err) = control_plane
             .send_connection_event_message(conn_std::ConnectionEvent::Write(vec![0x20]))
@@ -270,11 +325,12 @@ pub mod tests {
 
     #[test]
     fn ctlplane_send_connection_event_when_error() {
-        let app_config = config::tests::create_app_config(None).unwrap();
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
-        let mut control_plane = ControlPlane::new(Arc::new(app_config), &service_mgr);
-        control_plane.event_channel_sender = Some(mpsc::channel().0);
+        let control_plane = ControlPlane {
+            event_channel_sender: Some(mpsc::channel().0),
+            message_outbox: Arc::new(Mutex::new(VecDeque::new())),
+            message_inbox: VecDeque::new(),
+            channel_processors: HashMap::new(),
+        };
 
         if let Ok(msg) = control_plane
             .send_connection_event_message(conn_std::ConnectionEvent::Write(vec![0x20]))
@@ -285,22 +341,34 @@ pub mod tests {
 
     #[test]
     fn ctlplane_on_connected() {
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
-
-        let mut mgt_controller = MockChannelProc::new();
-        mgt_controller
+        let mut mgmt_controller = MockChannelProc::new();
+        mgmt_controller
             .expect_on_connected()
             .with(predicate::always())
             .times(1)
             .return_once(|_| Ok(()));
+        let mut signal_controller = MockChannelProc::new();
+        signal_controller
+            .expect_on_connected()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|_| Ok(()));
+        let mut channel_processors: HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>> =
+            HashMap::new();
+        channel_processors.insert(
+            ControlChannel::Management,
+            Arc::new(Mutex::new(mgmt_controller)),
+        );
+        channel_processors.insert(
+            ControlChannel::Signaling,
+            Arc::new(Mutex::new(signal_controller)),
+        );
 
         let mut control_plane = ControlPlane {
-            _service_mgr: service_mgr,
             event_channel_sender: None,
             message_outbox: Arc::new(Mutex::new(VecDeque::new())),
             message_inbox: VecDeque::new(),
-            management_controller: Box::new(mgt_controller),
+            channel_processors,
         };
 
         if let Err(err) = control_plane.on_connected(mpsc::channel().0) {
@@ -312,24 +380,36 @@ pub mod tests {
 
     #[test]
     fn ctlplane_process_outbound_messages_when_queued_message() {
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
         let (channel_sender, channel_receiver) = mpsc::channel();
 
-        let mut mgt_controller = MockChannelProc::new();
-        mgt_controller
+        let mut mgmt_controller = MockChannelProc::new();
+        mgmt_controller
             .expect_process_outbound_messages()
             .times(1)
             .return_once(|| Ok(()));
+        let mut signal_controller = MockChannelProc::new();
+        signal_controller
+            .expect_process_outbound_messages()
+            .times(1)
+            .return_once(|| Ok(()));
+        let mut channel_processors: HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>> =
+            HashMap::new();
+        channel_processors.insert(
+            ControlChannel::Management,
+            Arc::new(Mutex::new(mgmt_controller)),
+        );
+        channel_processors.insert(
+            ControlChannel::Signaling,
+            Arc::new(Mutex::new(signal_controller)),
+        );
 
         let expected_pdu = vec![65, 66, 67];
 
         let mut control_plane = ControlPlane {
-            _service_mgr: service_mgr,
             event_channel_sender: Some(channel_sender),
             message_outbox: Arc::new(Mutex::new(VecDeque::from(vec![expected_pdu.clone()]))),
             message_inbox: VecDeque::new(),
-            management_controller: Box::new(mgt_controller),
+            channel_processors,
         };
 
         let result = control_plane.process_outbound_messages();
@@ -350,22 +430,34 @@ pub mod tests {
 
     #[test]
     fn ctlplane_process_outbound_messages_when_no_queued_message() {
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
         let (channel_sender, channel_receiver) = mpsc::channel();
 
-        let mut mgt_controller = MockChannelProc::new();
-        mgt_controller
+        let mut mgmt_controller = MockChannelProc::new();
+        mgmt_controller
             .expect_process_outbound_messages()
             .times(1)
             .return_once(|| Ok(()));
+        let mut signal_controller = MockChannelProc::new();
+        signal_controller
+            .expect_process_outbound_messages()
+            .times(1)
+            .return_once(|| Ok(()));
+        let mut channel_processors: HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>> =
+            HashMap::new();
+        channel_processors.insert(
+            ControlChannel::Management,
+            Arc::new(Mutex::new(mgmt_controller)),
+        );
+        channel_processors.insert(
+            ControlChannel::Signaling,
+            Arc::new(Mutex::new(signal_controller)),
+        );
 
         let mut control_plane = ControlPlane {
-            _service_mgr: service_mgr,
             event_channel_sender: Some(channel_sender),
             message_outbox: Arc::new(Mutex::new(VecDeque::new())),
             message_inbox: VecDeque::new(),
-            management_controller: Box::new(mgt_controller),
+            channel_processors,
         };
 
         let result = control_plane.process_outbound_messages();
@@ -388,21 +480,32 @@ pub mod tests {
 
     #[test]
     fn ctlplane_process_inbound_messages_when_insufficient_pdu_bytes() {
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
-
-        let mut mgt_controller = MockChannelProc::new();
-        mgt_controller
-            .expect_process_inbound_messages()
+        let mut mgmt_controller = MockChannelProc::new();
+        mgmt_controller
+            .expect_process_inbound_message()
             .with(predicate::always())
             .never();
+        let mut signal_controller = MockChannelProc::new();
+        signal_controller
+            .expect_process_inbound_message()
+            .with(predicate::always())
+            .never();
+        let mut channel_processors: HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>> =
+            HashMap::new();
+        channel_processors.insert(
+            ControlChannel::Management,
+            Arc::new(Mutex::new(mgmt_controller)),
+        );
+        channel_processors.insert(
+            ControlChannel::Signaling,
+            Arc::new(Mutex::new(signal_controller)),
+        );
 
         let mut control_plane = ControlPlane {
-            _service_mgr: service_mgr,
             event_channel_sender: Some(mpsc::channel().0),
             message_outbox: Arc::new(Mutex::new(VecDeque::new())),
             message_inbox: VecDeque::new(),
-            management_controller: Box::new(mgt_controller),
+            channel_processors,
         };
 
         let result = control_plane.process_inbound_messages(vec![0, 10, 65, 66, 67].as_slice());
@@ -414,9 +517,6 @@ pub mod tests {
 
     #[test]
     fn ctlplane_process_inbound_messages_when_valid_mgmt_pdu() {
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
-
         let msg_frame_json =
             r#"{"channel":"Management","code":200,"message":"msg1","context":"Start","data":[1]}"#;
         let mgmt_msg_frame: MessageFrame = serde_json::from_str(msg_frame_json).unwrap();
@@ -425,19 +525,30 @@ pub mod tests {
         mgmt_pdu.append(&mut msg_frame_json.as_bytes().to_vec());
         let (mgmt_pdu0, mgmt_pdu1) = mgmt_pdu.split_at(mgmt_pdu.len() / 2);
 
-        let mut mgt_controller = MockChannelProc::new();
-        mgt_controller
-            .expect_process_inbound_messages()
-            .with(predicate::eq(mgmt_msg_frame))
+        let mut mgmt_controller = MockChannelProc::new();
+        mgmt_controller
+            .expect_process_inbound_message()
+            .with(predicate::eq(mgmt_msg_frame.clone()))
             .times(1)
             .return_once(|_| Ok(()));
+        let mut signal_controller = MockChannelProc::new();
+        signal_controller.expect_process_inbound_message().never();
+        let mut channel_processors: HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>> =
+            HashMap::new();
+        channel_processors.insert(
+            ControlChannel::Management,
+            Arc::new(Mutex::new(mgmt_controller)),
+        );
+        channel_processors.insert(
+            ControlChannel::Signaling,
+            Arc::new(Mutex::new(signal_controller)),
+        );
 
         let mut control_plane = ControlPlane {
-            _service_mgr: service_mgr,
             event_channel_sender: Some(mpsc::channel().0),
             message_outbox: Arc::new(Mutex::new(VecDeque::new())),
             message_inbox: VecDeque::from(mgmt_pdu0.to_vec()),
-            management_controller: Box::new(mgt_controller),
+            channel_processors,
         };
 
         let result = control_plane.process_inbound_messages(mgmt_pdu1);

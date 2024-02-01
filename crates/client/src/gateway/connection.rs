@@ -27,7 +27,7 @@ impl ServerConnVisitor {
         Ok(Self {
             _app_config: app_config.clone(),
             event_channel_sender: None,
-            message_processor: Box::new(ControlPlane::new(app_config.clone(), &service_mgr)),
+            message_processor: Box::new(ControlPlane::new(app_config.clone(), &service_mgr)?),
         })
     }
 }

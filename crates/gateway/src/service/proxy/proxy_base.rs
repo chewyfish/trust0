@@ -7,7 +7,7 @@ use trust0_common::model::service::Service;
 use trust0_common::net::tls_server::server_std;
 use trust0_common::proxy::executor::ProxyExecutorEvent;
 
-/// Represents the gateway and client proxy stream addresses respectively for a connected proxy
+/// Represents the client and gateway proxy stream addresses respectively for a connected proxy
 pub type ProxyAddrs = (String, String);
 
 /// Service proxy trait for the gateway end of the proxy (implementations are transport-layer,... specific)
@@ -30,15 +30,22 @@ pub trait GatewayServiceProxyVisitor: server_std::ServerVisitor + Send {
     /// Gateway port for service proxy
     fn get_proxy_port(&self) -> u16;
 
-    /// Client and gateway stream addresses list for proxy connections (else None if no proxy active)
-    /// Returns list of tuple of (client address, gateway address)
-    fn get_proxy_addrs_for_user(&self, user_id: u64) -> Vec<ProxyAddrs>;
+    /// Client and gateway proxy key and stream addresses list for proxy connections (else None if no proxy active)
+    /// Returns list of tuple of (proxy key, (client address, gateway address))
+    fn get_proxy_keys_for_user(&self, user_id: u64) -> Vec<(String, ProxyAddrs)>;
 
     /// Shutdown the active service proxy connections. Consider either all connections or for given user ID.
     fn shutdown_connections(
         &mut self,
-        proxy_tasks_sender: Sender<ProxyExecutorEvent>,
+        proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
         user_id: Option<u64>,
+    ) -> Result<(), AppError>;
+
+    /// Shutdown service proxy connection.
+    fn shutdown_connection(
+        &mut self,
+        proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
+        proxy_key: &str,
     ) -> Result<(), AppError>;
 
     /// Remove proxy for given proxy key. Returns true if service proxy contained proxy key (and removed)
@@ -80,8 +87,9 @@ pub mod tests {
             fn get_service(&self) -> Service;
             fn get_proxy_host(&self) -> Option<String>;
             fn get_proxy_port(&self) -> u16;
-            fn get_proxy_addrs_for_user(&self, user_id: u64) -> Vec<ProxyAddrs>;
-            fn shutdown_connections(&mut self, proxy_tasks_sender: Sender<ProxyExecutorEvent>, user_id: Option<u64>) -> Result<(), AppError>;
+            fn get_proxy_keys_for_user(&self, user_id: u64) -> Vec<(String, ProxyAddrs)>;
+            fn shutdown_connections(&mut self, proxy_tasks_sender: &Sender<ProxyExecutorEvent>, user_id: Option<u64>) -> Result<(), AppError>;
+            fn shutdown_connection(&mut self, proxy_tasks_sender: &Sender<ProxyExecutorEvent>, proxy_key: &str) -> Result<(), AppError>;
             fn remove_proxy_for_key(&mut self, proxy_key: &str) -> bool;
         }
     }

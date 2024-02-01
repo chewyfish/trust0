@@ -238,6 +238,7 @@ mod tests {
     #[test]
     fn proxyconn_from_serde_value_when_valid_connections_list() {
         let proxy_conns_json =
+
             json!([{"service_name": "svc1", "binds": [["b0","b1"],["b2","b3"]]}]);
 
         match ProxyConnection::from_serde_value(&proxy_conns_json) {

@@ -1,6 +1,7 @@
 mod management;
+mod signaling;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{mpsc, Arc, Mutex};
 
 use anyhow::Result;
@@ -14,7 +15,7 @@ use crate::repository::access_repo::AccessRepository;
 use crate::repository::service_repo::ServiceRepository;
 use crate::repository::user_repo::UserRepository;
 use crate::service::manager::ServiceMgr;
-use trust0_common::control::message::{ControlChannel, MessageFrame};
+use trust0_common::control::pdu::{ControlChannel, MessageFrame};
 use trust0_common::error::AppError;
 use trust0_common::model;
 use trust0_common::net::tls_server::conn_std::TlsServerConnection;
@@ -22,16 +23,14 @@ use trust0_common::net::tls_server::{conn_std, server_std};
 
 /// Control plane processor. Handles management and signaling channel messages
 pub struct ControlPlane {
-    /// Application configuration object
-    _app_config: Arc<AppConfig>,
     /// Channel sender for connection events
     event_channel_sender: mpsc::Sender<conn_std::ConnectionEvent>,
     /// Queued inbound PDU messages to be processed
     message_inbox: VecDeque<u8>,
     /// Queued outbound PDU messages to be sent to client
     message_outbox: Arc<Mutex<VecDeque<Vec<u8>>>>,
-    /// Management channel controller
-    management_controller: Box<dyn ChannelProcessor>,
+    /// Control plane channel processors
+    channel_processors: HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>>,
 }
 
 impl ControlPlane {
@@ -64,23 +63,51 @@ impl ControlPlane {
         user: model::user::User,
     ) -> Result<Self, AppError> {
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
+
+        let management_controller = Arc::new(Mutex::new(management::ManagementController::new(
+            app_config,
+            service_mgr.clone(),
+            access_repo,
+            service_repo,
+            user_repo,
+            event_channel_sender.clone(),
+            device,
+            user.clone(),
+            message_outbox.clone(),
+        )?));
+        let signaling_controller = Arc::new(Mutex::new(signaling::SignalingController::new(
+            service_mgr,
+            event_channel_sender.clone(),
+            user,
+            message_outbox.clone(),
+        )));
+        Self::spawn_signaling_event_loop(&signaling_controller)?;
+
+        let mut channel_processors: HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>> =
+            HashMap::new();
+        channel_processors.insert(ControlChannel::Management, management_controller);
+        channel_processors.insert(ControlChannel::Signaling, signaling_controller);
+
         Ok(Self {
-            _app_config: app_config.clone(),
-            event_channel_sender: event_channel_sender.clone(),
+            event_channel_sender,
             message_inbox: VecDeque::new(),
-            message_outbox: message_outbox.clone(),
-            management_controller: Box::new(management::ManagementController::new(
-                app_config,
-                service_mgr,
-                access_repo,
-                service_repo,
-                user_repo,
-                event_channel_sender,
-                device,
-                user,
-                message_outbox,
-            )?),
+            message_outbox,
+            channel_processors,
         })
+    }
+
+    #[cfg(not(event))]
+    fn spawn_signaling_event_loop(
+        signal_controller: &Arc<Mutex<signaling::SignalingController>>,
+    ) -> Result<(), AppError> {
+        signaling::SignalingController::spawn_event_loop(signal_controller, None)
+    }
+
+    #[cfg(event)]
+    fn spawn_signaling_event_loop(
+        signal_controller: &Arc<Mutex<signaling::SignalingController>>,
+    ) -> Result<(), AppError> {
+        Ok(())
     }
 
     /// Send control plane connection event message
@@ -125,13 +152,12 @@ impl MessageProcessor for ControlPlane {
             };
 
             // Process message by channel type
-            match &client_message.channel {
-                ControlChannel::Management => self
-                    .management_controller
-                    .process_inbound_messages(client_message)?,
-
-                ControlChannel::Signaling => {}
-            }
+            self.channel_processors
+                .get(&client_message.channel)
+                .unwrap()
+                .lock()
+                .unwrap()
+                .process_inbound_message(client_message)?;
         }
     }
 
@@ -145,7 +171,9 @@ impl MessageProcessor for ControlPlane {
     }
 
     fn is_authenticated(&self) -> bool {
-        self.management_controller.is_authenticated()
+        self.channel_processors
+            .values()
+            .all(|processor| processor.lock().unwrap().is_authenticated().unwrap_or(true))
     }
 }
 
@@ -171,11 +199,13 @@ pub trait MessageProcessor: Send {
     ///
     fn process_outbound_messages(&mut self) -> Result<(), AppError>;
 
-    /// Returns (secondary) authentication state
+    /// Returns (secondary) authentication state. Each channel processor can decide this state. If not applicable
+    /// for a specific channel processor, it will merely return `None`, which implies that the session
+    /// is authenticated (as far as it is concerned).
     ///
     /// # Returns
     ///
-    /// Whether or not session has passed (secondary) authentication.
+    /// Whether the session has passed (secondary) authentication.
     ///
     fn is_authenticated(&self) -> bool;
 }
@@ -237,7 +267,7 @@ impl server_std::ServerVisitor for ControlPlaneServerVisitor {
 
 /// Control plane channel (management or signaling) message processor
 pub trait ChannelProcessor {
-    /// Process (potential) control plane channel message.
+    /// Process control plane channel message.
     ///
     /// # Arguments
     ///
@@ -247,15 +277,17 @@ pub trait ChannelProcessor {
     ///
     /// A [`Result`] indicating success/failure of the processing operation.
     ///
-    fn process_inbound_messages(&mut self, message: MessageFrame) -> Result<(), AppError>;
+    fn process_inbound_message(&mut self, message: MessageFrame) -> Result<(), AppError>;
 
-    /// Returns (secondary) authentication state
+    /// Returns (secondary) authentication state. Non-management processors may return `None`, which implies
+    /// that they don't have an answer at the current time. In this case the authentication state should solely
+    /// be determined by a unanimous consensus (that is, all must be `true` for the session to be authenticated.
     ///
     /// # Returns
     ///
-    /// Whether the session has been authenticated.
+    /// Whether the session has been authenticated or if the authentication state is unknown.
     ///
-    fn is_authenticated(&self) -> bool;
+    fn is_authenticated(&self) -> Option<bool>;
 }
 
 /// Unit tests
@@ -295,8 +327,8 @@ pub mod tests {
     mock! {
         pub ChannelProc {}
         impl ChannelProcessor for ChannelProc {
-            fn process_inbound_messages(&mut self, message: MessageFrame) -> Result<(), AppError>;
-            fn is_authenticated(&self) -> bool;
+            fn process_inbound_message(&mut self, message: MessageFrame) -> Result<(), AppError>;
+            fn is_authenticated(&self) -> Option<bool>;
         }
     }
 
@@ -318,6 +350,57 @@ pub mod tests {
             status: model::user::Status::Active,
             roles: vec![50, 51],
         }
+    }
+    pub fn assert_msg_frame_pdu_equality(
+        pending_pdus: &Arc<Mutex<VecDeque<Vec<u8>>>>,
+        expected_pdu: Vec<u8>,
+        max_msg_size: Option<usize>,
+    ) {
+        assert!(!pending_pdus.lock().unwrap().is_empty());
+
+        let pdu = pending_pdus.lock().unwrap().get(0).unwrap().clone();
+        assert!(pdu.len() >= 3);
+        assert!(expected_pdu.len() >= 3);
+
+        let (msg_size, msg) = pdu.split_at(std::mem::size_of::<u16>());
+        let pdu_msg_size = u16::from_be_bytes(msg_size.try_into().unwrap());
+        let mut pdu_msg = String::from_utf8(msg.to_vec()).unwrap();
+
+        let (expected_msg_size, expected_msg) = expected_pdu.split_at(std::mem::size_of::<u16>());
+        let expected_pdu_msg_size = u16::from_be_bytes(expected_msg_size.try_into().unwrap());
+        let mut expected_pdu_msg = String::from_utf8(expected_msg.to_vec()).unwrap();
+
+        if max_msg_size.is_some() {
+            println!("PM:{}", &pdu_msg);
+            if pdu_msg.len() > max_msg_size.unwrap() {
+                pdu_msg = pdu_msg[0..max_msg_size.unwrap()].to_string();
+            }
+            if expected_pdu_msg.len() > max_msg_size.unwrap() {
+                expected_pdu_msg = expected_pdu_msg[0..max_msg_size.unwrap()].to_string();
+            }
+        }
+
+        assert_eq!(pdu_msg, expected_pdu_msg);
+
+        if max_msg_size.is_none() {
+            assert_eq!(pdu_msg_size, expected_pdu_msg_size);
+        }
+    }
+
+    pub fn assert_msg_frame_pdu_contains(
+        pending_pdus: &Arc<Mutex<VecDeque<Vec<u8>>>>,
+        expected_pdu_section: &str,
+    ) {
+        assert!(!pending_pdus.lock().unwrap().is_empty());
+
+        let pdu = pending_pdus.lock().unwrap().get(0).unwrap().clone();
+        assert!(pdu.len() >= 3);
+
+        let (msg_size, msg) = pdu.split_at(std::mem::size_of::<u16>());
+        let _pdu_msg_size = u16::from_be_bytes(msg_size.try_into().unwrap());
+        let pdu_msg = String::from_utf8(msg.to_vec()).unwrap();
+
+        assert!(pdu_msg.contains(expected_pdu_section));
     }
 
     // tests
@@ -362,25 +445,22 @@ pub mod tests {
 
         assert!(control_plane.message_inbox.is_empty());
         assert!(control_plane.message_outbox.lock().unwrap().is_empty());
+        assert!(control_plane
+            .channel_processors
+            .contains_key(&ControlChannel::Management));
+        assert!(control_plane
+            .channel_processors
+            .contains_key(&ControlChannel::Signaling));
     }
 
     #[test]
     fn ctlplane_send_connection_event_when_no_errors() {
         let event_channel = mpsc::channel();
         let control_plane = ControlPlane {
-            _app_config: Arc::new(
-                config::tests::create_app_config_with_repos(
-                    Arc::new(Mutex::new(MockUserRepo::new())),
-                    Arc::new(Mutex::new(MockServiceRepo::new())),
-                    Arc::new(Mutex::new(MockRoleRepo::new())),
-                    Arc::new(Mutex::new(MockAccessRepo::new())),
-                )
-                .unwrap(),
-            ),
             event_channel_sender: event_channel.0,
             message_inbox: VecDeque::new(),
             message_outbox: Arc::new(Mutex::new(VecDeque::new())),
-            management_controller: Box::new(MockChannelProc::new()),
+            channel_processors: HashMap::new(),
         };
 
         if let Err(err) = control_plane
@@ -401,19 +481,10 @@ pub mod tests {
     #[test]
     fn ctlplane_send_connection_event_when_error() {
         let control_plane = ControlPlane {
-            _app_config: Arc::new(
-                config::tests::create_app_config_with_repos(
-                    Arc::new(Mutex::new(MockUserRepo::new())),
-                    Arc::new(Mutex::new(MockServiceRepo::new())),
-                    Arc::new(Mutex::new(MockRoleRepo::new())),
-                    Arc::new(Mutex::new(MockAccessRepo::new())),
-                )
-                .unwrap(),
-            ),
             event_channel_sender: mpsc::channel().0,
             message_inbox: VecDeque::new(),
             message_outbox: Arc::new(Mutex::new(VecDeque::new())),
-            management_controller: Box::new(MockChannelProc::new()),
+            channel_processors: HashMap::new(),
         };
 
         if let Ok(msg) = control_plane
@@ -425,26 +496,32 @@ pub mod tests {
 
     #[test]
     fn ctlplane_process_inbound_messages_when_insufficient_pdu_bytes() {
-        let mut mgt_controller = MockChannelProc::new();
-        mgt_controller
-            .expect_process_inbound_messages()
+        let mut mgmt_controller = MockChannelProc::new();
+        mgmt_controller
+            .expect_process_inbound_message()
             .with(predicate::always())
             .never();
+        let mut signal_controller = MockChannelProc::new();
+        signal_controller
+            .expect_process_inbound_message()
+            .with(predicate::always())
+            .never();
+        let mut channel_processors: HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>> =
+            HashMap::new();
+        channel_processors.insert(
+            ControlChannel::Management,
+            Arc::new(Mutex::new(mgmt_controller)),
+        );
+        channel_processors.insert(
+            ControlChannel::Signaling,
+            Arc::new(Mutex::new(signal_controller)),
+        );
 
         let mut control_plane = ControlPlane {
-            _app_config: Arc::new(
-                config::tests::create_app_config_with_repos(
-                    Arc::new(Mutex::new(MockUserRepo::new())),
-                    Arc::new(Mutex::new(MockServiceRepo::new())),
-                    Arc::new(Mutex::new(MockRoleRepo::new())),
-                    Arc::new(Mutex::new(MockAccessRepo::new())),
-                )
-                .unwrap(),
-            ),
             event_channel_sender: mpsc::channel().0,
             message_inbox: VecDeque::new(),
             message_outbox: Arc::new(Mutex::new(VecDeque::new())),
-            management_controller: Box::new(mgt_controller),
+            channel_processors,
         };
 
         let result = control_plane.process_inbound_messages(vec![0, 10, 65, 66, 67].as_slice());
@@ -464,30 +541,81 @@ pub mod tests {
         mgmt_pdu.append(&mut msg_frame_json.as_bytes().to_vec());
         let (mgmt_pdu0, mgmt_pdu1) = mgmt_pdu.split_at(mgmt_pdu.len() / 2);
 
-        let mut mgt_controller = MockChannelProc::new();
-        mgt_controller
-            .expect_process_inbound_messages()
+        let mut mgmt_controller = MockChannelProc::new();
+        mgmt_controller
+            .expect_process_inbound_message()
             .with(predicate::eq(mgmt_msg_frame))
             .times(1)
             .return_once(|_| Ok(()));
+        let mut signal_controller = MockChannelProc::new();
+        signal_controller
+            .expect_process_inbound_message()
+            .with(predicate::always())
+            .never();
+        let mut channel_processors: HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>> =
+            HashMap::new();
+        channel_processors.insert(
+            ControlChannel::Management,
+            Arc::new(Mutex::new(mgmt_controller)),
+        );
+        channel_processors.insert(
+            ControlChannel::Signaling,
+            Arc::new(Mutex::new(signal_controller)),
+        );
 
         let mut control_plane = ControlPlane {
-            _app_config: Arc::new(
-                config::tests::create_app_config_with_repos(
-                    Arc::new(Mutex::new(MockUserRepo::new())),
-                    Arc::new(Mutex::new(MockServiceRepo::new())),
-                    Arc::new(Mutex::new(MockRoleRepo::new())),
-                    Arc::new(Mutex::new(MockAccessRepo::new())),
-                )
-                .unwrap(),
-            ),
             event_channel_sender: mpsc::channel().0,
             message_inbox: VecDeque::from(mgmt_pdu0.to_vec()),
             message_outbox: Arc::new(Mutex::new(VecDeque::new())),
-            management_controller: Box::new(mgt_controller),
+            channel_processors,
         };
 
         let result = control_plane.process_inbound_messages(mgmt_pdu1);
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn ctlplane_process_inbound_messages_when_valid_signal_pdu() {
+        let msg_frame_json = r#"{"channel":"Signaling","code":200,"message":"msg1","context":"ProxyConnections","data":[1]}"#;
+        let signal_msg_frame: MessageFrame = serde_json::from_str(msg_frame_json).unwrap();
+        let mut signal_pdu: Vec<u8> = vec![];
+        signal_pdu.append(&mut (msg_frame_json.len() as u16).to_be_bytes().to_vec());
+        signal_pdu.append(&mut msg_frame_json.as_bytes().to_vec());
+        let (signal_pdu0, signal_pdu1) = signal_pdu.split_at(signal_pdu.len() / 2);
+
+        let mut mgmt_controller = MockChannelProc::new();
+        mgmt_controller
+            .expect_process_inbound_message()
+            .with(predicate::always())
+            .never();
+        let mut signal_controller = MockChannelProc::new();
+        signal_controller
+            .expect_process_inbound_message()
+            .with(predicate::eq(signal_msg_frame))
+            .times(1)
+            .return_once(|_| Ok(()));
+        let mut channel_processors: HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>> =
+            HashMap::new();
+        channel_processors.insert(
+            ControlChannel::Management,
+            Arc::new(Mutex::new(mgmt_controller)),
+        );
+        channel_processors.insert(
+            ControlChannel::Signaling,
+            Arc::new(Mutex::new(signal_controller)),
+        );
+
+        let mut control_plane = ControlPlane {
+            event_channel_sender: mpsc::channel().0,
+            message_inbox: VecDeque::from(signal_pdu0.to_vec()),
+            message_outbox: Arc::new(Mutex::new(VecDeque::new())),
+            channel_processors,
+        };
+
+        let result = control_plane.process_inbound_messages(signal_pdu1);
 
         if let Err(err) = result {
             panic!("Unexpected result: err={:?}", &err);
@@ -501,19 +629,10 @@ pub mod tests {
         let expected_pdu = vec![65, 66, 67];
 
         let mut control_plane = ControlPlane {
-            _app_config: Arc::new(
-                config::tests::create_app_config_with_repos(
-                    Arc::new(Mutex::new(MockUserRepo::new())),
-                    Arc::new(Mutex::new(MockServiceRepo::new())),
-                    Arc::new(Mutex::new(MockRoleRepo::new())),
-                    Arc::new(Mutex::new(MockAccessRepo::new())),
-                )
-                .unwrap(),
-            ),
             event_channel_sender: channel_sender,
             message_inbox: VecDeque::new(),
             message_outbox: Arc::new(Mutex::new(VecDeque::from(vec![expected_pdu.clone()]))),
-            management_controller: Box::new(MockChannelProc::new()),
+            channel_processors: HashMap::new(),
         };
 
         let result = control_plane.process_outbound_messages();
@@ -537,19 +656,10 @@ pub mod tests {
         let (channel_sender, channel_receiver) = mpsc::channel();
 
         let mut control_plane = ControlPlane {
-            _app_config: Arc::new(
-                config::tests::create_app_config_with_repos(
-                    Arc::new(Mutex::new(MockUserRepo::new())),
-                    Arc::new(Mutex::new(MockServiceRepo::new())),
-                    Arc::new(Mutex::new(MockRoleRepo::new())),
-                    Arc::new(Mutex::new(MockAccessRepo::new())),
-                )
-                .unwrap(),
-            ),
             event_channel_sender: channel_sender,
             message_inbox: VecDeque::new(),
             message_outbox: Arc::new(Mutex::new(VecDeque::new())),
-            management_controller: Box::new(MockChannelProc::new()),
+            channel_processors: HashMap::new(),
         };
 
         let result = control_plane.process_outbound_messages();
@@ -571,29 +681,68 @@ pub mod tests {
     }
 
     #[test]
-    fn ctlplane_is_authenticated() {
-        let mut mgt_controller = MockChannelProc::new();
-        mgt_controller
+    fn ctlplane_is_authenticated_when_authed() {
+        let mut mgmt_controller = MockChannelProc::new();
+        mgmt_controller
             .expect_is_authenticated()
             .times(1)
-            .return_once(|| true);
+            .return_once(|| Some(true));
+        let mut signal_controller = MockChannelProc::new();
+        signal_controller
+            .expect_is_authenticated()
+            .times(1)
+            .return_once(|| None);
+        let mut channel_processors: HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>> =
+            HashMap::new();
+        channel_processors.insert(
+            ControlChannel::Management,
+            Arc::new(Mutex::new(mgmt_controller)),
+        );
+        channel_processors.insert(
+            ControlChannel::Signaling,
+            Arc::new(Mutex::new(signal_controller)),
+        );
 
         let control_plane = ControlPlane {
-            _app_config: Arc::new(
-                config::tests::create_app_config_with_repos(
-                    Arc::new(Mutex::new(MockUserRepo::new())),
-                    Arc::new(Mutex::new(MockServiceRepo::new())),
-                    Arc::new(Mutex::new(MockRoleRepo::new())),
-                    Arc::new(Mutex::new(MockAccessRepo::new())),
-                )
-                .unwrap(),
-            ),
             event_channel_sender: mpsc::channel().0,
             message_inbox: VecDeque::new(),
             message_outbox: Arc::new(Mutex::new(VecDeque::new())),
-            management_controller: Box::new(mgt_controller),
+            channel_processors,
         };
 
         assert!(control_plane.is_authenticated());
+    }
+
+    #[test]
+    fn ctlplane_is_authenticated_when_not_authed() {
+        let mut mgmt_controller = MockChannelProc::new();
+        mgmt_controller
+            .expect_is_authenticated()
+            .times(0..=1)
+            .return_once(|| Some(false));
+        let mut signal_controller = MockChannelProc::new();
+        signal_controller
+            .expect_is_authenticated()
+            .times(0..=1)
+            .return_once(|| None);
+        let mut channel_processors: HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>> =
+            HashMap::new();
+        channel_processors.insert(
+            ControlChannel::Management,
+            Arc::new(Mutex::new(mgmt_controller)),
+        );
+        channel_processors.insert(
+            ControlChannel::Signaling,
+            Arc::new(Mutex::new(signal_controller)),
+        );
+
+        let control_plane = ControlPlane {
+            event_channel_sender: mpsc::channel().0,
+            message_inbox: VecDeque::new(),
+            message_outbox: Arc::new(Mutex::new(VecDeque::new())),
+            channel_processors,
+        };
+
+        assert!(!control_plane.is_authenticated());
     }
 }

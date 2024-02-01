@@ -14,11 +14,12 @@ use crate::repository::access_repo::AccessRepository;
 use crate::repository::service_repo::ServiceRepository;
 use crate::repository::user_repo::UserRepository;
 use crate::service::manager::ServiceMgr;
+use crate::service::proxy::proxy_base::ProxyAddrs;
 use trust0_common::authn::authenticator::{AuthenticatorServer, AuthnMessage, AuthnType};
 use trust0_common::authn::insecure_authenticator::InsecureAuthenticatorServer;
 use trust0_common::authn::scram_sha256_authenticator::ScramSha256AuthenticatorServer;
 use trust0_common::control::management;
-use trust0_common::control::message::MessageFrame;
+use trust0_common::control::pdu::MessageFrame;
 use trust0_common::error::AppError;
 use trust0_common::logging::error;
 use trust0_common::net::tls_server::conn_std;
@@ -36,12 +37,8 @@ pub struct ManagementController {
     app_config: Arc<AppConfig>,
     /// Service manager
     service_mgr: Arc<Mutex<dyn ServiceMgr>>,
-    /// Management control plane message processor
-    _management_processor: management::request::RequestProcessor,
     /// Access DB repository
     access_repo: Arc<Mutex<dyn AccessRepository>>,
-    /// Service DB repository
-    _service_repo: Arc<Mutex<dyn ServiceRepository>>,
     /// User DB repository
     user_repo: Arc<Mutex<dyn UserRepository>>,
     /// Channel sender for connection events
@@ -61,7 +58,7 @@ pub struct ManagementController {
 }
 
 impl ManagementController {
-    /// ControlPlane constructor
+    /// ManagementController constructor
     ///
     /// # Arguments
     ///
@@ -104,9 +101,7 @@ impl ManagementController {
         Ok(Self {
             app_config,
             service_mgr,
-            _management_processor: management::request::RequestProcessor::new(),
             access_repo,
-            _service_repo: service_repo,
             user_repo,
             event_channel_sender,
             device,
@@ -135,7 +130,7 @@ impl ManagementController {
         });
 
         Ok(management::response::Response::new(
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &management::request::Request::About,
             &Some(
@@ -174,7 +169,7 @@ impl ManagementController {
         };
 
         Ok(management::response::Response::new(
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &management::request::Request::Login,
             &Some(
@@ -207,7 +202,7 @@ impl ManagementController {
             Some(AuthnMessage::Authenticated)
         } else if authn_context.authn_thread_handle.is_none() {
             return Err(AppError::GenWithCodeAndMsg(
-                control::message::CODE_FORBIDDEN,
+                control::pdu::CODE_FORBIDDEN,
                 "Login process flow not initiated".to_string(),
             ));
         } else {
@@ -217,7 +212,7 @@ impl ManagementController {
         };
 
         Ok(management::response::Response::new(
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &management::request::Request::LoginData {
                 message: authn_msg.clone(),
@@ -239,8 +234,6 @@ impl ManagementController {
     /// A [`Result`] containing the [`management::response::Response`] object for the Connections request.
     ///
     fn process_cmd_connections(&self) -> Result<management::response::Response, AppError> {
-        let mask_addrs = self.app_config.mask_addresses;
-
         let service_proxies = self.service_mgr.lock().unwrap().get_service_proxies();
 
         let connections: Vec<Value> = service_proxies
@@ -248,17 +241,16 @@ impl ManagementController {
             .map(|service_proxy| {
                 let service_proxy = service_proxy.lock().unwrap();
 
-                let proxy_addrs_list = service_proxy.get_proxy_addrs_for_user(self.user.user_id);
+                let proxy_addrs_list: Vec<ProxyAddrs> = service_proxy
+                    .get_proxy_keys_for_user(self.user.user_id)
+                    .iter()
+                    .map(|(_, addrs)| addrs)
+                    .cloned()
+                    .collect();
 
                 let binds = proxy_addrs_list
                     .iter()
-                    .map(|proxy_addrs| {
-                        if !mask_addrs {
-                            vec![proxy_addrs.0.clone(), proxy_addrs.1.clone()]
-                        } else {
-                            vec![proxy_addrs.0.clone()]
-                        }
-                    })
+                    .map(|proxy_addrs| vec![proxy_addrs.0.clone(), proxy_addrs.1.clone()])
                     .collect();
 
                 management::response::Connection::new(&service_proxy.get_service().name, binds)
@@ -267,7 +259,7 @@ impl ManagementController {
             .collect::<Result<Vec<Value>, AppError>>()?;
 
         Ok(management::response::Response::new(
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &management::request::Request::Connections,
             &Some(connections.into()),
@@ -314,7 +306,7 @@ impl ManagementController {
             .collect::<Result<Vec<Value>, AppError>>()?;
 
         Ok(management::response::Response::new(
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &management::request::Request::Proxies,
             &Some(proxies.into()),
@@ -344,7 +336,7 @@ impl ManagementController {
             .collect::<Result<Vec<Value>, AppError>>()?;
 
         Ok(management::response::Response::new(
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &management::request::Request::Services,
             &Some(user_services.into()),
@@ -372,7 +364,7 @@ impl ManagementController {
             self.services_by_name
                 .get(service_name)
                 .ok_or(AppError::GenWithCodeAndMsg(
-                    control::message::CODE_NOT_FOUND,
+                    control::pdu::CODE_NOT_FOUND,
                     format!("Unknown service: svc_name={}", service_name),
                 ))?;
 
@@ -384,7 +376,7 @@ impl ManagementController {
             .is_none()
         {
             return Err(AppError::GenWithCodeAndMsg(
-                control::message::CODE_FORBIDDEN,
+                control::pdu::CODE_FORBIDDEN,
                 format!(
                     "User is not authorized for service: user_id={}, svc_id={}",
                     self.user.user_id, service.service_id
@@ -404,7 +396,7 @@ impl ManagementController {
         let service = Self::prepare_response_service(service, self.app_config.mask_addresses);
 
         Ok(management::response::Response::new(
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &management::request::Request::Start {
                 service_name: service_name.to_string(),
@@ -441,7 +433,7 @@ impl ManagementController {
             self.services_by_name
                 .get(service_name)
                 .ok_or(AppError::GenWithCodeAndMsg(
-                    control::message::CODE_NOT_FOUND,
+                    control::pdu::CODE_NOT_FOUND,
                     format!("Unknown service: svc_name={}", service_name),
                 ))?;
 
@@ -452,7 +444,7 @@ impl ManagementController {
             .has_proxy_for_user_and_service(self.user.user_id, service.service_id)
         {
             return Err(AppError::GenWithCodeAndMsg(
-                control::message::CODE_NOT_FOUND,
+                control::pdu::CODE_NOT_FOUND,
                 format!(
                     "No active proxy found: user_id={}, svc_id={}",
                     self.user.user_id, service.service_id
@@ -468,7 +460,7 @@ impl ManagementController {
 
         // Return service proxy connection
         Ok(management::response::Response::new(
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &management::request::Request::Stop {
                 service_name: service_name.to_string(),
@@ -491,7 +483,7 @@ impl ManagementController {
             })?;
 
         Ok(management::response::Response::new(
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &management::request::Request::Quit,
             &Some("bye".into()),
@@ -515,7 +507,7 @@ impl ManagementController {
             Ok(())
         } else {
             Err(AppError::GenWithCodeAndMsg(
-                control::message::CODE_FORBIDDEN,
+                control::pdu::CODE_FORBIDDEN,
                 format!(
                     "Not authenticated, please perform the '{}' request flow first",
                     management::request::PROTOCOL_REQUEST_LOGIN
@@ -587,7 +579,7 @@ impl ManagementController {
 unsafe impl Send for ManagementController {}
 
 impl ChannelProcessor for ManagementController {
-    fn process_inbound_messages(&mut self, message: MessageFrame) -> Result<(), AppError> {
+    fn process_inbound_message(&mut self, message: MessageFrame) -> Result<(), AppError> {
         let request_str = format!("{:?}", &message);
         let client_request;
         let client_response: Result<management::response::Response, AppError>;
@@ -618,7 +610,7 @@ impl ChannelProcessor for ManagementController {
             Ok(management::request::Request::Ping) => {
                 client_request = management::request::Request::Ping;
                 client_response = Ok(management::response::Response::new(
-                    control::message::CODE_OK,
+                    control::pdu::CODE_OK,
                     &Some("pong".to_string()),
                     &management::request::Request::Ping,
                     &None,
@@ -659,7 +651,7 @@ impl ChannelProcessor for ManagementController {
             Ok(management::request::Request::None) => {
                 client_request = management::request::Request::None;
                 client_response = Ok(management::response::Response::new(
-                    control::message::CODE_OK,
+                    control::pdu::CODE_OK,
                     &Some("".to_string()),
                     &management::request::Request::None,
                     &None,
@@ -684,23 +676,23 @@ impl ChannelProcessor for ManagementController {
                 );
                 let request_context = serde_json::to_value(client_request).ok();
                 match err.get_code() {
-                    Some(code) if code == control::message::CODE_BAD_REQUEST => MessageFrame::new(
-                        control::message::ControlChannel::Management,
+                    Some(code) if code == control::pdu::CODE_BAD_REQUEST => MessageFrame::new(
+                        control::pdu::ControlChannel::Management,
                         code,
                         &None,
                         &request_context,
                         &None,
                     ),
                     Some(code) => MessageFrame::new(
-                        control::message::ControlChannel::Management,
+                        control::pdu::ControlChannel::Management,
                         code,
                         &Some(err.to_string()),
                         &request_context,
                         &None,
                     ),
                     _ => MessageFrame::new(
-                        control::message::ControlChannel::Management,
-                        control::message::CODE_INTERNAL_SERVER_ERROR,
+                        control::pdu::ControlChannel::Management,
+                        control::pdu::CODE_INTERNAL_SERVER_ERROR,
                         &Some(err.to_string()),
                         &request_context,
                         &None,
@@ -717,12 +709,14 @@ impl ChannelProcessor for ManagementController {
         Ok(())
     }
 
-    fn is_authenticated(&self) -> bool {
-        self.authn_context
-            .lock()
-            .unwrap()
-            .authenticator
-            .is_authenticated()
+    fn is_authenticated(&self) -> Option<bool> {
+        Some(
+            self.authn_context
+                .lock()
+                .unwrap()
+                .authenticator
+                .is_authenticated(),
+        )
     }
 }
 
@@ -730,7 +724,9 @@ impl ChannelProcessor for ManagementController {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::client::controller::tests::{create_device, create_user};
+    use crate::client::controller::tests::{
+        assert_msg_frame_pdu_contains, assert_msg_frame_pdu_equality, create_device, create_user,
+    };
     use crate::config;
     use crate::repository::access_repo::tests::MockAccessRepo;
     use crate::repository::role_repo::tests::MockRoleRepo;
@@ -743,7 +739,7 @@ pub mod tests {
     use std::sync::mpsc;
     use trust0_common::authn::authenticator::{AuthenticatorClient, AuthenticatorServer};
     use trust0_common::authn::scram_sha256_authenticator::ScramSha256AuthenticatorClient;
-    use trust0_common::control::message::ControlChannel;
+    use trust0_common::control::pdu::ControlChannel;
     use trust0_common::model::access::{EntityType, ServiceAccess};
 
     // mocks
@@ -900,10 +896,15 @@ pub mod tests {
                 });
             if expect_connection_details {
                 service_proxy
-                    .expect_get_proxy_addrs_for_user()
+                    .expect_get_proxy_keys_for_user()
                     .with(predicate::eq(100))
                     .times(1)
-                    .return_once(move |_| vec![("addr1".to_string(), "addr2".to_string())]);
+                    .return_once(move |_| {
+                        vec![(
+                            "key1".to_string(),
+                            ("addr1".to_string(), "addr2".to_string()),
+                        )]
+                    });
             }
             if expect_proxy_details {
                 service_proxy
@@ -982,63 +983,54 @@ pub mod tests {
         )?)
     }
 
-    fn assert_msg_frame_pdu_equality(
-        pending_pdus: &Arc<Mutex<VecDeque<Vec<u8>>>>,
-        expected_pdu: Vec<u8>,
-        max_msg_size: Option<usize>,
-    ) {
-        assert!(!pending_pdus.lock().unwrap().is_empty());
-
-        let pdu = pending_pdus.lock().unwrap().get(0).unwrap().clone();
-        assert!(pdu.len() >= 3);
-        assert!(expected_pdu.len() >= 3);
-
-        let (msg_size, msg) = pdu.split_at(std::mem::size_of::<u16>());
-        let pdu_msg_size = u16::from_be_bytes(msg_size.try_into().unwrap());
-        let mut pdu_msg = String::from_utf8(msg.to_vec()).unwrap();
-
-        let (expected_msg_size, expected_msg) = expected_pdu.split_at(std::mem::size_of::<u16>());
-        let expected_pdu_msg_size = u16::from_be_bytes(expected_msg_size.try_into().unwrap());
-        let mut expected_pdu_msg = String::from_utf8(expected_msg.to_vec()).unwrap();
-
-        if max_msg_size.is_some() {
-            println!("PM:{}", &pdu_msg);
-            if pdu_msg.len() > max_msg_size.unwrap() {
-                pdu_msg = pdu_msg[0..max_msg_size.unwrap()].to_string();
-            }
-            if expected_pdu_msg.len() > max_msg_size.unwrap() {
-                expected_pdu_msg = expected_pdu_msg[0..max_msg_size.unwrap()].to_string();
-            }
-        }
-
-        assert_eq!(pdu_msg, expected_pdu_msg);
-
-        if max_msg_size.is_none() {
-            assert_eq!(pdu_msg_size, expected_pdu_msg_size);
-        }
-    }
-
-    fn assert_msg_frame_pdu_contains(
-        pending_pdus: &Arc<Mutex<VecDeque<Vec<u8>>>>,
-        expected_pdu_section: &str,
-    ) {
-        assert!(!pending_pdus.lock().unwrap().is_empty());
-
-        let pdu = pending_pdus.lock().unwrap().get(0).unwrap().clone();
-        assert!(pdu.len() >= 3);
-
-        let (msg_size, msg) = pdu.split_at(std::mem::size_of::<u16>());
-        let _pdu_msg_size = u16::from_be_bytes(msg_size.try_into().unwrap());
-        let pdu_msg = String::from_utf8(msg.to_vec()).unwrap();
-
-        assert!(pdu_msg.contains(expected_pdu_section));
-    }
-
     // tests
     // =====
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_login_and_already_authed() {
+    fn mgtcontrol_process_inbound_message_when_about() {
+        let repos = create_repos(true, false, false);
+        let event_channel = mpsc::channel();
+        let service_mgr = create_service_mgr(false, false, false, false);
+        let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
+
+        let mut controller = create_controller(
+            service_mgr,
+            event_channel.0,
+            &repos.0,
+            &repos.1,
+            &repos.2,
+            AuthnType::Insecure,
+            message_outbox.clone(),
+        )
+        .unwrap();
+
+        let request_cmd_json =
+            Value::String(management::request::PROTOCOL_REQUEST_ABOUT.to_string());
+
+        let result = controller.process_inbound_message(MessageFrame::new(
+            ControlChannel::Management,
+            control::pdu::CODE_OK,
+            &None,
+            &None,
+            &Some(request_cmd_json.clone()),
+        ));
+
+        if let Err(err) = &result {
+            panic!("Unexpected process request result: err={:?}", err);
+        }
+
+        assert_msg_frame_pdu_contains(
+            &message_outbox,
+            r#"{"channel":"Management","code":200,"message":null,"context":"About","data":{"cert_alt_subj"#,
+        );
+        assert_msg_frame_pdu_contains(
+            &message_outbox,
+            r#""user":{"name":"user100","status":"Active","user_id":100}"#,
+        );
+    }
+
+    #[test]
+    fn mgtcontrol_process_inbound_message_when_login_and_already_authed() {
         let repos = create_repos(false, false, false);
         let event_channel = mpsc::channel();
         let service_mgr = create_service_mgr(false, false, false, false);
@@ -1066,9 +1058,9 @@ pub mod tests {
         let request_cmd_json =
             Value::String(management::request::PROTOCOL_REQUEST_LOGIN.to_string());
 
-        let result = controller.process_inbound_messages(MessageFrame::new(
+        let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &None,
             &Some(request_cmd_json.clone()),
@@ -1080,7 +1072,7 @@ pub mod tests {
 
         let expected_response_pdu = MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &Some(request_json),
             &Some(json!({"authnType":"insecure","message":"authenticated"})),
@@ -1092,7 +1084,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_login_and_insecure_authn() {
+    fn mgtcontrol_process_inbound_message_when_login_and_insecure_authn() {
         let repos = create_repos(false, false, false);
         let event_channel = mpsc::channel();
         let service_mgr = create_service_mgr(false, false, false, false);
@@ -1113,9 +1105,9 @@ pub mod tests {
         let request_cmd_json =
             Value::String(management::request::PROTOCOL_REQUEST_LOGIN.to_string());
 
-        let result = controller.process_inbound_messages(MessageFrame::new(
+        let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &None,
             &Some(request_cmd_json.clone()),
@@ -1127,7 +1119,7 @@ pub mod tests {
 
         let expected_response_pdu = MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &Some(request_json),
             &Some(json!({"authnType":"insecure","message":"authenticated"})),
@@ -1146,7 +1138,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_login_and_scramsha256_authn() {
+    fn mgtcontrol_process_inbound_message_when_login_and_scramsha256_authn() {
         let repos = create_repos(false, false, false);
         let event_channel = mpsc::channel();
         let service_mgr = create_service_mgr(false, false, false, false);
@@ -1167,9 +1159,9 @@ pub mod tests {
         let request_cmd_json =
             Value::String(management::request::PROTOCOL_REQUEST_LOGIN.to_string());
 
-        let result = controller.process_inbound_messages(MessageFrame::new(
+        let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &None,
             &Some(request_cmd_json.clone()),
@@ -1181,7 +1173,7 @@ pub mod tests {
 
         let expected_response_pdu = MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &Some(request_json),
             &Some(json!({"authnType":"scramSha256","message":null})),
@@ -1200,7 +1192,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_login_data_and_already_authed() {
+    fn mgtcontrol_process_inbound_message_when_login_data_and_already_authed() {
         let repos = create_repos(false, false, false);
         let event_channel = mpsc::channel();
         let service_mgr = create_service_mgr(false, false, false, false);
@@ -1241,9 +1233,9 @@ pub mod tests {
         );
         let request_cmd_json = Value::String(request_cmd);
 
-        let result = controller.process_inbound_messages(MessageFrame::new(
+        let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &None,
             &Some(request_cmd_json.clone()),
@@ -1255,7 +1247,7 @@ pub mod tests {
 
         let expected_response_pdu = MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &Some(request_json),
             &Some(json!({"authnType":"scramSha256","message":"authenticated"})),
@@ -1267,7 +1259,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_login_data_and_scramsha256_authn_and_uninitialized()
+    fn mgtcontrol_process_inbound_message_when_login_data_and_scramsha256_authn_and_uninitialized()
     {
         let repos = create_repos(false, false, false);
         let event_channel = mpsc::channel();
@@ -1303,9 +1295,9 @@ pub mod tests {
 
         let request_cmd_json = Value::String(request_cmd);
 
-        let result = controller.process_inbound_messages(MessageFrame::new(
+        let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &None,
             &Some(request_cmd_json.clone()),
@@ -1317,7 +1309,7 @@ pub mod tests {
 
         let expected_response_pdu = MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_FORBIDDEN,
+            control::pdu::CODE_FORBIDDEN,
             &Some("Response: code=403, msg=Login process flow not initiated".to_string()),
             &Some(request_json),
             &None,
@@ -1336,8 +1328,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_login_data_and_scramsha256_authn_client_1st()
-    {
+    fn mgtcontrol_process_inbound_message_when_login_data_and_scramsha256_authn_client_1st() {
         let user = create_user();
         let repos = create_repos(false, false, false);
         let event_channel = mpsc::channel();
@@ -1387,9 +1378,9 @@ pub mod tests {
 
         let request_cmd_json = Value::String(request_cmd);
 
-        let result = controller.process_inbound_messages(MessageFrame::new(
+        let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &None,
             &Some(request_cmd_json.clone()),
@@ -1401,7 +1392,7 @@ pub mod tests {
 
         let expected_response_pdu = MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &Some(request_json),
             &None,
@@ -1420,50 +1411,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_about() {
-        let repos = create_repos(true, false, false);
-        let event_channel = mpsc::channel();
-        let service_mgr = create_service_mgr(false, false, false, false);
-        let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
-
-        let mut controller = create_controller(
-            service_mgr,
-            event_channel.0,
-            &repos.0,
-            &repos.1,
-            &repos.2,
-            AuthnType::Insecure,
-            message_outbox.clone(),
-        )
-        .unwrap();
-
-        let request_cmd_json =
-            Value::String(management::request::PROTOCOL_REQUEST_ABOUT.to_string());
-
-        let result = controller.process_inbound_messages(MessageFrame::new(
-            ControlChannel::Management,
-            control::message::CODE_OK,
-            &None,
-            &None,
-            &Some(request_cmd_json.clone()),
-        ));
-
-        if let Err(err) = &result {
-            panic!("Unexpected process request result: err={:?}", err);
-        }
-
-        assert_msg_frame_pdu_contains(
-            &message_outbox,
-            r#"{"channel":"Management","code":200,"message":null,"context":"About","data":{"cert_alt_subj"#,
-        );
-        assert_msg_frame_pdu_contains(
-            &message_outbox,
-            r#""user":{"name":"user100","status":"Active","user_id":100}"#,
-        );
-    }
-
-    #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_connections() {
+    fn mgtcontrol_process_inbound_message_when_connections() {
         let repos = create_repos(false, false, false);
         let event_channel = mpsc::channel();
         let service_mgr = create_service_mgr(true, false, false, false);
@@ -1484,9 +1432,9 @@ pub mod tests {
         let request_cmd_json =
             Value::String(management::request::PROTOCOL_REQUEST_CONNECTIONS.to_string());
 
-        let result = controller.process_inbound_messages(MessageFrame::new(
+        let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &None,
             &Some(request_cmd_json.clone()),
@@ -1498,7 +1446,7 @@ pub mod tests {
 
         let expected_response_pdu = MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &Some(request_json),
             &Some(json!([{"binds":[["addr1","addr2"]],"service_name":"Service200"}])),
@@ -1510,7 +1458,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_ping() {
+    fn mgtcontrol_process_inbound_message_when_ping() {
         let repos = create_repos(false, false, false);
         let event_channel = mpsc::channel();
         let service_mgr = create_service_mgr(false, false, false, false);
@@ -1531,9 +1479,9 @@ pub mod tests {
         let request_cmd_json =
             Value::String(management::request::PROTOCOL_REQUEST_PING.to_string());
 
-        let result = controller.process_inbound_messages(MessageFrame::new(
+        let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &None,
             &Some(request_cmd_json.clone()),
@@ -1545,7 +1493,7 @@ pub mod tests {
 
         let expected_response_pdu = MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &Some("pong".to_string()),
             &Some(request_json),
             &None,
@@ -1557,7 +1505,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_proxies() {
+    fn mgtcontrol_process_inbound_message_when_proxies() {
         let repos = create_repos(false, true, false);
         let event_channel = mpsc::channel();
         let service_mgr = create_service_mgr(false, true, false, false);
@@ -1578,9 +1526,9 @@ pub mod tests {
         let request_cmd_json =
             Value::String(management::request::PROTOCOL_REQUEST_PROXIES.to_string());
 
-        let result = controller.process_inbound_messages(MessageFrame::new(
+        let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &None,
             &Some(request_cmd_json.clone()),
@@ -1592,7 +1540,7 @@ pub mod tests {
 
         let expected_response_pdu = MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &Some(request_json),
             &Some(json!([{"client_port":null,"gateway_host":"proxyhost1","gateway_port":6000,"service":{"address":"localhost:8200","id":200,"name":"Service200","transport":"TCP"}}])),
@@ -1602,7 +1550,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_quit() {
+    fn mgtcontrol_process_inbound_message_when_quit() {
         let repos = create_repos(false, false, false);
         let event_channel = mpsc::channel();
         let service_mgr = create_service_mgr(false, false, false, false);
@@ -1623,9 +1571,9 @@ pub mod tests {
         let request_cmd_json =
             Value::String(management::request::PROTOCOL_REQUEST_QUIT.to_string());
 
-        let result = controller.process_inbound_messages(MessageFrame::new(
+        let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &None,
             &Some(request_cmd_json.clone()),
@@ -1637,7 +1585,7 @@ pub mod tests {
 
         let expected_response_pdu = MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &Some(request_json),
             &Some(Value::String("bye".to_string())),
@@ -1649,7 +1597,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_services() {
+    fn mgtcontrol_process_inbound_message_when_services() {
         let repos = create_repos(false, true, false);
         let event_channel = mpsc::channel();
         let service_mgr = create_service_mgr(false, false, false, false);
@@ -1670,9 +1618,9 @@ pub mod tests {
         let request_cmd_json =
             Value::String(management::request::PROTOCOL_REQUEST_SERVICES.to_string());
 
-        let result = controller.process_inbound_messages(MessageFrame::new(
+        let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &None,
             &Some(request_cmd_json.clone()),
@@ -1684,7 +1632,7 @@ pub mod tests {
 
         let expected_response_pdu = MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &Some(request_json),
             &Some(json!([{"address":"localhost:8200","id":200,"name":"Service200","transport":"TCP"},{"address":"localhost:8500","id":203,"name":"chat-tcp","transport":"TCP"},{"address":"localhost:8600","id":204,"name":"echo-udp","transport":"UDP"},{"address":"localhost:8202","id":202,"name":"Service202","transport":"TCP"},{"address":"localhost:8500","id":203,"name":"chat-tcp","transport":"TCP"}])),
@@ -1694,7 +1642,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_start() {
+    fn mgtcontrol_process_inbound_message_when_start() {
         let repos = create_repos(false, false, true);
         let event_channel = mpsc::channel();
         let service_mgr = create_service_mgr(false, false, true, false);
@@ -1723,9 +1671,9 @@ pub mod tests {
             3000
         ));
 
-        let result = controller.process_inbound_messages(MessageFrame::new(
+        let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &None,
             &Some(request_cmd_json.clone()),
@@ -1737,7 +1685,7 @@ pub mod tests {
 
         let expected_response_pdu = MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &Some(request_json),
             &Some(json!({"client_port":3000,"gateway_host":"proxyhost1","gateway_port":6000,"service":{"address":"localhost:8200","id":200,"name":"Service200","transport":"TCP"}})),
@@ -1747,7 +1695,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_invalid_start() {
+    fn mgtcontrol_process_inbound_message_when_invalid_start() {
         let repos = create_repos(false, false, true);
         let event_channel = mpsc::channel();
         let service_mgr = create_service_mgr(false, false, false, false);
@@ -1776,9 +1724,9 @@ pub mod tests {
             3000
         ));
 
-        let result = controller.process_inbound_messages(MessageFrame::new(
+        let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &None,
             &Some(request_cmd_json.clone()),
@@ -1790,7 +1738,7 @@ pub mod tests {
 
         let expected_response_pdu = MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_NOT_FOUND,
+            control::pdu::CODE_NOT_FOUND,
             &Some("Response: code=404, msg=Unknown service: svc_name=INVALID_SERVICE".to_string()),
             &Some(request_json),
             &None,
@@ -1802,7 +1750,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_stop() {
+    fn mgtcontrol_process_inbound_message_when_stop() {
         let repos = create_repos(false, false, true);
         let event_channel = mpsc::channel();
         let service_mgr = create_service_mgr(false, false, false, true);
@@ -1829,9 +1777,9 @@ pub mod tests {
             "Service200",
         ));
 
-        let result = controller.process_inbound_messages(MessageFrame::new(
+        let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &None,
             &Some(request_cmd_json.clone()),
@@ -1843,7 +1791,7 @@ pub mod tests {
 
         let expected_response_pdu = MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &Some(request_json),
             &None,
@@ -1855,7 +1803,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_invalid_stop() {
+    fn mgtcontrol_process_inbound_message_when_invalid_stop() {
         let repos = create_repos(false, false, true);
         let event_channel = mpsc::channel();
         let service_mgr = create_service_mgr(false, false, false, false);
@@ -1882,9 +1830,9 @@ pub mod tests {
             "INVALID_SERVICE",
         ));
 
-        let result = controller.process_inbound_messages(MessageFrame::new(
+        let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &None,
             &Some(request_cmd_json.clone()),
@@ -1896,7 +1844,7 @@ pub mod tests {
 
         let expected_response_pdu = MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_NOT_FOUND,
+            control::pdu::CODE_NOT_FOUND,
             &Some("Response: code=404, msg=Unknown service: svc_name=INVALID_SERVICE".to_string()),
             &Some(request_json),
             &None,
@@ -1925,7 +1873,8 @@ pub mod tests {
         )
         .unwrap();
 
-        assert!(!controller.is_authenticated());
+        assert!(controller.is_authenticated().is_some());
+        assert!(!controller.is_authenticated().unwrap());
     }
 
     #[test]
@@ -1946,6 +1895,7 @@ pub mod tests {
         )
         .unwrap();
 
-        assert!(controller.is_authenticated());
+        assert!(controller.is_authenticated().is_some());
+        assert!(controller.is_authenticated().unwrap());
     }
 }

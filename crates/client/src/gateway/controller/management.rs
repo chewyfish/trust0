@@ -15,7 +15,7 @@ use crate::console::ShellInputReader;
 use crate::console::{self, InputTextStreamConnector, ShellOutputWriter};
 use crate::gateway::controller::ChannelProcessor;
 use crate::service::manager::{self, ServiceMgr};
-use trust0_common::control::message::{ControlChannel, MessageFrame};
+use trust0_common::control::pdu::{ControlChannel, MessageFrame};
 use trust0_common::control::{self, management};
 use trust0_common::error::AppError;
 use trust0_common::net::tls_client::conn_std;
@@ -155,7 +155,7 @@ impl ManagementController {
     ///
     /// A [`Result`] indicating success/failure of the processing operation.
     ///
-    fn process_inbound_messages_proxies(
+    fn process_inbound_message_proxies(
         &self,
         gateway_response: &mut management::response::Response,
     ) -> Result<(), AppError> {
@@ -193,7 +193,7 @@ impl ManagementController {
     ///
     /// A [`Result`] indicating success/failure of the processing operation.
     ///
-    fn process_inbound_messages_login_data(
+    fn process_inbound_message_login_data(
         &self,
         gateway_response: &mut management::response::Response,
     ) -> Result<(), AppError> {
@@ -236,7 +236,7 @@ impl ManagementController {
     ///
     /// A [`Result`] indicating success/failure of the processing operation.
     ///
-    fn process_inbound_messages_start(
+    fn process_inbound_message_start(
         &self,
         gateway_response: &mut management::response::Response,
     ) -> Result<(), AppError> {
@@ -265,7 +265,7 @@ impl ManagementController {
     ///
     /// A [`Result`] indicating success/failure of the processing operation.
     ///
-    fn process_inbound_messages_quit(&self) -> Result<(), AppError> {
+    fn process_inbound_message_quit(&self) -> Result<(), AppError> {
         self.service_mgr.lock().unwrap().shutdown()
     }
 
@@ -313,7 +313,7 @@ impl ManagementController {
         if response_authn_msg.is_some() {
             let msg_frame = MessageFrame::new(
                 ControlChannel::Management,
-                control::message::CODE_OK,
+                control::pdu::CODE_OK,
                 &None,
                 &None,
                 &Some(Value::String(format!(
@@ -503,6 +503,8 @@ impl ManagementController {
     }
 }
 
+unsafe impl Send for ManagementController {}
+
 impl ChannelProcessor for ManagementController {
     fn on_connected(
         &mut self,
@@ -561,7 +563,7 @@ impl ChannelProcessor for ManagementController {
         // Valid command, send PDU to gateway control plane
         let msg_frame = MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &None,
             &Some(Value::String(line)),
@@ -575,29 +577,29 @@ impl ChannelProcessor for ManagementController {
         Ok(())
     }
 
-    fn process_inbound_messages(&mut self, message: MessageFrame) -> Result<(), AppError> {
+    fn process_inbound_message(&mut self, message: MessageFrame) -> Result<(), AppError> {
         let mut gateway_response: management::response::Response = message.try_into()?;
 
         // Process (good) response by type
-        if gateway_response.code == control::message::CODE_OK {
+        if gateway_response.code == control::pdu::CODE_OK {
             match gateway_response.request.borrow() {
                 management::request::Request::Login => {
-                    self.process_inbound_messages_login_data(&mut gateway_response)?;
+                    self.process_inbound_message_login_data(&mut gateway_response)?;
                 }
                 management::request::Request::LoginData { message: _ } => {
-                    self.process_inbound_messages_login_data(&mut gateway_response)?;
+                    self.process_inbound_message_login_data(&mut gateway_response)?;
                 }
                 management::request::Request::Proxies => {
-                    self.process_inbound_messages_proxies(&mut gateway_response)?;
+                    self.process_inbound_message_proxies(&mut gateway_response)?;
                 }
                 management::request::Request::Start {
                     service_name: _,
                     local_port: _,
                 } => {
-                    self.process_inbound_messages_start(&mut gateway_response)?;
+                    self.process_inbound_message_start(&mut gateway_response)?;
                 }
                 management::request::Request::Quit => {
-                    self.process_inbound_messages_quit()?;
+                    self.process_inbound_message_quit()?;
                 }
                 _ => {}
             }
@@ -896,7 +898,7 @@ pub mod tests {
 
         let expected_request_pdu = MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &None,
             &Some(Value::String("ping".to_string())),
@@ -975,7 +977,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_login_flow_for_scramsha256_step1() {
+    fn mgtcontrol_process_inbound_message_when_valid_login_flow_for_scramsha256_step1() {
         let output_channel = mpsc::channel();
         let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
@@ -991,9 +993,9 @@ pub mod tests {
         let response_data_str = r#"[{"authnType":"scramSha256","message":null}]"#;
         let response_data_json = serde_json::from_str(&response_data_str).unwrap();
 
-        let result = controller.process_inbound_messages(MessageFrame::new(
+        let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &Some(serde_json::to_value(management::request::Request::Login).unwrap()),
             &Some(response_data_json),
@@ -1024,7 +1026,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_proxies_response() {
+    fn mgtcontrol_process_inbound_message_when_valid_proxies_response() {
         let output_channel = mpsc::channel();
         let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
@@ -1056,9 +1058,9 @@ pub mod tests {
         );
         let response_data_json = serde_json::to_value(vec![response_data]).unwrap();
 
-        let result = controller.process_inbound_messages(MessageFrame::new(
+        let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &Some(serde_json::to_value(management::request::Request::Proxies).unwrap()),
             &Some(response_data_json),
@@ -1076,7 +1078,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_start_response() {
+    fn mgtcontrol_process_inbound_message_when_valid_start_response() {
         let output_channel = mpsc::channel();
         let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
@@ -1122,9 +1124,9 @@ pub mod tests {
         );
         let response_data_json = serde_json::to_value(vec![response_data]).unwrap();
 
-        let result = controller.process_inbound_messages(MessageFrame::new(
+        let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &Some(
                 serde_json::to_value(management::request::Request::Start {
@@ -1148,7 +1150,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_quit_response() {
+    fn mgtcontrol_process_inbound_message_when_valid_quit_response() {
         let output_channel = mpsc::channel();
         let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
@@ -1166,9 +1168,9 @@ pub mod tests {
         let mut controller =
             ManagementController::new(Arc::new(app_config), &service_mgr, message_outbox.clone());
 
-        let result = controller.process_inbound_messages(MessageFrame::new(
+        let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
-            control::message::CODE_OK,
+            control::pdu::CODE_OK,
             &None,
             &Some(serde_json::to_value(management::request::Request::Quit).unwrap()),
             &None,
@@ -1328,7 +1330,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_login_flow_for_scramsha256_final_steps() {
+    fn mgtcontrol_process_inbound_message_when_valid_login_flow_for_scramsha256_final_steps() {
         let output_channel = mpsc::channel();
         let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
@@ -1427,7 +1429,7 @@ pub mod tests {
         ))
         .unwrap();
 
-        let response_result = controller.process_inbound_messages(response);
+        let response_result = controller.process_inbound_message(response);
         if let Err(err) = response_result {
             panic!("Unexpected process response result: step=4, err={:?}", &err);
         }
@@ -1531,7 +1533,7 @@ pub mod tests {
         ))
         .unwrap();
 
-        let response_result = controller.process_inbound_messages(response);
+        let response_result = controller.process_inbound_message(response);
         if let Err(err) = response_result {
             panic!("Unexpected process response result: step=5, err={:?}", &err);
         }
@@ -1551,7 +1553,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_login_response_for_insecure_step1() {
+    fn mgtcontrol_process_inbound_message_when_valid_login_response_for_insecure_step1() {
         let output_channel = mpsc::channel();
         let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
@@ -1570,7 +1572,7 @@ pub mod tests {
         ))
         .unwrap();
 
-        let result = controller.process_inbound_messages(response);
+        let result = controller.process_inbound_message(response);
 
         if let Err(err) = result {
             panic!("Unexpected process response result: err={:?}", &err);
@@ -1591,7 +1593,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_proxies_response_for_no_proxies() {
+    fn mgtcontrol_process_inbound_message_when_valid_proxies_response_for_no_proxies() {
         let output_channel = mpsc::channel();
         let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
@@ -1609,7 +1611,7 @@ pub mod tests {
         )
         .unwrap();
 
-        let result = controller.process_inbound_messages(response);
+        let result = controller.process_inbound_message(response);
         if let Err(err) = result {
             panic!("Unexpected process response result: err={:?}", err);
         }
@@ -1623,7 +1625,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_proxies_response_for_2_proxies() {
+    fn mgtcontrol_process_inbound_message_when_valid_proxies_response_for_2_proxies() {
         let output_channel = mpsc::channel();
         let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
@@ -1676,7 +1678,7 @@ pub mod tests {
         );
         let response: MessageFrame = serde_json::from_str(&response_str).unwrap();
 
-        let result = controller.process_inbound_messages(response);
+        let result = controller.process_inbound_message(response);
 
         if let Err(err) = result {
             panic!("Unexpected process response result: err={:?}", &err);
@@ -1691,7 +1693,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_messages_when_valid_non200_response() {
+    fn mgtcontrol_process_inbound_message_when_valid_non200_response() {
         let output_channel = mpsc::channel();
         let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
@@ -1707,7 +1709,7 @@ pub mod tests {
         let response_str = "{\"channel\":\"Management\",\"code\":500,\"message\":\"System error encountered\",\"context\":\"Ping\",\"data\":null}";
         let response: MessageFrame = serde_json::from_str(&response_str).unwrap();
 
-        let result = controller.process_inbound_messages(response);
+        let result = controller.process_inbound_message(response);
 
         if let Err(err) = result {
             panic!("Unexpected process response result: err={:?}", err);
