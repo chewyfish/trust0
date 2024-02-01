@@ -5,14 +5,14 @@ use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::control::management::request::Request;
-use crate::control::message::{ControlChannel, MessageFrame};
+use crate::control::pdu::{ControlChannel, MessageFrame};
 use crate::error::AppError;
 use crate::model;
 
 /// Control plane REPL response
-#[derive(Serialize, Deserialize, Clone, Default, Debug)]
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
 pub struct Response {
-    /// Indicates well-known code facility for response
+    /// Indicates well-known code status for response
     pub code: u16,
     /// If necessary, contains a top-level response message
     pub message: Option<String>,
@@ -27,7 +27,7 @@ impl Response {
     ///
     /// # Arguments
     ///
-    /// * `code` - Well-known code facility for response
+    /// * `code` - Well-known code status for response
     /// * `message` - (optional) Top-level response message
     /// * `request` - Corresponding request for this response
     /// * `data` - (optional) Response data object (generic as is different per request-type)
@@ -639,7 +639,28 @@ impl TryInto<Value> for &Connection {
 mod tests {
 
     use super::*;
+    use crate::control::pdu;
     use serde_json::json;
+
+    #[test]
+    fn response_new() {
+        let response = Response::new(
+            pdu::CODE_OK,
+            &Some("msg1".to_string()),
+            &Request::Ping,
+            &Some(Value::String("pong".to_string())),
+        );
+
+        assert_eq!(response.code, pdu::CODE_OK);
+        assert!(response.message.is_some());
+        assert_eq!(response.message.as_ref().unwrap(), "msg1");
+        assert_eq!(response.request, Request::Ping);
+        assert!(response.data.is_some());
+        assert_eq!(
+            response.data.as_ref().unwrap().to_string(),
+            "\"pong\"".to_string()
+        );
+    }
 
     #[test]
     fn response_parse_when_invalid() {
@@ -685,7 +706,34 @@ mod tests {
     }
 
     #[test]
-    fn user_try_into() {
+    fn signalevt_try_into_message_frame() {
+        let response = Response::new(
+            pdu::CODE_OK,
+            &Some("msg1".to_string()),
+            &Request::Ping,
+            &Some(Value::String("pong".to_string())),
+        );
+
+        let result: Result<MessageFrame, AppError> = response.try_into();
+        match result {
+            Ok(msg_frame) => {
+                assert_eq!(
+                    msg_frame,
+                    MessageFrame {
+                        channel: pdu::ControlChannel::Management,
+                        code: pdu::CODE_OK,
+                        message: Some("msg1".to_string()),
+                        context: Some(serde_json::to_value(Request::Ping).unwrap()),
+                        data: Some(Value::String("pong".to_string())),
+                    }
+                );
+            }
+            Err(err) => panic!("Unexpected result: err={:?}", err),
+        }
+    }
+
+    #[test]
+    fn user_try_into_value() {
         let user = User::new(100, "user100", "Active");
 
         let result: Result<Value, AppError> = user.try_into();
@@ -701,7 +749,7 @@ mod tests {
     }
 
     #[test]
-    fn about_try_into() {
+    fn about_try_into_value() {
         let user = User::new(100, "user100", "Active");
         let about = About::new(
             &Some("csubj1".to_string()),
@@ -733,7 +781,27 @@ mod tests {
     }
 
     #[test]
-    fn proxy_from_serde_value_when_valid() {
+    fn proxy_from_serde_value_when_valid_list() {
+        let proxy_json = json!([{"service": {"id": 200, "name": "svc1", "transport": "TCP", "address": "host:9000"}, "gateway_host": "gwhost1", "gateway_port": 8400, "client_port": 8501}]);
+
+        match Proxy::from_serde_value(&proxy_json) {
+            Ok(proxies) => {
+                assert_eq!(proxies.len(), 1);
+                let svc = Service::new(
+                    200,
+                    "svc1",
+                    &model::service::Transport::TCP,
+                    Some("host:9000".to_string()),
+                );
+                let proxy = Proxy::new(&svc, &Some("gwhost1".to_string()), 8400, &Some(8501));
+                assert_eq!(proxies, vec![proxy]);
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn proxy_from_serde_value_when_valid_object() {
         let proxy_json = json!({"service": {"id": 200, "name": "svc1", "transport": "TCP", "address": "host:9000"}, "gateway_host": "gwhost1", "gateway_port": 8400, "client_port": 8501});
 
         match Proxy::from_serde_value(&proxy_json) {
@@ -753,7 +821,7 @@ mod tests {
     }
 
     #[test]
-    fn proxy_try_into() {
+    fn proxy_try_into_value() {
         let svc = Service::new(
             200,
             "svc1",
@@ -786,7 +854,27 @@ mod tests {
     }
 
     #[test]
-    fn service_from_serde_value_when_valid() {
+    fn service_from_serde_value_when_valid_list() {
+        let service_json =
+            json!([{"id": 200, "name": "svc1", "transport": "TCP", "address": "host:9000"}]);
+
+        match Service::from_serde_value(&service_json) {
+            Ok(services) => {
+                assert_eq!(services.len(), 1);
+                let service = Service::new(
+                    200,
+                    "svc1",
+                    &model::service::Transport::TCP,
+                    Some("host:9000".to_string()),
+                );
+                assert_eq!(services, vec![service]);
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn service_from_serde_value_when_valid_object() {
         let service_json =
             json!({"id": 200, "name": "svc1", "transport": "TCP", "address": "host:9000"});
 
@@ -806,7 +894,7 @@ mod tests {
     }
 
     #[test]
-    fn service_try_into() {
+    fn service_try_into_value() {
         let svc = Service::new(
             200,
             "svc1",
@@ -838,7 +926,25 @@ mod tests {
     }
 
     #[test]
-    fn logindata_from_serde_value_when_valid() {
+    fn logindata_from_serde_value_when_valid_list() {
+        let login_data_json =
+            json!([{"authnType": "scramSha256", "message": {"payload": "data1"}}]);
+
+        match LoginData::from_serde_value(&login_data_json) {
+            Ok(login_data_list) => {
+                assert_eq!(login_data_list.len(), 1);
+                let login_data = LoginData::new(
+                    authenticator::AuthnType::ScramSha256,
+                    Some(authenticator::AuthnMessage::Payload("data1".to_string())),
+                );
+                assert_eq!(login_data_list, vec![login_data]);
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn logindata_from_serde_value_when_valid_object() {
         let login_data_json = json!({"authnType": "scramSha256", "message": {"payload": "data1"}});
 
         match LoginData::from_serde_value(&login_data_json) {
@@ -855,7 +961,7 @@ mod tests {
     }
 
     #[test]
-    fn logindata_try_into() {
+    fn logindata_try_into_value() {
         let login_data = LoginData::new(
             authenticator::AuthnType::ScramSha256,
             Some(authenticator::AuthnMessage::Payload("data1".to_string())),
@@ -884,7 +990,27 @@ mod tests {
     }
 
     #[test]
-    fn connection_from_serde_value_when_valid() {
+    fn connection_from_serde_value_when_valid_list() {
+        let conn_json = json!([{"service_name": "svc1", "binds": [["b0","b1"],["b2","b3"]]}]);
+
+        match Connection::from_serde_value(&conn_json) {
+            Ok(conns) => {
+                assert_eq!(conns.len(), 1);
+                let conn = Connection::new(
+                    "svc1",
+                    vec![
+                        vec!["b0".to_string(), "b1".to_string()],
+                        vec!["b2".to_string(), "b3".to_string()],
+                    ],
+                );
+                assert_eq!(conns, vec![conn]);
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn connection_from_serde_value_when_valid_object() {
         let conn_json = json!({"service_name": "svc1", "binds": [["b0","b1"],["b2","b3"]]});
 
         match Connection::from_serde_value(&conn_json) {
@@ -904,7 +1030,7 @@ mod tests {
     }
 
     #[test]
-    fn connection_try_into() {
+    fn connection_try_into_value() {
         let conn = Connection::new(
             "svc1",
             vec![

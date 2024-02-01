@@ -5,6 +5,9 @@ use trust0_common::error::AppError;
 use trust0_common::model::service::Service;
 use trust0_common::proxy::executor::ProxyExecutorEvent;
 
+/// Represents the client and gateway proxy stream addresses respectively for a connected proxy
+pub type ProxyConnAddrs = (String, String);
+
 /// Service proxy trait for the client end of the proxy (implementations are transport-layer,... specific)
 pub trait ClientServiceProxy: Send {
     /// Startup proxy listener (for clients to connect to gateway proxy for service)
@@ -14,7 +17,7 @@ pub trait ClientServiceProxy: Send {
 /// Client service proxy visitor trait (implementations are transport-layer,... specific)
 pub trait ClientServiceProxyVisitor: Send {
     /// Service accessor
-    fn get_service(&self) -> &Service;
+    fn get_service(&self) -> Service;
 
     /// Client port for service proxy
     fn get_client_proxy_port(&self) -> u16;
@@ -25,13 +28,24 @@ pub trait ClientServiceProxyVisitor: Send {
     /// Gateway port for service proxy
     fn get_gateway_proxy_port(&self) -> u16;
 
+    /// Client and gateway proxy key and stream addresses list for proxy connections (else None if no proxy active)
+    /// Returns list of tuple of (proxy key, (client address, gateway address))
+    fn get_proxy_keys(&self) -> Vec<(String, ProxyConnAddrs)>;
+
     /// Request a server shutdown
     fn set_shutdown_requested(&mut self);
 
     /// Shutdown proxy connection for service
     fn shutdown_connections(
         &mut self,
-        proxy_tasks_sender: Sender<ProxyExecutorEvent>,
+        proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
+    ) -> Result<(), AppError>;
+
+    /// Shutdown service proxy connection.
+    fn shutdown_connection(
+        &mut self,
+        proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
+        proxy_key: &str,
     ) -> Result<(), AppError>;
 
     /// Remove proxy for given proxy key. Returns whether removed else not found
@@ -65,12 +79,14 @@ pub mod tests {
     mock! {
         pub CliSvcProxyVisitor {}
         impl ClientServiceProxyVisitor for CliSvcProxyVisitor {
-            fn get_service(&self) -> &Service;
+            fn get_service(&self) -> Service;
             fn get_client_proxy_port(&self) -> u16;
             fn get_gateway_proxy_host(&self) -> &str;
             fn get_gateway_proxy_port(&self) -> u16;
+            fn get_proxy_keys(&self) -> Vec<(String, ProxyConnAddrs)>;
             fn set_shutdown_requested(&mut self);
-            fn shutdown_connections(&mut self, proxy_tasks_sender: Sender<ProxyExecutorEvent>) -> Result<(), AppError>;
+            fn shutdown_connections(&mut self, proxy_tasks_sender: &Sender<ProxyExecutorEvent>) -> Result<(), AppError>;
+            fn shutdown_connection(&mut self, proxy_tasks_sender: &Sender<ProxyExecutorEvent>, proxy_key: &str) -> Result<(), AppError>;
             fn remove_proxy_for_key(&mut self, proxy_key: &str) -> bool;
         }
     }

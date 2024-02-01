@@ -73,7 +73,7 @@ pub struct TcpGatewayProxyServerVisitor {
     services_by_proxy_key: Arc<Mutex<HashMap<String, u64>>>,
     users_by_proxy_addrs: HashMap<ProxyAddrs, u64>,
     proxy_addrs_by_proxy_key: HashMap<String, ProxyAddrs>,
-    proxy_keys_by_user: HashMap<u64, Vec<String>>,
+    proxy_keys_by_user: HashMap<u64, Vec<(String, ProxyAddrs)>>,
 }
 
 impl TcpGatewayProxyServerVisitor {
@@ -105,6 +105,15 @@ impl TcpGatewayProxyServerVisitor {
     }
 
     /// Stringified tuple client and gateway connection addresses
+    ///
+    /// # Arguments
+    ///
+    /// * `tls_conn` - TLS server connection for proxy
+    ///
+    /// # Returns
+    ///
+    /// A [`ProxyAddrs`] object corresponding to connection socket address pair (peer, local).
+    ///
     fn create_proxy_addrs(tls_conn: &TlsServerConnection) -> ProxyAddrs {
         let peer_addr = match &tls_conn.sock.peer_addr() {
             Ok(addr) => format!("{:?}", addr),
@@ -295,10 +304,10 @@ impl server_std::ServerVisitor for TcpGatewayProxyServerVisitor {
             .insert(proxy_key.clone(), proxy_addrs.clone());
 
         if let Some(proxy_keys) = self.proxy_keys_by_user.get_mut(user_id) {
-            proxy_keys.push(proxy_key.clone());
+            proxy_keys.push((proxy_key.clone(), proxy_addrs.clone()));
         } else {
             self.proxy_keys_by_user
-                .insert(*user_id, vec![proxy_key.clone()]);
+                .insert(*user_id, vec![(proxy_key.clone(), proxy_addrs.clone())]);
         }
 
         Ok(())
@@ -318,27 +327,21 @@ impl GatewayServiceProxyVisitor for TcpGatewayProxyServerVisitor {
         self.proxy_port
     }
 
-    fn get_proxy_addrs_for_user(&self, user_id: u64) -> Vec<ProxyAddrs> {
-        self.users_by_proxy_addrs
-            .iter()
-            .filter_map(|(proxy_addrs, uid)| {
-                if user_id == *uid {
-                    Some(proxy_addrs.clone())
-                } else {
-                    None
-                }
-            })
-            .collect()
+    fn get_proxy_keys_for_user(&self, user_id: u64) -> Vec<(String, ProxyAddrs)> {
+        self.proxy_keys_by_user
+            .get(&user_id)
+            .unwrap_or(&vec![])
+            .to_vec()
     }
 
     fn shutdown_connections(
         &mut self,
-        proxy_tasks_sender: Sender<ProxyExecutorEvent>,
+        proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
         user_id: Option<u64>,
     ) -> Result<(), AppError> {
         let mut errors: Vec<String> = vec![];
 
-        let proxy_keys_lists: Vec<Vec<String>> = self
+        let proxy_keys_lists: Vec<Vec<(String, ProxyAddrs)>> = self
             .proxy_keys_by_user
             .iter()
             .filter(|(uid, _)| user_id.is_none() || (**uid == user_id.unwrap()))
@@ -349,11 +352,11 @@ impl GatewayServiceProxyVisitor for TcpGatewayProxyServerVisitor {
         for proxy_keys in proxy_keys_lists {
             for proxy_key in proxy_keys {
                 if let Err(err) =
-                    proxy_tasks_sender.send(ProxyExecutorEvent::Close(proxy_key.clone()))
+                    proxy_tasks_sender.send(ProxyExecutorEvent::Close(proxy_key.0.clone()))
                 {
-                    errors.push(format!("Error while sending request to close a TCP proxy connection: proxy_stream={}, err={:?}", &proxy_key, err));
+                    errors.push(format!("Error while sending request to close a TCP proxy connection: proxy_stream={}, err={:?}", &proxy_key.0, err));
                 } else {
-                    self.remove_proxy_for_key(&proxy_key);
+                    self.remove_proxy_for_key(&proxy_key.0);
                 }
             }
 
@@ -368,13 +371,31 @@ impl GatewayServiceProxyVisitor for TcpGatewayProxyServerVisitor {
         Ok(())
     }
 
+    fn shutdown_connection(
+        &mut self,
+        proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
+        proxy_key: &str,
+    ) -> Result<(), AppError> {
+        if let Err(err) = proxy_tasks_sender.send(ProxyExecutorEvent::Close(proxy_key.to_string()))
+        {
+            Err(AppError::General(
+                format!("Error while sending request to close a TCP proxy connection: proxy_stream={}, err={:?}", &proxy_key, &err)))
+        } else {
+            self.remove_proxy_for_key(proxy_key);
+            Ok(())
+        }
+    }
+
     fn remove_proxy_for_key(&mut self, proxy_key: &str) -> bool {
         match self.proxy_addrs_by_proxy_key.get(proxy_key) {
             Some(proxy_addrs) => {
                 let proxy_addrs = proxy_addrs.clone();
                 let user_id = self.users_by_proxy_addrs.get(&proxy_addrs).unwrap();
                 if let Some(proxy_keys) = self.proxy_keys_by_user.get_mut(user_id) {
-                    proxy_keys.retain(|key| !key.eq(proxy_key))
+                    proxy_keys.retain(|key| !key.0.eq(proxy_key));
+                    if proxy_keys.is_empty() {
+                        self.proxy_keys_by_user.remove(user_id);
+                    }
                 }
                 self.proxy_addrs_by_proxy_key.remove(proxy_key);
                 self.users_by_proxy_addrs.remove(&proxy_addrs);
@@ -767,7 +788,28 @@ pub mod tests {
                 (("addr7".to_string(), "addr8".to_string()), 101),
             ]),
             proxy_addrs_by_proxy_key: HashMap::new(),
-            proxy_keys_by_user: HashMap::new(),
+            proxy_keys_by_user: HashMap::from([
+                (
+                    100,
+                    vec![
+                        (
+                            "key1".to_string(),
+                            ("addr1".to_string(), "addr2".to_string()),
+                        ),
+                        (
+                            "key2".to_string(),
+                            ("addr5".to_string(), "addr6".to_string()),
+                        ),
+                    ],
+                ),
+                (
+                    101,
+                    vec![(
+                        "key3".to_string(),
+                        ("addr3".to_string(), "addr4".to_string()),
+                    )],
+                ),
+            ]),
         };
 
         assert_eq!(server_visitor.get_service(), service);
@@ -775,13 +817,19 @@ pub mod tests {
         assert_eq!(server_visitor.get_proxy_host().unwrap(), "gwhost1");
         assert_eq!(server_visitor.get_proxy_port(), 2000);
 
-        let expected_proxy_addrs = vec![
-            ("addr1".to_string(), "addr2".to_string()),
-            ("addr5".to_string(), "addr6".to_string()),
+        let expected_proxy_keys = vec![
+            (
+                "key1".to_string(),
+                ("addr1".to_string(), "addr2".to_string()),
+            ),
+            (
+                "key2".to_string(),
+                ("addr5".to_string(), "addr6".to_string()),
+            ),
         ];
-        let mut proxy_addrs = server_visitor.get_proxy_addrs_for_user(100);
-        proxy_addrs.sort();
-        assert_eq!(proxy_addrs, expected_proxy_addrs);
+        let mut proxy_keys = server_visitor.get_proxy_keys_for_user(100);
+        proxy_keys.sort();
+        assert_eq!(proxy_keys, expected_proxy_keys);
     }
 
     #[test]
@@ -812,9 +860,9 @@ pub mod tests {
             proxy_tasks_sender: proxy_tasks_sender.clone(),
             proxy_events_sender: sync::mpsc::channel().0,
             services_by_proxy_key: Arc::new(Mutex::new(HashMap::from([
-                ("key1".to_string(), 100),
-                ("key2".to_string(), 100),
-                ("key3".to_string(), 101),
+                ("key1".to_string(), 200),
+                ("key2".to_string(), 200),
+                ("key3".to_string(), 201),
             ]))),
             users_by_proxy_addrs: HashMap::from([
                 (("addr1".to_string(), "addr2".to_string()), 100),
@@ -836,12 +884,30 @@ pub mod tests {
                 ),
             ]),
             proxy_keys_by_user: HashMap::from([
-                (100, vec!["key1".to_string(), "key2".to_string()]),
-                (101, vec!["key3".to_string()]),
+                (
+                    100,
+                    vec![
+                        (
+                            "key1".to_string(),
+                            ("addr1".to_string(), "addr2".to_string()),
+                        ),
+                        (
+                            "key2".to_string(),
+                            ("addr3".to_string(), "addr4".to_string()),
+                        ),
+                    ],
+                ),
+                (
+                    101,
+                    vec![(
+                        "key3".to_string(),
+                        ("addr5".to_string(), "addr6".to_string()),
+                    )],
+                ),
             ]),
         };
 
-        if let Err(err) = server_visitor.shutdown_connections(proxy_tasks_sender, None) {
+        if let Err(err) = server_visitor.shutdown_connections(&proxy_tasks_sender, None) {
             panic!("Unexpected result: err={:?}", &err);
         }
 
@@ -870,6 +936,7 @@ pub mod tests {
 
         assert!(server_visitor.proxy_addrs_by_proxy_key.is_empty());
         assert!(server_visitor.users_by_proxy_addrs.is_empty());
+        assert!(server_visitor.proxy_keys_by_user.is_empty());
         assert!(server_visitor
             .services_by_proxy_key
             .lock()
@@ -905,9 +972,9 @@ pub mod tests {
             proxy_tasks_sender: proxy_tasks_sender.clone(),
             proxy_events_sender: sync::mpsc::channel().0,
             services_by_proxy_key: Arc::new(Mutex::new(HashMap::from([
-                ("key1".to_string(), 100),
-                ("key2".to_string(), 100),
-                ("key3".to_string(), 101),
+                ("key1".to_string(), 200),
+                ("key2".to_string(), 200),
+                ("key3".to_string(), 201),
             ]))),
             users_by_proxy_addrs: HashMap::from([
                 (("addr1".to_string(), "addr2".to_string()), 100),
@@ -929,12 +996,30 @@ pub mod tests {
                 ),
             ]),
             proxy_keys_by_user: HashMap::from([
-                (100, vec!["key1".to_string(), "key2".to_string()]),
-                (101, vec!["key3".to_string()]),
+                (
+                    100,
+                    vec![
+                        (
+                            "key1".to_string(),
+                            ("addr1".to_string(), "addr2".to_string()),
+                        ),
+                        (
+                            "key2".to_string(),
+                            ("addr3".to_string(), "addr4".to_string()),
+                        ),
+                    ],
+                ),
+                (
+                    101,
+                    vec![(
+                        "key3".to_string(),
+                        ("addr5".to_string(), "addr6".to_string()),
+                    )],
+                ),
             ]),
         };
 
-        if let Err(err) = server_visitor.shutdown_connections(proxy_tasks_sender, Some(100)) {
+        if let Err(err) = server_visitor.shutdown_connections(&proxy_tasks_sender, Some(100)) {
             panic!("Unexpected result: err={:?}", &err);
         }
 
@@ -971,6 +1056,14 @@ pub mod tests {
                 .get(&("addr5".to_string(), "addr6".to_string())),
             Some(&101)
         );
+        assert_eq!(server_visitor.proxy_keys_by_user.len(), 1);
+        assert_eq!(
+            server_visitor.proxy_keys_by_user.get(&101),
+            Some(&vec![(
+                "key3".to_string(),
+                ("addr5".to_string(), "addr6".to_string())
+            )])
+        );
         assert_eq!(
             server_visitor.services_by_proxy_key.lock().unwrap().len(),
             1
@@ -981,7 +1074,270 @@ pub mod tests {
                 .lock()
                 .unwrap()
                 .get("key3"),
-            Some(&101)
+            Some(&201)
+        );
+    }
+
+    #[test]
+    fn tcpsvrproxyvisit_shutdown_connection_when_proxy_key_known() {
+        let app_config = Arc::new(
+            config::tests::create_app_config_with_repos(
+                Arc::new(Mutex::new(MockUserRepo::new())),
+                Arc::new(Mutex::new(MockServiceRepo::new())),
+                Arc::new(Mutex::new(MockRoleRepo::new())),
+                Arc::new(Mutex::new(MockAccessRepo::new())),
+            )
+            .unwrap(),
+        );
+        let (proxy_tasks_sender, proxy_tasks_receiver) = sync::mpsc::channel();
+
+        let mut server_visitor = TcpGatewayProxyServerVisitor {
+            app_config: app_config.clone(),
+            service_mgr: Arc::new(Mutex::new(MockSvcMgr::new())),
+            service: Service {
+                service_id: 200,
+                name: "svc200".to_string(),
+                transport: Transport::TCP,
+                host: "svchost1".to_string(),
+                port: 4000,
+            },
+            proxy_host: Some("gwhost1".to_string()),
+            proxy_port: 2000,
+            proxy_tasks_sender: proxy_tasks_sender.clone(),
+            proxy_events_sender: sync::mpsc::channel().0,
+            services_by_proxy_key: Arc::new(Mutex::new(HashMap::from([
+                ("key1".to_string(), 200),
+                ("key2".to_string(), 200),
+                ("key3".to_string(), 201),
+            ]))),
+            users_by_proxy_addrs: HashMap::from([
+                (("addr1".to_string(), "addr2".to_string()), 100),
+                (("addr3".to_string(), "addr4".to_string()), 100),
+                (("addr5".to_string(), "addr6".to_string()), 101),
+            ]),
+            proxy_addrs_by_proxy_key: HashMap::from([
+                (
+                    "key1".to_string(),
+                    ("addr1".to_string(), "addr2".to_string()),
+                ),
+                (
+                    "key2".to_string(),
+                    ("addr3".to_string(), "addr4".to_string()),
+                ),
+                (
+                    "key3".to_string(),
+                    ("addr5".to_string(), "addr6".to_string()),
+                ),
+            ]),
+            proxy_keys_by_user: HashMap::from([
+                (
+                    100,
+                    vec![
+                        (
+                            "key1".to_string(),
+                            ("addr1".to_string(), "addr2".to_string()),
+                        ),
+                        (
+                            "key2".to_string(),
+                            ("addr3".to_string(), "addr4".to_string()),
+                        ),
+                    ],
+                ),
+                (
+                    101,
+                    vec![(
+                        "key3".to_string(),
+                        ("addr5".to_string(), "addr6".to_string()),
+                    )],
+                ),
+            ]),
+        };
+
+        if let Err(err) = server_visitor.shutdown_connection(&proxy_tasks_sender, "key3") {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        match proxy_tasks_receiver.try_recv() {
+            Ok(proxy_task) => match proxy_task {
+                ProxyExecutorEvent::Close(key) => assert_eq!(key, "key3"),
+                ProxyExecutorEvent::OpenTcpAndTcpProxy(key, _) => panic!(
+                    "Unexpected received open tcp&tcp proxy task: key={:?}",
+                    &key
+                ),
+                ProxyExecutorEvent::OpenChannelAndTcpProxy(key, _) => panic!(
+                    "Unexpected received open channel&tcp proxy task: key={:?}",
+                    &key
+                ),
+                ProxyExecutorEvent::OpenTcpAndUdpProxy(key, _) => panic!(
+                    "Unexpected received open tcp&udp proxy task: key={:?}",
+                    &key
+                ),
+            },
+            Err(err) => panic!("Unexpected received proxy task error: err={:?}", &err),
+        }
+
+        assert_eq!(server_visitor.proxy_addrs_by_proxy_key.len(), 2);
+        assert_eq!(
+            server_visitor.proxy_addrs_by_proxy_key.get("key1"),
+            Some(&("addr1".to_string(), "addr2".to_string()))
+        );
+        assert_eq!(
+            server_visitor.proxy_addrs_by_proxy_key.get("key2"),
+            Some(&("addr3".to_string(), "addr4".to_string()))
+        );
+        assert_eq!(server_visitor.users_by_proxy_addrs.len(), 2);
+        assert_eq!(
+            server_visitor
+                .users_by_proxy_addrs
+                .get(&("addr1".to_string(), "addr2".to_string())),
+            Some(&100)
+        );
+        assert_eq!(
+            server_visitor
+                .users_by_proxy_addrs
+                .get(&("addr3".to_string(), "addr4".to_string())),
+            Some(&100)
+        );
+        assert_eq!(server_visitor.proxy_keys_by_user.len(), 1);
+        assert_eq!(
+            server_visitor.proxy_keys_by_user.get(&100),
+            Some(&vec![
+                (
+                    "key1".to_string(),
+                    ("addr1".to_string(), "addr2".to_string())
+                ),
+                (
+                    "key2".to_string(),
+                    ("addr3".to_string(), "addr4".to_string())
+                )
+            ])
+        );
+        assert_eq!(
+            server_visitor.services_by_proxy_key.lock().unwrap().len(),
+            2
+        );
+        assert_eq!(
+            server_visitor
+                .services_by_proxy_key
+                .lock()
+                .unwrap()
+                .get("key1"),
+            Some(&200)
+        );
+        assert_eq!(
+            server_visitor
+                .services_by_proxy_key
+                .lock()
+                .unwrap()
+                .get("key2"),
+            Some(&200)
+        );
+    }
+
+    #[test]
+    fn tcpsvrproxyvisit_shutdown_connection_when_proxy_key_unknown() {
+        let app_config = Arc::new(
+            config::tests::create_app_config_with_repos(
+                Arc::new(Mutex::new(MockUserRepo::new())),
+                Arc::new(Mutex::new(MockServiceRepo::new())),
+                Arc::new(Mutex::new(MockRoleRepo::new())),
+                Arc::new(Mutex::new(MockAccessRepo::new())),
+            )
+            .unwrap(),
+        );
+        let (proxy_tasks_sender, proxy_tasks_receiver) = sync::mpsc::channel();
+
+        let mut server_visitor = TcpGatewayProxyServerVisitor {
+            app_config: app_config.clone(),
+            service_mgr: Arc::new(Mutex::new(MockSvcMgr::new())),
+            service: Service {
+                service_id: 200,
+                name: "svc200".to_string(),
+                transport: Transport::TCP,
+                host: "svchost1".to_string(),
+                port: 4000,
+            },
+            proxy_host: Some("gwhost1".to_string()),
+            proxy_port: 2000,
+            proxy_tasks_sender: proxy_tasks_sender.clone(),
+            proxy_events_sender: sync::mpsc::channel().0,
+            services_by_proxy_key: Arc::new(Mutex::new(HashMap::from([
+                ("key1".to_string(), 200),
+                ("key2".to_string(), 200),
+                ("key3".to_string(), 201),
+            ]))),
+            users_by_proxy_addrs: HashMap::from([
+                (("addr1".to_string(), "addr2".to_string()), 100),
+                (("addr3".to_string(), "addr4".to_string()), 100),
+                (("addr5".to_string(), "addr6".to_string()), 101),
+            ]),
+            proxy_addrs_by_proxy_key: HashMap::from([
+                (
+                    "key1".to_string(),
+                    ("addr1".to_string(), "addr2".to_string()),
+                ),
+                (
+                    "key2".to_string(),
+                    ("addr3".to_string(), "addr4".to_string()),
+                ),
+                (
+                    "key3".to_string(),
+                    ("addr5".to_string(), "addr6".to_string()),
+                ),
+            ]),
+            proxy_keys_by_user: HashMap::from([
+                (
+                    100,
+                    vec![
+                        (
+                            "key1".to_string(),
+                            ("addr1".to_string(), "addr2".to_string()),
+                        ),
+                        (
+                            "key2".to_string(),
+                            ("addr3".to_string(), "addr4".to_string()),
+                        ),
+                    ],
+                ),
+                (
+                    101,
+                    vec![(
+                        "key3".to_string(),
+                        ("addr5".to_string(), "addr6".to_string()),
+                    )],
+                ),
+            ]),
+        };
+
+        if let Err(err) = server_visitor.shutdown_connection(&proxy_tasks_sender, "key4") {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        match proxy_tasks_receiver.try_recv() {
+            Ok(proxy_task) => match proxy_task {
+                ProxyExecutorEvent::Close(key) => assert_eq!(key, "key4"),
+                ProxyExecutorEvent::OpenTcpAndTcpProxy(key, _) => panic!(
+                    "Unexpected received open tcp&tcp proxy task: key={:?}",
+                    &key
+                ),
+                ProxyExecutorEvent::OpenChannelAndTcpProxy(key, _) => panic!(
+                    "Unexpected received open channel&tcp proxy task: key={:?}",
+                    &key
+                ),
+                ProxyExecutorEvent::OpenTcpAndUdpProxy(key, _) => panic!(
+                    "Unexpected received open tcp&udp proxy task: key={:?}",
+                    &key
+                ),
+            },
+            Err(err) => panic!("Unexpected received proxy task error: err={:?}", &err),
+        }
+
+        assert_eq!(server_visitor.proxy_addrs_by_proxy_key.len(), 3);
+        assert_eq!(server_visitor.users_by_proxy_addrs.len(), 3);
+        assert_eq!(server_visitor.proxy_keys_by_user.len(), 2);
+        assert_eq!(
+            server_visitor.services_by_proxy_key.lock().unwrap().len(),
+            3
         );
     }
 }

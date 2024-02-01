@@ -49,6 +49,9 @@ pub trait ServiceMgr: Send {
     /// Proxy addresses for active service proxy
     fn get_proxy_addrs_for_service(&self, service_id: u64) -> Option<ProxyAddrs>;
 
+    /// Active service proxy visitors accessor
+    fn get_service_proxies(&self) -> Vec<Arc<Mutex<dyn ClientServiceProxyVisitor>>>;
+
     /// Active proxy visitor for given service
     fn get_proxy_visitor_for_service(
         &self,
@@ -67,6 +70,9 @@ pub trait ServiceMgr: Send {
 
     /// Shutdown all connected services, and respective proxy connections/listeners
     fn shutdown(&mut self) -> Result<(), AppError>;
+
+    /// Shutdown service proxy connection.
+    fn shutdown_connection(&mut self, service_id: u64, proxy_key: &str) -> Result<(), AppError>;
 }
 
 /// Manage service connections for client session.  Only one of these should be constructed.
@@ -158,6 +164,10 @@ impl ServiceMgr for ClientServiceMgr {
 
     fn get_proxy_addrs_for_service(&self, service_id: u64) -> Option<ProxyAddrs> {
         self.service_addrs.get(&service_id).cloned()
+    }
+
+    fn get_service_proxies(&self) -> Vec<Arc<Mutex<dyn ClientServiceProxyVisitor>>> {
+        self.service_proxy_visitors.values().cloned().collect()
     }
 
     fn get_proxy_visitor_for_service(
@@ -282,7 +292,7 @@ impl ServiceMgr for ClientServiceMgr {
 
                 if let Err(err) = proxy_visitor
                     .deref_mut()
-                    .shutdown_connections(self.clone_proxy_tasks_sender())
+                    .shutdown_connections(&self.proxy_tasks_sender)
                 {
                     errors.push(format!(
                         "Failed shutting down service proxy: svc_id={}, err={:?}",
@@ -301,6 +311,35 @@ impl ServiceMgr for ClientServiceMgr {
                 "Error shutting down services: err(s)={}",
                 errors.join(",")
             )));
+        }
+
+        Ok(())
+    }
+
+    fn shutdown_connection(&mut self, service_id: u64, proxy_key: &str) -> Result<(), AppError> {
+        if let Some(proxy_visitor) = self.service_proxy_visitors.get(&service_id) {
+            match proxy_visitor
+                .lock()
+                .unwrap()
+                .shutdown_connection(&self.proxy_tasks_sender, proxy_key)
+            {
+                Ok(()) => info(
+                    &target!(),
+                    &format!(
+                        "Service proxy connection shutdown: svc_id={}, proxy_stream={}",
+                        service_id, proxy_key
+                    ),
+                ),
+                Err(err) => {
+                    return Err(AppError::GenWithMsgAndErr(
+                        format!(
+                        "Failed shutting down service proxy connection: svc_id={}, proxy_stream={}",
+                        service_id, proxy_key
+                    ),
+                        Box::new(err),
+                    ))
+                }
+            }
         }
 
         Ok(())
@@ -326,15 +365,31 @@ pub mod tests {
         impl ServiceMgr for SvcMgr {
             fn get_proxy_service_for_proxy_key(&self, proxy_key: &str) -> Option<u64>;
             fn get_proxy_addrs_for_service(&self, service_id: u64) -> Option<ProxyAddrs>;
+            fn get_service_proxies(&self) -> Vec<Arc<Mutex<dyn ClientServiceProxyVisitor>>>;
             fn get_proxy_visitor_for_service(&self, service_id: u64) -> Option<&'static Arc<Mutex<dyn ClientServiceProxyVisitor>>>;
             fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent>;
             fn startup(&mut self, service: &Service, proxy_addrs: &ProxyAddrs) -> Result<ProxyAddrs, AppError>;
             fn shutdown(&mut self) -> Result<(), AppError>;
+            fn shutdown_connection(&mut self, service_id: u64, proxy_key: &str) -> Result<(), AppError>;
         }
     }
 
     // tests
     // =====
+
+    #[test]
+    fn clisvcmgr_new() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+
+        let service_mgr = ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+
+        assert!(service_mgr.service_proxies.is_empty());
+        assert!(service_mgr.service_proxy_visitors.is_empty());
+        assert!(service_mgr.service_proxy_threads.is_empty());
+        assert!(service_mgr.service_addrs.is_empty());
+        assert!(service_mgr.services_by_proxy_key.lock().unwrap().is_empty());
+        assert!(!service_mgr.testing_mode);
+    }
 
     #[test]
     fn clisvcmgr_process_next_proxy_event_when_ignorable_evt() {
@@ -412,6 +467,111 @@ pub mod tests {
                 assert_eq!(processed, true);
             }
             Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
+    }
+
+    #[test]
+    fn clisvcmgr_get_proxy_service_for_proxy_key() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let service_mgr = ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+        service_mgr
+            .services_by_proxy_key
+            .lock()
+            .unwrap()
+            .insert("key1".to_string(), 200);
+
+        let service_id = service_mgr.get_proxy_service_for_proxy_key("key1");
+
+        assert!(service_id.is_some());
+        assert_eq!(service_id.unwrap(), 200);
+    }
+
+    #[test]
+    fn clisvcmgr_get_proxy_addrs_for_service() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let mut service_mgr =
+            ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+        service_mgr
+            .service_addrs
+            .insert(200, ProxyAddrs(1234, "host1".to_string(), 5678));
+
+        let proxy_addrs = service_mgr.get_proxy_addrs_for_service(200);
+
+        assert!(proxy_addrs.is_some());
+        assert_eq!(
+            proxy_addrs.unwrap(),
+            ProxyAddrs(1234, "host1".to_string(), 5678)
+        );
+    }
+
+    #[test]
+    fn clisvcmgr_get_service_proxies() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let mut service_mgr =
+            ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+        service_mgr
+            .service_proxy_visitors
+            .insert(200, Arc::new(Mutex::new(MockCliSvcProxyVisitor::new())));
+
+        let service_proxies = service_mgr.get_service_proxies();
+
+        assert_eq!(service_proxies.len(), 1);
+    }
+
+    #[test]
+    fn clisvcmgr_get_proxy_visitor_for_service_when_found() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let mut service_mgr =
+            ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+        service_mgr
+            .service_proxy_visitors
+            .insert(200, Arc::new(Mutex::new(MockCliSvcProxyVisitor::new())));
+
+        let service_proxy = service_mgr.get_proxy_visitor_for_service(200);
+
+        assert!(service_proxy.is_some());
+    }
+
+    #[test]
+    fn clisvcmgr_get_proxy_visitor_for_service_when_not_found() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let mut service_mgr =
+            ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+        service_mgr
+            .service_proxy_visitors
+            .insert(200, Arc::new(Mutex::new(MockCliSvcProxyVisitor::new())));
+
+        let service_proxy = service_mgr.get_proxy_visitor_for_service(201);
+
+        assert!(service_proxy.is_none());
+    }
+
+    #[test]
+    fn clisvcmgr_clone_proxy_tasks_sender() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let proxy_tasks_channel = mpsc::channel();
+        let service_mgr =
+            ClientServiceMgr::new(app_config, proxy_tasks_channel.0, mpsc::channel().0);
+
+        let proxy_tasks_sender = service_mgr.clone_proxy_tasks_sender();
+        proxy_tasks_sender
+            .send(ProxyExecutorEvent::Close("key1".to_string()))
+            .unwrap();
+
+        match proxy_tasks_channel.1.try_recv() {
+            Ok(event) => match event {
+                ProxyExecutorEvent::Close(key) => assert_eq!(key, "key1".to_string()),
+                ProxyExecutorEvent::OpenChannelAndTcpProxy(_, _) => {
+                    panic!("Unexpected open channel&tcp proxy event")
+                }
+                ProxyExecutorEvent::OpenTcpAndTcpProxy(_, _) => {
+                    panic!("Unexpected open tcp&tcp proxy event")
+                }
+                ProxyExecutorEvent::OpenTcpAndUdpProxy(_, _) => {
+                    panic!("Unexpected open tcp&udp proxy event")
+                }
+            },
+            Err(err) => panic!("Unexpected receive channel result: err={:?}", &err),
         }
     }
 
@@ -564,6 +724,66 @@ pub mod tests {
 
         if let Err(err) = service_mgr.shutdown() {
             panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn gwsvcmgr_shutdown_connection_when_proxy_shutdown_succeeds() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+
+        let mut proxy200_visitor = MockCliSvcProxyVisitor::new();
+        proxy200_visitor
+            .expect_shutdown_connection()
+            .with(predicate::always(), predicate::eq("key1".to_string()))
+            .times(1)
+            .return_once(move |_, _| Ok(()));
+        let mut proxy201_visitor = MockCliSvcProxyVisitor::new();
+        proxy201_visitor.expect_shutdown_connection().never();
+
+        let mut service_mgr =
+            ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+
+        service_mgr
+            .service_proxy_visitors
+            .insert(200, Arc::new(Mutex::new(proxy200_visitor)));
+        service_mgr
+            .service_proxy_visitors
+            .insert(201, Arc::new(Mutex::new(proxy201_visitor)));
+
+        let result = service_mgr.shutdown_connection(200, "key1");
+
+        if let Err(err) = &result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn gwsvcmgr_shutdown_connection_when_proxy_shutdown_fails() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+
+        let mut proxy200_visitor = MockCliSvcProxyVisitor::new();
+        proxy200_visitor
+            .expect_shutdown_connection()
+            .with(predicate::always(), predicate::eq("key1".to_string()))
+            .times(1)
+            .return_once(move |_, _| Err(AppError::General("shutdown failed".to_string())));
+        let mut proxy201_visitor = MockCliSvcProxyVisitor::new();
+        proxy201_visitor.expect_shutdown_connection().never();
+
+        let mut service_mgr =
+            ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+
+        service_mgr
+            .service_proxy_visitors
+            .insert(200, Arc::new(Mutex::new(proxy200_visitor)));
+        service_mgr
+            .service_proxy_visitors
+            .insert(201, Arc::new(Mutex::new(proxy201_visitor)));
+
+        let result = service_mgr.shutdown_connection(200, "key1");
+
+        if result.is_ok() {
+            panic!("Unexpected successful result");
         }
     }
 }

@@ -70,6 +70,9 @@ pub trait ServiceMgr: Send {
         service_id: Option<u64>,
     ) -> Result<(), AppError>;
 
+    /// Shutdown service proxy connection.
+    fn shutdown_connection(&mut self, service_id: u64, proxy_key: &str) -> Result<(), AppError>;
+
     /// Perform cleanup for a closed proxy
     fn on_closed_proxy(&mut self, proxy_key: &str);
 }
@@ -316,7 +319,7 @@ impl ServiceMgr for GatewayServiceMgr {
         match self.service_proxy_visitors.get(&service_id) {
             Some(proxy_visitor) => {
                 let proxy_visitor = proxy_visitor.lock().unwrap();
-                !proxy_visitor.get_proxy_addrs_for_user(user_id).is_empty()
+                !proxy_visitor.get_proxy_keys_for_user(user_id).is_empty()
             }
 
             None => false,
@@ -334,7 +337,7 @@ impl ServiceMgr for GatewayServiceMgr {
             if service_id.is_none() || (*proxy_service_id == service_id.unwrap()) {
                 let mut proxy_visitor = proxy_visitor.lock().unwrap();
 
-                if let Err(err) = proxy_visitor.deref_mut().shutdown_connections(self.clone_proxy_tasks_sender(), user_id) {
+                if let Err(err) = proxy_visitor.deref_mut().shutdown_connections(&self.proxy_tasks_sender, user_id) {
                     errors.push(format!("Failed shutting down service proxy connection: svc_id={}, user_id={:?}, err={:?}", proxy_service_id, user_id, err));
                 } else {
                     info(&target!(), &format!("Service proxy connection shutdown: svc_id={}, user_id={:?}", proxy_service_id, user_id));
@@ -356,6 +359,35 @@ impl ServiceMgr for GatewayServiceMgr {
                 user_id,
                 errors.join(",")
             )));
+        }
+
+        Ok(())
+    }
+
+    fn shutdown_connection(&mut self, service_id: u64, proxy_key: &str) -> Result<(), AppError> {
+        if let Some(proxy_visitor) = self.service_proxy_visitors.get(&service_id) {
+            match proxy_visitor
+                .lock()
+                .unwrap()
+                .shutdown_connection(&self.proxy_tasks_sender, proxy_key)
+            {
+                Ok(()) => info(
+                    &target!(),
+                    &format!(
+                        "Service proxy connection shutdown: svc_id={}, proxy_stream={}",
+                        service_id, proxy_key
+                    ),
+                ),
+                Err(err) => {
+                    return Err(AppError::GenWithMsgAndErr(
+                        format!(
+                        "Failed shutting down service proxy connection: svc_id={}, proxy_stream={}",
+                        service_id, proxy_key
+                    ),
+                        Box::new(err),
+                    ))
+                }
+            }
         }
 
         Ok(())
@@ -403,6 +435,7 @@ pub mod tests {
             fn startup(&mut self, service_mgr: Arc<Mutex<dyn ServiceMgr>>, service: &Service) -> Result<(Option<String>, u16), AppError>;
             fn has_proxy_for_user_and_service(&mut self, user_id: u64, service_id: u64) -> bool;
             fn shutdown_connections(&mut self, user_id: Option<u64>, service_id: Option<u64>) -> Result<(), AppError>;
+            fn shutdown_connection(&mut self, service_id: u64, proxy_key: &str) -> Result<(), AppError>;
             fn on_closed_proxy(&mut self, proxy_key: &str);
         }
     }
@@ -739,10 +772,15 @@ pub mod tests {
     fn gwsvcmgr_has_proxy_for_user_and_service_when_valid_user_and_svc() {
         let mut proxy_visitor = MockGwSvcProxyVisitor::new();
         proxy_visitor
-            .expect_get_proxy_addrs_for_user()
+            .expect_get_proxy_keys_for_user()
             .with(predicate::eq(100))
             .times(1)
-            .return_once(move |_| vec![("addr1".to_string(), "addr2".to_string())]);
+            .return_once(move |_| {
+                vec![(
+                    "key1".to_string(),
+                    ("addr1".to_string(), "addr2".to_string()),
+                )]
+            });
         let mut service_mgr = create_gw_service_mgr(true);
         service_mgr
             .service_proxy_visitors
@@ -755,7 +793,7 @@ pub mod tests {
     fn gwsvcmgr_has_proxy_for_user_and_service_when_invalid_user() {
         let mut proxy_visitor = MockGwSvcProxyVisitor::new();
         proxy_visitor
-            .expect_get_proxy_addrs_for_user()
+            .expect_get_proxy_keys_for_user()
             .with(predicate::eq(101))
             .times(1)
             .return_once(move |_| vec![]);
@@ -771,7 +809,7 @@ pub mod tests {
     fn gwsvcmgr_has_proxy_for_user_and_service_when_invalid_service() {
         let mut proxy_visitor = MockGwSvcProxyVisitor::new();
         proxy_visitor
-            .expect_get_proxy_addrs_for_user()
+            .expect_get_proxy_keys_for_user()
             .with(predicate::always())
             .never();
         let mut service_mgr = create_gw_service_mgr(true);
@@ -890,6 +928,56 @@ pub mod tests {
         }
 
         assert_eq!(service_mgr.control_planes.len(), 1);
+    }
+
+    #[test]
+    fn gwsvcmgr_shutdown_connection_when_proxy_shutdown_succeeds() {
+        let mut proxy200_visitor = MockGwSvcProxyVisitor::new();
+        proxy200_visitor
+            .expect_shutdown_connection()
+            .with(predicate::always(), predicate::eq("key1".to_string()))
+            .times(1)
+            .return_once(move |_, _| Ok(()));
+        let mut proxy201_visitor = MockGwSvcProxyVisitor::new();
+        proxy201_visitor.expect_shutdown_connection().never();
+        let mut service_mgr = create_gw_service_mgr(true);
+        service_mgr
+            .service_proxy_visitors
+            .insert(200, Arc::new(Mutex::new(proxy200_visitor)));
+        service_mgr
+            .service_proxy_visitors
+            .insert(201, Arc::new(Mutex::new(proxy201_visitor)));
+
+        let result = service_mgr.shutdown_connection(200, "key1");
+
+        if let Err(err) = &result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn gwsvcmgr_shutdown_connection_when_proxy_shutdown_fails() {
+        let mut proxy200_visitor = MockGwSvcProxyVisitor::new();
+        proxy200_visitor
+            .expect_shutdown_connection()
+            .with(predicate::always(), predicate::eq("key1".to_string()))
+            .times(1)
+            .return_once(move |_, _| Err(AppError::General("shutdown failed".to_string())));
+        let mut proxy201_visitor = MockGwSvcProxyVisitor::new();
+        proxy201_visitor.expect_shutdown_connection().never();
+        let mut service_mgr = create_gw_service_mgr(true);
+        service_mgr
+            .service_proxy_visitors
+            .insert(200, Arc::new(Mutex::new(proxy200_visitor)));
+        service_mgr
+            .service_proxy_visitors
+            .insert(201, Arc::new(Mutex::new(proxy201_visitor)));
+
+        let result = service_mgr.shutdown_connection(200, "key1");
+
+        if result.is_ok() {
+            panic!("Unexpected successful result");
+        }
     }
 
     #[test]
