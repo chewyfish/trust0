@@ -1,7 +1,7 @@
 use std::borrow::Borrow;
 use std::collections::VecDeque;
 
-use crate::control::management;
+use crate::control::{management, signaling};
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -20,7 +20,7 @@ pub const CODE_INTERNAL_SERVER_ERROR: u16 = 500;
 /// * management (REPL shell session administration)
 /// * signaling (OOB control/monitoring)
 ///
-#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Default, Debug, Eq, Hash, PartialEq)]
 pub enum ControlChannel {
     /// User REPL shell used for service proxy management
     #[default]
@@ -222,6 +222,39 @@ impl TryInto<management::response::Response> for &MessageFrame {
     }
 }
 
+impl TryInto<signaling::event::SignalEvent> for MessageFrame {
+    type Error = AppError;
+
+    fn try_into(self) -> Result<signaling::event::SignalEvent, Self::Error> {
+        self.borrow().try_into()
+    }
+}
+
+impl TryInto<signaling::event::SignalEvent> for &MessageFrame {
+    type Error = AppError;
+
+    fn try_into(self) -> Result<signaling::event::SignalEvent, Self::Error> {
+        if self.context.is_none() {
+            return Err(AppError::General(
+                "Signaling event frame must have a context".to_string(),
+            ));
+        }
+        let event_type: signaling::event::EventType =
+            serde_json::from_value(self.context.as_ref().unwrap().clone()).map_err(|err| {
+                AppError::GenWithMsgAndErr(
+                    "Error converting PDU context Value to signaling EventType".to_string(),
+                    Box::new(err),
+                )
+            })?;
+        Ok(signaling::event::SignalEvent::new(
+            self.code,
+            &self.message,
+            &event_type,
+            &self.data,
+        ))
+    }
+}
+
 /// Unit tests
 #[cfg(test)]
 mod tests {
@@ -356,6 +389,134 @@ mod tests {
                 assert_eq!(msg_frame.data.unwrap(), json!([1, 2]));
             }
             Err(err) => panic!("Unexpected result: err={:?}", err),
+        }
+    }
+
+    #[test]
+    fn msgframe_try_into_mgmt_request_when_valid_ping() {
+        let msg_frame = MessageFrame {
+            channel: ControlChannel::Management,
+            code: CODE_OK,
+            message: None,
+            context: None,
+            data: Some(Value::String(
+                management::request::PROTOCOL_REQUEST_PING.to_string(),
+            )),
+        };
+
+        let result: Result<management::request::Request, AppError> = msg_frame.try_into();
+        match result {
+            Ok(value) => {
+                assert_eq!(value, management::request::Request::Ping,);
+            }
+            Err(err) => panic!("Unexpected result: err={:?}", err),
+        }
+    }
+
+    #[test]
+    fn msgframe_try_into_mgmt_request_when_invalid() {
+        let msg_frame = MessageFrame {
+            channel: ControlChannel::Management,
+            code: CODE_OK,
+            message: None,
+            context: None,
+            data: Some(Value::String("INVALID".to_string())),
+        };
+
+        let result: Result<management::request::Request, AppError> = msg_frame.try_into();
+        match result {
+            Ok(value) => panic!("Unexpected successful result: value={:?}", &value),
+            Err(_) => {}
+        }
+    }
+
+    #[test]
+    fn msgframe_try_into_mgmt_response_when_valid_pong() {
+        let msg_frame = MessageFrame {
+            channel: ControlChannel::Management,
+            code: CODE_OK,
+            message: None,
+            context: Some(serde_json::to_value(management::request::Request::Ping).unwrap()),
+            data: Some(Value::String("pong".to_string())),
+        };
+
+        let result: Result<management::response::Response, AppError> = msg_frame.try_into();
+        match result {
+            Ok(value) => {
+                assert_eq!(
+                    value,
+                    management::response::Response::new(
+                        CODE_OK,
+                        &None,
+                        &management::request::Request::Ping,
+                        &Some(Value::String("pong".to_string())),
+                    )
+                );
+            }
+            Err(err) => panic!("Unexpected result: err={:?}", err),
+        }
+    }
+
+    #[test]
+    fn msgframe_try_into_mgmt_response_when_missing_context() {
+        let msg_frame = MessageFrame {
+            channel: ControlChannel::Management,
+            code: CODE_OK,
+            message: None,
+            context: None,
+            data: Some(Value::String("pong".to_string())),
+        };
+
+        let result: Result<management::response::Response, AppError> = msg_frame.try_into();
+        match result {
+            Ok(value) => panic!("Unexpected successful result: value={:?}", &value),
+            Err(_) => {}
+        }
+    }
+
+    #[test]
+    fn msgframe_try_into_signal_event_when_valid_connections() {
+        let msg_frame = MessageFrame {
+            channel: ControlChannel::Signaling,
+            code: CODE_OK,
+            message: None,
+            context: Some(
+                serde_json::to_value(signaling::event::EventType::ProxyConnections).unwrap(),
+            ),
+            data: Some(json!([])),
+        };
+
+        let result: Result<signaling::event::SignalEvent, AppError> = msg_frame.try_into();
+        match result {
+            Ok(value) => {
+                assert_eq!(
+                    value,
+                    signaling::event::SignalEvent::new(
+                        CODE_OK,
+                        &None,
+                        &signaling::event::EventType::ProxyConnections,
+                        &Some(json!([])),
+                    )
+                );
+            }
+            Err(err) => panic!("Unexpected result: err={:?}", err),
+        }
+    }
+
+    #[test]
+    fn msgframe_try_into_signal_event_when_missing_context() {
+        let msg_frame = MessageFrame {
+            channel: ControlChannel::Signaling,
+            code: CODE_OK,
+            message: None,
+            context: None,
+            data: Some(json!([])),
+        };
+
+        let result: Result<signaling::event::SignalEvent, AppError> = msg_frame.try_into();
+        match result {
+            Ok(value) => panic!("Unexpected successful result: value={:?}", &value),
+            Err(_) => {}
         }
     }
 }

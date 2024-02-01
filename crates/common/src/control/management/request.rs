@@ -3,7 +3,7 @@ use clap::error::ErrorKind;
 use clap::{ArgMatches, Command};
 use serde_derive::{Deserialize, Serialize};
 
-use crate::control::message;
+use crate::control::pdu;
 use crate::error::AppError;
 
 // Protocol text
@@ -104,7 +104,7 @@ impl RequestProcessor {
     pub fn parse(&self, line: &str) -> Result<Request, AppError> {
         let line = line.trim();
         let line_as_args = shlex::split(line).ok_or(AppError::GenWithCodeAndMsg(
-            message::CODE_BAD_REQUEST,
+            pdu::CODE_BAD_REQUEST,
             format!("Invalid command line: line={}", line),
         ))?;
 
@@ -117,15 +117,15 @@ impl RequestProcessor {
             let parse_error = parsed_command.err().unwrap();
             return match parse_error.kind() {
                 ErrorKind::DisplayHelp => Err(AppError::GenWithCodeAndMsg(
-                    message::CODE_OK,
+                    pdu::CODE_OK,
                     parse_error.to_string(),
                 )),
                 ErrorKind::DisplayVersion => Err(AppError::GenWithCodeAndMsg(
-                    message::CODE_OK,
+                    pdu::CODE_OK,
                     parse_error.to_string(),
                 )),
                 _ => Err(AppError::GenWithCodeAndMsg(
-                    message::CODE_BAD_REQUEST,
+                    pdu::CODE_BAD_REQUEST,
                     parse_error.to_string(),
                 )),
             };
@@ -147,7 +147,7 @@ impl RequestProcessor {
                     Ok(Request::None)
                 } else {
                     Err(AppError::GenWithCodeAndMsg(
-                        message::CODE_BAD_REQUEST,
+                        pdu::CODE_BAD_REQUEST,
                         format!("Unknown command: cmd={}", name),
                     ))
                 }
@@ -305,6 +305,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn reqproc_new() {
+        let _ = RequestProcessor::new();
+    }
+
+    #[test]
     fn reqproc_parse_when_bad_format_request() {
         let request_processor = RequestProcessor::new();
 
@@ -312,7 +317,7 @@ mod tests {
             Ok(request) => panic!("Unexpected successful result: req={:?}", request),
             Err(err) => {
                 assert!(err.get_code().is_some());
-                assert_eq!(err.get_code().unwrap(), message::CODE_BAD_REQUEST);
+                assert_eq!(err.get_code().unwrap(), pdu::CODE_BAD_REQUEST);
             }
         }
     }
@@ -325,7 +330,7 @@ mod tests {
             Ok(request) => panic!("Unexpected successful result: req={:?}", request),
             Err(err) => {
                 assert!(err.get_code().is_some());
-                assert_eq!(err.get_code().unwrap(), message::CODE_BAD_REQUEST);
+                assert_eq!(err.get_code().unwrap(), pdu::CODE_BAD_REQUEST);
             }
         }
     }
@@ -343,7 +348,7 @@ mod tests {
         let parse_error = result.err().unwrap();
 
         assert!(parse_error.get_code().is_some());
-        assert_eq!(message::CODE_OK, parse_error.get_code().unwrap());
+        assert_eq!(pdu::CODE_OK, parse_error.get_code().unwrap());
 
         let expected_msg = "Response: code=200, msg=COMMANDS:\n  about        Display context information for connected mTLS device user\n  connections  List current service proxy connections\n  login        Perform challenge-response authentication (if gateway configured for MFA)\n  ping         Simple gateway heartbeat request\n  proxies      List active service proxies, ready for new connections\n  services     List authorized services for connected mTLS device user\n  start        Startup proxy to authorized service via secure client-gateway proxy\n  stop         Shutdown active service proxy (previously started)\n  quit         Quit the control plane (and corresponding service connections)\n  help         Print this message or the help of the given subcommand(s)\n".to_string();
 
