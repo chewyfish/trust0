@@ -146,14 +146,7 @@ pub mod tests {
             );
         }
         let ca_root_cert_file_meta = ca_root_cert_file_meta.unwrap();
-        #[cfg(not(windows))]
-        {
-            assert_eq!(ca_root_cert_file_meta.len(), 1834);
-        }
-        #[cfg(windows)]
-        {
-            assert_eq!(ca_root_cert_file_meta.len(), 1864);
-        }
+        assert_eq!(ca_root_cert_file_meta.len(), 1834); // with CRLF, use 1864
 
         // client binary file
         let client_binary_file_meta = fs::metadata(dest_client_binary_file_path.as_path());
@@ -164,14 +157,7 @@ pub mod tests {
             );
         }
         let client_binary_file_meta = client_binary_file_meta.unwrap();
-        #[cfg(not(windows))]
-        {
-            assert_eq!(client_binary_file_meta.len(), 110);
-        }
-        #[cfg(windows)]
-        {
-            assert_eq!(client_binary_file_meta.len(), 116);
-        }
+        assert_eq!(client_binary_file_meta.len(), 110); // with CRLF, use 116
 
         // client key file
         let client_key_file_meta = fs::metadata(dest_client_key_file_path.as_path());
@@ -182,14 +168,7 @@ pub mod tests {
             );
         }
         let client_key_file_meta = client_key_file_meta.unwrap();
-        #[cfg(not(windows))]
-        {
-            assert_eq!(client_key_file_meta.len(), 3272);
-        }
-        #[cfg(windows)]
-        {
-            assert_eq!(client_key_file_meta.len(), 3324);
-        }
+        assert_eq!(client_key_file_meta.len(), 3272); // with CRLF, use 3324
 
         // client certificate file
         let client_cert_file_meta = fs::metadata(dest_client_cert_file_path.as_path());
@@ -200,14 +179,7 @@ pub mod tests {
             );
         }
         let client_cert_file_meta = client_cert_file_meta.unwrap();
-        #[cfg(not(windows))]
-        {
-            assert_eq!(client_cert_file_meta.len(), 1911);
-        }
-        #[cfg(windows)]
-        {
-            assert_eq!(client_cert_file_meta.len(), 1942);
-        }
+        assert_eq!(client_cert_file_meta.len(), 1911); // with CRLF, use 1942
 
         // client config file
         let client_config_file_meta = fs::metadata(dest_client_config_file_path.as_path());
