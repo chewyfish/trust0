@@ -6,6 +6,8 @@
     * [Network Diagram](#network-diagram)
     * [User Connections](#user-connections)
     * [Control Plane](#control-plane)
+      * [Management Channel](#management-channel)
+      * [Signaling Channel](#signaling-channel)
     * [Service Proxy](#service-proxy)
     * [Client Auth](#client-auth)
       * [mTLS Authentication](#mtls-authentication)
@@ -52,7 +54,16 @@ Note - A future Trust0 may accommodate gateway-to-gateway service proxy routing.
 
 ### Control Plane
 
-The Control Plane connection is required and the first connection made between the T0C and a T0G. A REPL shell will be opened and the user may enter various commands:
+The Control Plane connection is required and the first connection made between the T0C and a T0G.
+
+There are 2 Control Plane channels:
+
+* `Management` - User command shell to manage service proxy connections (among other commands)
+* `Signaling` - An out-of-band channel, the client and gateway use for communication (events, liveliness probing, data, .. )
+
+#### Management Channel
+
+A REPL shell will be opened and the user may enter various commands:
 
 | Command     | Description                                                               |
 |-------------|---------------------------------------------------------------------------|
@@ -69,9 +80,20 @@ The Control Plane connection is required and the first connection made between t
 
 In the REPL shell, issue `help <COMMAND>` to learn more about these commands.
 
+#### Signaling Channel
+
+A bidirectional channel will be established between the client and gateway to asynchronously send events to each other.
+
+Here is the current list of signaling events in use:
+
+| Event Type        | Direction        | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+|-------------------|------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Proxy Connections | `T0C` <--> `T0G` | <p>This event is sent bidirectionally every `6 secs`. It contains the current list of service<br>proxy connections' bind address pairs (as known by the sending entity) for the<br>respective user session.</p><p>Each side will keep track of missing binds as a consecutive count. When that reaches `5`,<br>those corresponding missing connection(s) will be shut down.</p><p>Additionally, each side will also keep track of consecutive missing `Proxy Connections`<br>signal events. when that reaches `5`, the entire user session(control plane, service<br>proxy connections) will be shut down.</p> |
+
+
 ### Service Proxy
 
-Of note, `start` is a key command which is used to open up new service proxies.
+Regarding the [Management Channel](#management-channel) REPL shell, `start` is a key command which is used to open up new service proxies.
 
 ```
 Trust0 SDP Platform v0.1.0-alpha (enter 'help' for commands)
