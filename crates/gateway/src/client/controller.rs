@@ -246,10 +246,19 @@ impl server_std::ServerVisitor for ControlPlaneServerVisitor {
         let mut conn_visitor =
             ClientConnVisitor::new(self.app_config.clone(), self.service_mgr.clone());
 
+        let session_addrs = &(
+            format!("{:?}", &tls_conn.sock.peer_addr()),
+            format!("{:?}", &tls_conn.sock.local_addr()),
+        );
+
         let alpn_protocol = conn_visitor.process_authorization(&tls_conn, None)?;
 
-        let connection =
-            conn_std::Connection::new(Box::new(conn_visitor), tls_conn, alpn_protocol)?;
+        let connection = conn_std::Connection::new(
+            Box::new(conn_visitor),
+            tls_conn,
+            session_addrs,
+            alpn_protocol,
+        )?;
 
         Ok(connection)
     }

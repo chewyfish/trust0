@@ -173,10 +173,6 @@ pub struct AppConfigArgs {
     #[arg(required=false, long="crl-file", env, value_parser=trust0_common::crypto::file::verify_crl_list)]
     pub crl_file: Option<String>,
 
-    /// Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead. Provided value is a comma-separated list of versions.
-    #[arg(required=false, long="protocol-version", env, value_parser=trust0_common::crypto::tls::lookup_version, value_delimiter=',')]
-    pub protocol_version: Option<Vec<&'static rustls::SupportedProtocolVersion>>,
-
     /// Disable default cipher suite list, and use <CIPHER_SUITE(s)> instead. Provided value is a comma-separated list of suites.
     #[arg(required=false, long="cipher-suite", env, value_parser=trust0_common::crypto::tls::lookup_suite, value_delimiter=',')]
     pub cipher_suite: Option<Vec<rustls::SupportedCipherSuite>>,
@@ -249,7 +245,6 @@ pub struct TlsServerConfigBuilder {
     pub certs: Vec<CertificateDer<'static>>,
     pub key: PrivateKeyDer<'static>,
     pub cipher_suites: Vec<rustls::SupportedCipherSuite>,
-    pub protocol_versions: Vec<&'static rustls::SupportedProtocolVersion>,
     pub auth_root_certs: rustls::RootCertStore,
     pub crl_list: Option<Arc<Mutex<Vec<CertificateRevocationListDer<'static>>>>>,
     pub session_resumption: bool,
@@ -266,7 +261,7 @@ impl TlsServerConfigBuilder {
             }
             .into(),
         )
-        .with_protocol_versions(self.protocol_versions.as_slice())
+        .with_protocol_versions(&[&rustls::version::TLS13])
         .expect("Inconsistent cipher-suites/versions specified")
         .with_client_cert_verifier(self.build_client_cert_verifier()?)
         .with_single_cert(
@@ -388,9 +383,6 @@ impl AppConfig {
         let cipher_suites: Vec<rustls::SupportedCipherSuite> = config_args
             .cipher_suite
             .unwrap_or(rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec());
-        let protocol_versions: Vec<&'static rustls::SupportedProtocolVersion> = config_args
-            .protocol_version
-            .unwrap_or(rustls::ALL_VERSIONS.to_vec());
         let session_resumption = config_args.session_resumption;
 
         let mut alpn_protocols = vec![alpn::Protocol::ControlPlane.to_string().into_bytes()];
@@ -403,7 +395,6 @@ impl AppConfig {
             certs,
             key,
             cipher_suites,
-            protocol_versions,
             auth_root_certs,
             crl_list,
             session_resumption,
@@ -596,8 +587,6 @@ pub mod tests {
         let auth_root_certs = rustls::RootCertStore::empty();
         let cipher_suites: Vec<rustls::SupportedCipherSuite> =
             rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
-        let protocol_versions: Vec<&'static rustls::SupportedProtocolVersion> =
-            rustls::ALL_VERSIONS.to_vec();
         let session_resumption = false;
         let alpn_protocols = vec![alpn::Protocol::ControlPlane.to_string().into_bytes()];
 
@@ -605,7 +594,6 @@ pub mod tests {
             certs: gateway_cert,
             key: gateway_key,
             cipher_suites,
-            protocol_versions,
             auth_root_certs,
             crl_list: None,
             session_resumption,
@@ -798,7 +786,6 @@ pub mod tests {
             certs: load_certificates(gateway_cert_file_str.to_string()).unwrap(),
             key: load_private_key(gateway_key_file_str.to_string()).unwrap(),
             cipher_suites: rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec(),
-            protocol_versions: rustls::ALL_VERSIONS.to_vec(),
             auth_root_certs,
             crl_list: None,
             session_resumption: true,

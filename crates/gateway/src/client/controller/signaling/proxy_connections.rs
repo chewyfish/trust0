@@ -7,8 +7,8 @@ use serde_json::Value::Array;
 
 use crate::client::controller::signaling::SignalingEventHandler;
 use crate::service::manager::ServiceMgr;
-use crate::service::proxy::proxy_base::ProxyAddrs;
 use trust0_common::control::signaling::event::{EventType, ProxyConnection, SignalEvent};
+use trust0_common::control::tls::message::ConnectionAddrs;
 use trust0_common::error::AppError;
 use trust0_common::error::AppError::General;
 use trust0_common::logging::{error, warn};
@@ -28,7 +28,7 @@ pub struct ProxyConnectionsProcessor {
     /// Missing connection bind addresses
     /// key: (client bind address, gateway bind address)
     /// value: (missing count, service ID, proxy key)
-    missing_connection_binds: HashMap<ProxyAddrs, (u16, u64, String)>,
+    missing_connection_binds: HashMap<ConnectionAddrs, (u16, u64, String)>,
     /// Missing signal event probes
     missing_signal_probes: u16,
 }
@@ -64,9 +64,9 @@ impl ProxyConnectionsProcessor {
     ///
     /// # Returns
     ///
-    /// A map of (`service ID`, (`service name`, Vec<(`proxy key`, `proxy addrs`)>)) corresponding to user's connections.
+    /// A map of (`service ID`, (`service name`, Vec<(`proxy key`, `connection addrs`)>)) corresponding to user's connections.
     ///
-    fn current_user_proxy_keys(&self) -> HashMap<u64, (String, Vec<(String, ProxyAddrs)>)> {
+    fn current_user_proxy_keys(&self) -> HashMap<u64, (String, Vec<(String, ConnectionAddrs)>)> {
         let service_proxies = self.service_mgr.lock().unwrap().get_service_proxies();
         service_proxies
             .iter()
@@ -83,7 +83,7 @@ impl ProxyConnectionsProcessor {
                     ),
                 )
             })
-            .collect::<HashMap<u64, (String, Vec<(String, ProxyAddrs)>)>>()
+            .collect::<HashMap<u64, (String, Vec<(String, ConnectionAddrs)>)>>()
     }
 
     /// Process inbound proxy connections signal event
@@ -102,7 +102,7 @@ impl ProxyConnectionsProcessor {
     fn process_inbound_event(
         &mut self,
         service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
-        proxy_keys: &HashMap<u64, (String, Vec<(String, ProxyAddrs)>)>,
+        proxy_keys: &HashMap<u64, (String, Vec<(String, ConnectionAddrs)>)>,
         signal_event: SignalEvent,
     ) -> Result<(), AppError> {
         let mut proxy_context_map = HashMap::new();
@@ -110,24 +110,24 @@ impl ProxyConnectionsProcessor {
         let mut shutdown_conn_binds = Vec::new();
 
         // Set up client/gateway connection address sets
-        let client_conn_addrs: HashSet<ProxyAddrs> = match signal_event.data {
+        let client_conn_addrs: HashSet<ConnectionAddrs> = match signal_event.data {
             None => HashSet::new(),
             Some(data) => HashSet::from_iter(
                 ProxyConnection::from_serde_value(&data)?
                     .iter()
                     .flat_map(|proxy_conn| proxy_conn.binds.clone())
-                    .map(|proxy_addrs| {
+                    .map(|conn_addrs| {
                         (
                             #[allow(clippy::get_first)]
-                            proxy_addrs.get(0).as_ref().unwrap().to_string(),
-                            proxy_addrs.get(1).as_ref().unwrap().to_string(),
+                            conn_addrs.get(0).as_ref().unwrap().to_string(),
+                            conn_addrs.get(1).as_ref().unwrap().to_string(),
                         )
                     })
-                    .collect::<HashSet<ProxyAddrs>>(),
+                    .collect::<HashSet<ConnectionAddrs>>(),
             ),
         };
 
-        let mut gateway_conn_addrs: HashSet<ProxyAddrs> = HashSet::new();
+        let mut gateway_conn_addrs: HashSet<ConnectionAddrs> = HashSet::new();
         for (service_id, (_, service_proxy_keys)) in proxy_keys {
             for service_proxy_key in service_proxy_keys {
                 proxy_context_map.insert(
@@ -176,7 +176,7 @@ impl ProxyConnectionsProcessor {
             warn(
                 &target!(),
                 &format!(
-                    "Shutting down dead proxy connection: user_id={}, svc_id={}, proxy_addrs={:?}",
+                    "Shutting down dead proxy connection: user_id={}, svc_id={}, conn_addrs={:?}",
                     &self.user.user_id, shutdown_conn_bind.0, shutdown_conn_bind.1
                 ),
             );
@@ -214,7 +214,7 @@ impl ProxyConnectionsProcessor {
     #[allow(clippy::type_complexity)]
     fn process_outbound_event(
         &mut self,
-        proxy_keys: &HashMap<u64, (String, Vec<(String, ProxyAddrs)>)>,
+        proxy_keys: &HashMap<u64, (String, Vec<(String, ConnectionAddrs)>)>,
     ) -> Result<(), AppError> {
         let mut proxy_connections: Vec<Value> = Vec::new();
 

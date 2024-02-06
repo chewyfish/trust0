@@ -6,14 +6,14 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use rustls::server::Accepted;
 use rustls::ServerConfig;
+use trust0_common::control::tls;
+use trust0_common::control::tls::message::ConnectionAddrs;
 use trust0_common::crypto::alpn;
 
 use crate::client::connection::ClientConnVisitor;
 use crate::config::AppConfig;
 use crate::service::manager::ServiceMgr;
-use crate::service::proxy::proxy_base::{
-    GatewayServiceProxy, GatewayServiceProxyVisitor, ProxyAddrs,
-};
+use crate::service::proxy::proxy_base::{GatewayServiceProxy, GatewayServiceProxyVisitor};
 use trust0_common::error::AppError;
 use trust0_common::model::service::Service;
 #[cfg(test)]
@@ -26,12 +26,23 @@ use trust0_common::proxy::proxy_base::ProxyType;
 
 /// Gateway service proxy (TCP trust0 gateway <-> TCP service)
 pub struct TcpGatewayProxy {
+    /// TLS server (delegate) for given service proxy
     tls_server: server_std::Server,
-    _server_visitor: Arc<Mutex<TcpGatewayProxyServerVisitor>>,
 }
 
 impl TcpGatewayProxy {
     /// TcpGatewayProxy constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `app_config` - Application configuration object
+    /// * `server_visitor` - Server visitor pattern object
+    /// * `proxy_port` - Port to use for binding server listener
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`TcpGatewayProxy`] object.
+    ///
     pub fn new(
         app_config: Arc<AppConfig>,
         server_visitor: Arc<Mutex<TcpGatewayProxyServerVisitor>>,
@@ -43,7 +54,6 @@ impl TcpGatewayProxy {
                 &app_config.server_host,
                 proxy_port,
             ),
-            _server_visitor: server_visitor,
         }
     }
 }
@@ -63,22 +73,49 @@ unsafe impl Send for TcpGatewayProxy {}
 
 /// tls_server::server_std::Server strategy visitor pattern implementation
 pub struct TcpGatewayProxyServerVisitor {
+    /// Application configuration object
     app_config: Arc<AppConfig>,
+    /// Service manager
     service_mgr: Arc<Mutex<dyn ServiceMgr>>,
+    /// Service model object
     service: Service,
+    /// Host address for proxy server listener
     proxy_host: Option<String>,
+    /// Port for proxy server listener
     proxy_port: u16,
+    /// Channel sender for proxy executor events
     proxy_tasks_sender: Sender<ProxyExecutorEvent>,
+    /// Channel sender for proxy events
     proxy_events_sender: Sender<ProxyEvent>,
+    /// Map of services by proxy key
     services_by_proxy_key: Arc<Mutex<HashMap<String, u64>>>,
-    users_by_proxy_addrs: HashMap<ProxyAddrs, u64>,
-    proxy_addrs_by_proxy_key: HashMap<String, ProxyAddrs>,
-    proxy_keys_by_user: HashMap<u64, Vec<(String, ProxyAddrs)>>,
+    /// Map of users by proxy address context
+    users_by_proxy_addrs: HashMap<ConnectionAddrs, u64>,
+    /// Map of proxy address context by proxy key
+    proxy_addrs_by_proxy_key: HashMap<String, ConnectionAddrs>,
+    /// Map of proxy keys/addresses by user
+    proxy_keys_by_user: HashMap<u64, Vec<(String, ConnectionAddrs)>>,
 }
 
 impl TcpGatewayProxyServerVisitor {
     #[allow(clippy::too_many_arguments)]
     /// TcpGatewayProxyServerVisitor constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `app_config` - Application configuration object
+    /// * `service_mgr` - Service manager
+    /// * `service` - Service model object
+    /// * `proxy_host` - Host address for proxy server listener
+    /// * `proxy_port` - Port for proxy server listener
+    /// * `proxy_tasks_sender` - Channel sender for proxy executor events
+    /// * `proxy_events_sender` - Channel sender for proxy events
+    /// * `services_by_proxy_key` - Map of services by proxy key
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing a newly constructed [`TcpGatewayProxyServerVisitor`] object.
+    ///
     pub fn new(
         app_config: Arc<AppConfig>,
         service_mgr: Arc<Mutex<dyn ServiceMgr>>,
@@ -104,31 +141,17 @@ impl TcpGatewayProxyServerVisitor {
         })
     }
 
-    /// Stringified tuple client and gateway connection addresses
+    /// Client connection authentication/authorization enforcement
+    /// If valid auth, return tuple of: connection visitor; user ID; ALPN protocol
     ///
     /// # Arguments
     ///
-    /// * `tls_conn` - TLS server connection for proxy
+    /// * `tls_conn` - TLS server connection object
     ///
     /// # Returns
     ///
-    /// A [`ProxyAddrs`] object corresponding to connection socket address pair (peer, local).
+    /// A [`Result`] containing tuple of: connection visitor; user ID; ALPN protocol
     ///
-    fn create_proxy_addrs(tls_conn: &TlsServerConnection) -> ProxyAddrs {
-        let peer_addr = match &tls_conn.sock.peer_addr() {
-            Ok(addr) => format!("{:?}", addr),
-            Err(_) => "(NA)".to_string(),
-        };
-        let local_addr = match &tls_conn.sock.local_addr() {
-            Ok(addr) => format!("{:?}", addr),
-            Err(_) => "(NA)".to_string(),
-        };
-
-        (peer_addr, local_addr)
-    }
-
-    /// Client connection authentication/authorization enforcement
-    /// If valid auth, return tuple of: connection visitor; user ID; ALPN protocol
     #[cfg(not(test))]
     fn process_connection_authorization(
         &self,
@@ -168,15 +191,30 @@ impl server_std::ServerVisitor for TcpGatewayProxyServerVisitor {
     ) -> Result<conn_std::Connection, AppError> {
         let (conn_visitor, user_id, alpn_protocol) =
             self.process_connection_authorization(&tls_conn)?;
-        self.users_by_proxy_addrs.insert(
-            TcpGatewayProxyServerVisitor::create_proxy_addrs(&tls_conn),
-            user_id,
-        );
-        conn_std::Connection::new(Box::new(conn_visitor), tls_conn, alpn_protocol)
+        let conn_addrs = tls::message::Trust0Connection::create_connection_addrs(&tls_conn.sock);
+        self.users_by_proxy_addrs
+            .insert(conn_addrs.clone(), user_id);
+        conn_std::Connection::new(Box::new(conn_visitor), tls_conn, &conn_addrs, alpn_protocol)
     }
 
     fn on_tls_handshaking(&mut self, _accepted: &Accepted) -> Result<ServerConfig, AppError> {
         self.app_config.tls_server_config_builder.build()
+    }
+
+    fn on_server_msg_provider(
+        &mut self,
+        _server_conn: &rustls::ServerConnection,
+        tcp_stream: &TcpStream,
+    ) -> Result<Option<tls::message::SessionMessage>, AppError> {
+        Ok(Some(tls::message::SessionMessage::new(
+            &tls::message::DataType::Trust0Connection,
+            &Some(
+                serde_json::to_value(tls::message::Trust0Connection::new(
+                    &tls::message::Trust0Connection::create_connection_addrs(tcp_stream),
+                ))
+                .unwrap(),
+            ),
+        )))
     }
 
     fn on_conn_accepted(&mut self, connection: conn_std::Connection) -> Result<(), AppError> {
@@ -237,8 +275,7 @@ impl server_std::ServerVisitor for TcpGatewayProxyServerVisitor {
         // Send request to proxy executor to startup new proxy
 
         let tcp_stream = connection.get_tcp_stream();
-        let proxy_addrs =
-            TcpGatewayProxyServerVisitor::create_proxy_addrs(connection.get_tls_conn_as_ref());
+        let proxy_addrs = connection.get_session_addrs().clone();
         let proxy_key = ProxyEvent::key_value(
             &ProxyType::TcpAndTcp,
             tcp_stream.peer_addr().ok(),
@@ -327,7 +364,7 @@ impl GatewayServiceProxyVisitor for TcpGatewayProxyServerVisitor {
         self.proxy_port
     }
 
-    fn get_proxy_keys_for_user(&self, user_id: u64) -> Vec<(String, ProxyAddrs)> {
+    fn get_proxy_keys_for_user(&self, user_id: u64) -> Vec<(String, ConnectionAddrs)> {
         self.proxy_keys_by_user
             .get(&user_id)
             .unwrap_or(&vec![])
@@ -341,7 +378,7 @@ impl GatewayServiceProxyVisitor for TcpGatewayProxyServerVisitor {
     ) -> Result<(), AppError> {
         let mut errors: Vec<String> = vec![];
 
-        let proxy_keys_lists: Vec<Vec<(String, ProxyAddrs)>> = self
+        let proxy_keys_lists: Vec<Vec<(String, ConnectionAddrs)>> = self
             .proxy_keys_by_user
             .iter()
             .filter(|(uid, _)| user_id.is_none() || (**uid == user_id.unwrap()))
@@ -415,13 +452,13 @@ impl GatewayServiceProxyVisitor for TcpGatewayProxyServerVisitor {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::config;
     use crate::repository::access_repo::tests::MockAccessRepo;
     use crate::repository::role_repo::tests::MockRoleRepo;
     use crate::repository::service_repo::tests::MockServiceRepo;
     use crate::repository::user_repo::tests::MockUserRepo;
     use crate::service::manager::tests::MockSvcMgr;
     use crate::service::proxy::proxy_base;
-    use crate::{config, service};
     use rustls::StreamOwned;
     use std::sync;
     use std::sync::mpsc::TryRecvError;
@@ -441,7 +478,7 @@ pub mod tests {
             )
             .unwrap(),
         );
-        let service_mgr = Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+        let service_mgr = Arc::new(Mutex::new(MockSvcMgr::new()));
         let server_visitor = Arc::new(Mutex::new(TcpGatewayProxyServerVisitor {
             app_config: app_config.clone(),
             service_mgr: service_mgr.clone(),
@@ -476,7 +513,7 @@ pub mod tests {
             )
             .unwrap(),
         );
-        let service_mgr = Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+        let service_mgr = Arc::new(Mutex::new(MockSvcMgr::new()));
 
         let result = TcpGatewayProxyServerVisitor::new(
             app_config,
@@ -501,31 +538,6 @@ pub mod tests {
     }
 
     #[test]
-    fn tcpsvrproxyvisit_create_proxy_addrs() {
-        let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
-        let connected_tcp_peer_addr = connected_tcp_stream.server_stream.0.peer_addr().unwrap();
-        let connected_tcp_local_addr = connected_tcp_stream.server_stream.0.local_addr().unwrap();
-
-        let expected_proxy_addrs = (
-            format!("{:?}", connected_tcp_peer_addr),
-            format!("{:?}", connected_tcp_local_addr),
-        );
-
-        let proxy_addrs = TcpGatewayProxyServerVisitor::create_proxy_addrs(&StreamOwned::new(
-            rustls::ServerConnection::new(Arc::new(
-                proxy_base::tests::create_tls_server_config(vec![
-                    alpn::Protocol::create_service_protocol(200).into_bytes(),
-                ])
-                .unwrap(),
-            ))
-            .unwrap(),
-            stream_utils::clone_std_tcp_stream(&connected_tcp_stream.server_stream.0).unwrap(),
-        ));
-
-        assert_eq!(proxy_addrs, expected_proxy_addrs);
-    }
-
-    #[test]
     fn tcpsvrproxyvisit_create_client_conn() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
@@ -539,7 +551,7 @@ pub mod tests {
         let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
         let connected_tcp_peer_addr = connected_tcp_stream.server_stream.0.peer_addr().unwrap();
         let connected_tcp_local_addr = connected_tcp_stream.server_stream.0.local_addr().unwrap();
-        let service_mgr = Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+        let service_mgr = Arc::new(Mutex::new(MockSvcMgr::new()));
 
         let mut server_visitor = TcpGatewayProxyServerVisitor {
             app_config: app_config.clone(),
@@ -592,6 +604,74 @@ pub mod tests {
     }
 
     #[test]
+    fn tcpsvrproxyvisit_on_server_msg_provider() {
+        let app_config = Arc::new(
+            config::tests::create_app_config_with_repos(
+                Arc::new(Mutex::new(MockUserRepo::new())),
+                Arc::new(Mutex::new(MockServiceRepo::new())),
+                Arc::new(Mutex::new(MockRoleRepo::new())),
+                Arc::new(Mutex::new(MockAccessRepo::new())),
+            )
+            .unwrap(),
+        );
+        let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
+        let service_mgr = Arc::new(Mutex::new(MockSvcMgr::new()));
+
+        let mut server_visitor = TcpGatewayProxyServerVisitor {
+            app_config: app_config.clone(),
+            service_mgr: service_mgr.clone(),
+            service: Service {
+                service_id: 200,
+                name: "svc200".to_string(),
+                transport: Transport::TCP,
+                host: "svchost1".to_string(),
+                port: 4000,
+            },
+            proxy_host: Some("gwhost1".to_string()),
+            proxy_port: 2000,
+            proxy_tasks_sender: sync::mpsc::channel().0,
+            proxy_events_sender: sync::mpsc::channel().0,
+            services_by_proxy_key: Arc::new(Mutex::new(HashMap::new())),
+            users_by_proxy_addrs: HashMap::new(),
+            proxy_addrs_by_proxy_key: HashMap::new(),
+            proxy_keys_by_user: HashMap::new(),
+        };
+
+        let server_msg_result = server_visitor.on_server_msg_provider(
+            &rustls::ServerConnection::new(Arc::new(
+                proxy_base::tests::create_tls_server_config(vec![
+                    alpn::Protocol::create_service_protocol(200).into_bytes(),
+                ])
+                .unwrap(),
+            ))
+            .unwrap(),
+            &connected_tcp_stream.server_stream.0,
+        );
+
+        if let Err(err) = server_msg_result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        let server_msg = server_msg_result.unwrap();
+
+        assert!(server_msg.is_some());
+        assert_eq!(
+            server_msg.unwrap(),
+            tls::message::SessionMessage::new(
+                &tls::message::DataType::Trust0Connection,
+                &Some(
+                    serde_json::to_value(tls::message::Trust0Connection::new(
+                        &tls::message::Trust0Connection::create_connection_addrs(
+                            &connected_tcp_stream.server_stream.0,
+                        )
+                    ))
+                    .unwrap()
+                )
+            )
+        )
+    }
+
+    #[test]
     fn tcpsvrproxyvisit_on_conn_accepted_when_service_unresolvable() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
@@ -603,7 +683,7 @@ pub mod tests {
             .unwrap(),
         );
         let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
-        let service_mgr = Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+        let service_mgr = Arc::new(Mutex::new(MockSvcMgr::new()));
 
         let mut server_visitor = TcpGatewayProxyServerVisitor {
             app_config: app_config.clone(),
@@ -669,7 +749,7 @@ pub mod tests {
         let connected_tcp_local_addr = connected_tcp_stream.server_stream.0.local_addr().unwrap();
         let server_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let service_port = server_listener.local_addr().unwrap().port();
-        let service_mgr = Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+        let service_mgr = Arc::new(Mutex::new(MockSvcMgr::new()));
         let expected_user_id = 100;
         let expected_proxy_addrs = (
             format!("{:?}", connected_tcp_peer_addr),
