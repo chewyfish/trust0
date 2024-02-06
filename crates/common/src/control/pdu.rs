@@ -1,7 +1,7 @@
 use std::borrow::Borrow;
 use std::collections::VecDeque;
 
-use crate::control::{management, signaling};
+use crate::control::{management, signaling, tls};
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -27,10 +27,12 @@ pub enum ControlChannel {
     Management,
     /// OOB channel for control, eventing, monitoring, ...
     Signaling,
+    /// TLS data messages
+    TLS,
 }
 
 /// The control plane uses a frame-based messaging protocol. [`MessageFrame`] represents the protocol data unit (PDU)
-/// passed between the client and server entities for the purpose of signaling or management
+/// passed between the client and server entities for the purpose of signaling, management or TLS
 ///
 /// On the wire, the PDU is composed of a JSON serialized [`MessageFrame`] object preceded by its length (as a `u16`).
 ///
@@ -252,6 +254,34 @@ impl TryInto<signaling::event::SignalEvent> for &MessageFrame {
             &event_type,
             &self.data,
         ))
+    }
+}
+
+impl TryInto<tls::message::SessionMessage> for MessageFrame {
+    type Error = AppError;
+
+    fn try_into(self) -> Result<tls::message::SessionMessage, Self::Error> {
+        self.borrow().try_into()
+    }
+}
+
+impl TryInto<tls::message::SessionMessage> for &MessageFrame {
+    type Error = AppError;
+
+    fn try_into(self) -> Result<tls::message::SessionMessage, Self::Error> {
+        if self.context.is_none() {
+            return Err(AppError::General(
+                "TLS RTT data frame must have a context".to_string(),
+            ));
+        }
+        let data_type: tls::message::DataType =
+            serde_json::from_value(self.context.as_ref().unwrap().clone()).map_err(|err| {
+                AppError::GenWithMsgAndErr(
+                    "Error converting PDU context Value to TLS DataType".to_string(),
+                    Box::new(err),
+                )
+            })?;
+        Ok(tls::message::SessionMessage::new(&data_type, &self.data))
     }
 }
 
@@ -514,6 +544,48 @@ mod tests {
         };
 
         let result: Result<signaling::event::SignalEvent, AppError> = msg_frame.try_into();
+        match result {
+            Ok(value) => panic!("Unexpected successful result: value={:?}", &value),
+            Err(_) => {}
+        }
+    }
+
+    #[test]
+    fn msgframe_try_into_tls_rtt_data_when_valid_connection() {
+        let msg_frame = MessageFrame {
+            channel: ControlChannel::TLS,
+            code: CODE_OK,
+            message: None,
+            context: Some(serde_json::to_value(tls::message::DataType::Trust0Connection).unwrap()),
+            data: Some(json!([])),
+        };
+
+        let result: Result<tls::message::SessionMessage, AppError> = msg_frame.try_into();
+        match result {
+            Ok(value) => {
+                assert_eq!(
+                    value,
+                    tls::message::SessionMessage::new(
+                        &tls::message::DataType::Trust0Connection,
+                        &Some(json!([])),
+                    )
+                );
+            }
+            Err(err) => panic!("Unexpected result: err={:?}", err),
+        }
+    }
+
+    #[test]
+    fn msgframe_try_into_tls_rtt_data_when_missing_context() {
+        let msg_frame = MessageFrame {
+            channel: ControlChannel::TLS,
+            code: CODE_OK,
+            message: None,
+            context: None,
+            data: Some(json!([])),
+        };
+
+        let result: Result<tls::message::SessionMessage, AppError> = msg_frame.try_into();
         match result {
             Ok(value) => panic!("Unexpected successful result: value={:?}", &value),
             Err(_) => {}

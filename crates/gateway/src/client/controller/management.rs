@@ -14,12 +14,12 @@ use crate::repository::access_repo::AccessRepository;
 use crate::repository::service_repo::ServiceRepository;
 use crate::repository::user_repo::UserRepository;
 use crate::service::manager::ServiceMgr;
-use crate::service::proxy::proxy_base::ProxyAddrs;
 use trust0_common::authn::authenticator::{AuthenticatorServer, AuthnMessage, AuthnType};
 use trust0_common::authn::insecure_authenticator::InsecureAuthenticatorServer;
 use trust0_common::authn::scram_sha256_authenticator::ScramSha256AuthenticatorServer;
 use trust0_common::control::management;
 use trust0_common::control::pdu::MessageFrame;
+use trust0_common::control::tls::message::ConnectionAddrs;
 use trust0_common::error::AppError;
 use trust0_common::logging::error;
 use trust0_common::net::tls_server::conn_std;
@@ -241,7 +241,7 @@ impl ManagementController {
             .map(|service_proxy| {
                 let service_proxy = service_proxy.lock().unwrap();
 
-                let proxy_addrs_list: Vec<ProxyAddrs> = service_proxy
+                let proxy_addrs_list: Vec<ConnectionAddrs> = service_proxy
                     .get_proxy_keys_for_user(self.user.user_id)
                     .iter()
                     .map(|(_, addrs)| addrs)

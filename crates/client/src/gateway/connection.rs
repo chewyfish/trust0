@@ -58,14 +58,34 @@ unsafe impl Send for ServerConnVisitor {}
 
 /// Unit tests
 #[cfg(test)]
-mod tests {
+pub mod tests {
 
     use super::*;
     use crate::gateway::controller;
     use crate::{config, service};
-    use mockall::predicate;
+    use mockall::{mock, predicate};
     use std::sync::mpsc;
     use trust0_common::net::tls_client::conn_std::ConnectionVisitor;
+
+    // mocks
+    // =====
+
+    // mocks
+    // =====
+
+    mock! {
+        pub ConnVisit {}
+        impl conn_std::ConnectionVisitor for ConnVisit {
+            fn on_connected(&mut self, _event_channel_sender: Sender<conn_std::ConnectionEvent>) -> Result<(), AppError>;
+            fn on_connection_read(&mut self, _data: &[u8]) -> Result<(), AppError>;
+            fn on_polling_cycle(&mut self) -> Result<(), AppError>;
+            fn on_shutdown(&mut self) -> Result<(), AppError>;
+            fn send_error_response(&mut self, err: &AppError);
+        }
+    }
+
+    // tests
+    // =====
 
     #[test]
     fn srvconnvis_new() {

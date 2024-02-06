@@ -1,12 +1,10 @@
 use anyhow::Result;
 use std::sync::mpsc::Sender;
+use trust0_common::control::tls::message::ConnectionAddrs;
 
 use trust0_common::error::AppError;
 use trust0_common::model::service::Service;
 use trust0_common::proxy::executor::ProxyExecutorEvent;
-
-/// Represents the client and gateway proxy stream addresses respectively for a connected proxy
-pub type ProxyConnAddrs = (String, String);
 
 /// Service proxy trait for the client end of the proxy (implementations are transport-layer,... specific)
 pub trait ClientServiceProxy: Send {
@@ -30,7 +28,7 @@ pub trait ClientServiceProxyVisitor: Send {
 
     /// Client and gateway proxy key and stream addresses list for proxy connections (else None if no proxy active)
     /// Returns list of tuple of (proxy key, (client address, gateway address))
-    fn get_proxy_keys(&self) -> Vec<(String, ProxyConnAddrs)>;
+    fn get_proxy_keys(&self) -> Vec<(String, ConnectionAddrs)>;
 
     /// Request a server shutdown
     fn set_shutdown_requested(&mut self);
@@ -61,9 +59,13 @@ pub mod tests {
     use rustls::crypto::CryptoProvider;
     use rustls::server::{Acceptor, WebPkiClientVerifier};
     use rustls::ServerConfig;
+    use std::io::Write;
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::thread;
+    use std::time::Duration;
+    use trust0_common::control::pdu::MessageFrame;
+    use trust0_common::control::tls;
     use trust0_common::crypto::file::{load_certificates, load_private_key};
 
     const CERTFILE_ROOTCA_PATHPARTS: [&str; 3] =
@@ -83,7 +85,7 @@ pub mod tests {
             fn get_client_proxy_port(&self) -> u16;
             fn get_gateway_proxy_host(&self) -> &str;
             fn get_gateway_proxy_port(&self) -> u16;
-            fn get_proxy_keys(&self) -> Vec<(String, ProxyConnAddrs)>;
+            fn get_proxy_keys(&self) -> Vec<(String, ConnectionAddrs)>;
             fn set_shutdown_requested(&mut self);
             fn shutdown_connections(&mut self, proxy_tasks_sender: &Sender<ProxyExecutorEvent>) -> Result<(), AppError>;
             fn shutdown_connection(&mut self, proxy_tasks_sender: &Sender<ProxyExecutorEvent>, proxy_key: &str) -> Result<(), AppError>;
@@ -174,6 +176,26 @@ pub mod tests {
                 let mut server_conn = accepted.into_connection(tls_server_config.clone()).unwrap();
 
                 let _ = server_conn.complete_io(&mut tcp_stream);
+
+                let mut tls_conn = rustls::StreamOwned::new(server_conn, tcp_stream);
+
+                let pdu_message_frame: MessageFrame = tls::message::SessionMessage::new(
+                    &tls::message::DataType::Trust0Connection,
+                    &Some(
+                        serde_json::to_value(tls::message::Trust0Connection::new(&(
+                            "addr1".to_string(),
+                            "addr2".to_string(),
+                        )))
+                        .unwrap(),
+                    ),
+                )
+                .try_into()
+                .unwrap();
+                tls_conn
+                    .write_all(&*pdu_message_frame.build_pdu().unwrap())
+                    .unwrap();
+
+                thread::sleep(Duration::from_millis(100));
 
                 conn_idx += 1;
                 if conn_idx == num_connections {

@@ -7,8 +7,8 @@ use serde_json::Value::Array;
 
 use crate::gateway::controller::signaling::SignalingEventHandler;
 use crate::service::manager::ServiceMgr;
-use crate::service::proxy::proxy_base::ProxyConnAddrs;
 use trust0_common::control::signaling::event::{EventType, ProxyConnection, SignalEvent};
+use trust0_common::control::tls::message::ConnectionAddrs;
 use trust0_common::error::AppError;
 use trust0_common::error::AppError::General;
 use trust0_common::logging::{error, warn};
@@ -26,7 +26,7 @@ pub struct ProxyConnectionsProcessor {
     /// Missing connection bind addresses
     /// key: (client bind address, gateway bind address)
     /// value: (missing count, service ID, proxy key)
-    missing_connection_binds: HashMap<ProxyConnAddrs, (u16, u64, String)>,
+    missing_connection_binds: HashMap<ConnectionAddrs, (u16, u64, String)>,
     /// Missing signal event probes
     missing_signal_probes: u16,
 }
@@ -61,7 +61,7 @@ impl ProxyConnectionsProcessor {
     ///
     /// A map of (`service ID`, (`service name`, Vec<(`proxy key`, `proxy addrs`)>)) corresponding to proxy connections.
     ///
-    fn current_proxy_keys(&self) -> HashMap<u64, (String, Vec<(String, ProxyConnAddrs)>)> {
+    fn current_proxy_keys(&self) -> HashMap<u64, (String, Vec<(String, ConnectionAddrs)>)> {
         let service_proxies = self.service_mgr.lock().unwrap().get_service_proxies();
         service_proxies
             .iter()
@@ -73,7 +73,7 @@ impl ProxyConnectionsProcessor {
                     (service.name.clone(), service_proxy.get_proxy_keys().clone()),
                 )
             })
-            .collect::<HashMap<u64, (String, Vec<(String, ProxyConnAddrs)>)>>()
+            .collect::<HashMap<u64, (String, Vec<(String, ConnectionAddrs)>)>>()
     }
 
     /// Process inbound proxy connections signal event
@@ -92,7 +92,7 @@ impl ProxyConnectionsProcessor {
     fn process_inbound_event(
         &mut self,
         service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
-        proxy_keys: &HashMap<u64, (String, Vec<(String, ProxyConnAddrs)>)>,
+        proxy_keys: &HashMap<u64, (String, Vec<(String, ConnectionAddrs)>)>,
         signal_event: SignalEvent,
     ) -> Result<(), AppError> {
         let mut proxy_context_map = HashMap::new();
@@ -100,7 +100,7 @@ impl ProxyConnectionsProcessor {
         let mut shutdown_conn_binds = Vec::new();
 
         // Set up client/gateway connection address sets
-        let client_conn_addrs: HashSet<ProxyConnAddrs> = match signal_event.data {
+        let client_conn_addrs: HashSet<ConnectionAddrs> = match signal_event.data {
             None => HashSet::new(),
             Some(data) => HashSet::from_iter(
                 ProxyConnection::from_serde_value(&data)?
@@ -113,11 +113,11 @@ impl ProxyConnectionsProcessor {
                             proxy_addrs.get(1).as_ref().unwrap().to_string(),
                         )
                     })
-                    .collect::<HashSet<ProxyConnAddrs>>(),
+                    .collect::<HashSet<ConnectionAddrs>>(),
             ),
         };
 
-        let mut gateway_conn_addrs: HashSet<ProxyConnAddrs> = HashSet::new();
+        let mut gateway_conn_addrs: HashSet<ConnectionAddrs> = HashSet::new();
         for (service_id, (_, service_proxy_keys)) in proxy_keys {
             for service_proxy_key in service_proxy_keys {
                 proxy_context_map.insert(
@@ -203,7 +203,7 @@ impl ProxyConnectionsProcessor {
     #[allow(clippy::type_complexity)]
     fn process_outbound_event(
         &mut self,
-        proxy_keys: &HashMap<u64, (String, Vec<(String, ProxyConnAddrs)>)>,
+        proxy_keys: &HashMap<u64, (String, Vec<(String, ConnectionAddrs)>)>,
     ) -> Result<(), AppError> {
         let mut proxy_connections: Vec<Value> = Vec::new();
 

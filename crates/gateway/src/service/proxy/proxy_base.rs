@@ -1,40 +1,81 @@
 use std::sync::mpsc::Sender;
 
 use anyhow::Result;
+use trust0_common::control::tls::message::ConnectionAddrs;
 
 use trust0_common::error::AppError;
 use trust0_common::model::service::Service;
 use trust0_common::net::tls_server::server_std;
 use trust0_common::proxy::executor::ProxyExecutorEvent;
 
-/// Represents the client and gateway proxy stream addresses respectively for a connected proxy
-pub type ProxyAddrs = (String, String);
-
 /// Service proxy trait for the gateway end of the proxy (implementations are transport-layer,... specific)
 pub trait GatewayServiceProxy: Send {
     /// Startup service proxy (for clients to connect to desired service)
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of startup.
+    ///
     fn startup(&mut self) -> Result<(), AppError>;
 
     /// Shutdown service proxy
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of shutdown.
+    ///
     fn shutdown(&mut self);
 }
 
 /// Gateway service proxy visitor trait (implementations are transport-layer,... specific)
 pub trait GatewayServiceProxyVisitor: server_std::ServerVisitor + Send {
     /// Service accessor
+    ///
+    /// # Returns
+    ///
+    /// [`Service`] associated to proxy
+    ///
     fn get_service(&self) -> Service;
 
     /// Gateway host for service proxy
+    ///
+    /// # Returns
+    ///
+    /// Proxy server host
+    ///
     fn get_proxy_host(&self) -> Option<String>;
 
     /// Gateway port for service proxy
+    ///
+    /// # Returns
+    ///
+    /// Proxy server port
+    ///
     fn get_proxy_port(&self) -> u16;
 
     /// Client and gateway proxy key and stream addresses list for proxy connections (else None if no proxy active)
     /// Returns list of tuple of (proxy key, (client address, gateway address))
-    fn get_proxy_keys_for_user(&self, user_id: u64) -> Vec<(String, ProxyAddrs)>;
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - User ID for proxy keys request
+    ///
+    /// # Returns
+    ///
+    /// A list of (proxy key, (client address, gateway address)) for user.
+    ///
+    fn get_proxy_keys_for_user(&self, user_id: u64) -> Vec<(String, ConnectionAddrs)>;
 
     /// Shutdown the active service proxy connections. Consider either all connections or for given user ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `proxy_tasks_sender` - A channel sender to send events to the proxy executor
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of shutdown operation.
+    ///
     fn shutdown_connections(
         &mut self,
         proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
@@ -42,6 +83,15 @@ pub trait GatewayServiceProxyVisitor: server_std::ServerVisitor + Send {
     ) -> Result<(), AppError>;
 
     /// Shutdown service proxy connection.
+    ///
+    /// # Arguments
+    ///
+    /// * `proxy_tasks_sender` - A channel sender to send events to the proxy executor
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of shutdown operation.
+    ///
     fn shutdown_connection(
         &mut self,
         proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
@@ -49,6 +99,15 @@ pub trait GatewayServiceProxyVisitor: server_std::ServerVisitor + Send {
     ) -> Result<(), AppError>;
 
     /// Remove proxy for given proxy key. Returns true if service proxy contained proxy key (and removed)
+    ///
+    /// # Arguments
+    ///
+    /// * `proxy_key` - Proxy key to use for removal operation
+    ///
+    /// # Returns
+    ///
+    /// Whether the removal occurred for given proxy key.
+    ///
     fn remove_proxy_for_key(&mut self, proxy_key: &str) -> bool;
 }
 
@@ -61,8 +120,10 @@ pub mod tests {
     use rustls::crypto::CryptoProvider;
     use rustls::server::{Accepted, WebPkiClientVerifier};
     use rustls::ServerConfig;
+    use std::net::TcpStream;
     use std::path::PathBuf;
     use std::sync::Arc;
+    use trust0_common::control::tls;
     use trust0_common::crypto::file::{load_certificates, load_private_key};
     use trust0_common::net::tls_server::{conn_std, server_std};
 
@@ -81,13 +142,18 @@ pub mod tests {
         impl server_std::ServerVisitor for GwSvcProxyVisitor {
             fn create_client_conn(&mut self, tls_conn: conn_std::TlsServerConnection) -> Result<conn_std::Connection, AppError>;
             fn on_tls_handshaking(&mut self, _accepted: &Accepted) -> Result<ServerConfig, AppError>;
+            fn on_server_msg_provider(
+                &mut self,
+                _server_conn: &rustls::ServerConnection,
+                _tcp_stream: &TcpStream,
+            ) -> Result<Option<tls::message::SessionMessage>, AppError>;
             fn on_conn_accepted(&mut self, connection: conn_std::Connection) -> Result<(), AppError>;
         }
         impl GatewayServiceProxyVisitor for GwSvcProxyVisitor {
             fn get_service(&self) -> Service;
             fn get_proxy_host(&self) -> Option<String>;
             fn get_proxy_port(&self) -> u16;
-            fn get_proxy_keys_for_user(&self, user_id: u64) -> Vec<(String, ProxyAddrs)>;
+            fn get_proxy_keys_for_user(&self, user_id: u64) -> Vec<(String, ConnectionAddrs)>;
             fn shutdown_connections(&mut self, proxy_tasks_sender: &Sender<ProxyExecutorEvent>, user_id: Option<u64>) -> Result<(), AppError>;
             fn shutdown_connection(&mut self, proxy_tasks_sender: &Sender<ProxyExecutorEvent>, proxy_key: &str) -> Result<(), AppError>;
             fn remove_proxy_for_key(&mut self, proxy_key: &str) -> bool;

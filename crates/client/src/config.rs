@@ -60,10 +60,6 @@ pub struct AppConfigArgs {
     #[arg(required=true, short='r', long="ca-root-cert-file", env, value_parser=trust0_common::crypto::file::verify_certificates)]
     pub ca_root_cert_file: String,
 
-    /// Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead. Provided value is a comma-separated list of versions.
-    #[arg(required=false, long="protocol-version", env, value_parser=trust0_common::crypto::tls::lookup_version, value_delimiter=',')]
-    pub protocol_version: Option<Vec<&'static rustls::SupportedProtocolVersion>>,
-
     /// Disable default cipher suite list, and use <CIPHER_SUITE(s)> instead. Provided value is a comma-separated list of suites.
     #[arg(required=false, long="cipher-suite", env, value_parser=trust0_common::crypto::tls::lookup_suite, value_delimiter=',')]
     pub cipher_suite: Option<Vec<SupportedCipherSuite>>,
@@ -154,16 +150,13 @@ impl AppConfig {
             }
             .into(),
         )
-        .with_protocol_versions(
-            &config_args
-                .protocol_version
-                .unwrap_or(rustls::ALL_VERSIONS.to_vec()),
-        )
+        .with_protocol_versions(&[&rustls::version::TLS13])
         .expect("Inconsistent cipher-suite/versions selected")
         .with_root_certificates(ca_root_store)
         .with_client_auth_cert(auth_certs, auth_key)
         .expect("Invalid client auth certs/key");
 
+        tls_client_config.enable_early_data = true;
         tls_client_config.key_log = Arc::new(rustls::KeyLogFile::new());
 
         if config_args.no_tickets {
@@ -310,8 +303,6 @@ pub mod tests {
         let client_key = load_private_key(client_pki_files.1.to_str().unwrap().to_string())?;
         let cipher_suites: Vec<SupportedCipherSuite> =
             rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
-        let protocol_versions: Vec<&'static rustls::SupportedProtocolVersion> =
-            rustls::ALL_VERSIONS.to_vec();
 
         let mut auth_root_certs = RootCertStore::empty();
         for ca_root_cert in rootca_cert {
@@ -330,7 +321,7 @@ pub mod tests {
             }
             .into(),
         )
-        .with_protocol_versions(&protocol_versions)
+        .with_protocol_versions(&[&rustls::version::TLS13])
         .expect("Inconsistent cipher-suite/versions selected")
         .with_root_certificates(auth_root_certs)
         .with_client_auth_cert(client_cert, client_key)

@@ -1,3 +1,4 @@
+use trust0_common::control::tls;
 use trust0_common::error::AppError;
 use trust0_common::net::tls_client::{client_std, conn_std};
 
@@ -15,11 +16,30 @@ impl client_std::ClientVisitor for ClientVisitor {
     fn create_server_conn(
         &mut self,
         tls_conn: conn_std::TlsClientConnection,
+        server_msg: Option<tls::message::SessionMessage>,
     ) -> Result<conn_std::Connection, AppError> {
         let conn_visitor = ServerConnVisitor::new()?;
-        let connection = conn_std::Connection::new(Box::new(conn_visitor), tls_conn)?;
 
-        Ok(connection)
+        let session_addrs = match server_msg {
+            Some(msg) if msg.data_type == tls::message::DataType::Trust0Connection => {
+                let t0_conn =
+                    serde_json::from_value::<tls::message::Trust0Connection>(msg.data.unwrap())
+                        .map_err(|err| {
+                            AppError::GenWithMsgAndErr(
+                                "Invalid Trust0Connection json".to_string(),
+                                Box::new(err),
+                            )
+                        })?;
+                Some(t0_conn.binds)
+            }
+            _ => None,
+        };
+        let session_addrs = match session_addrs {
+            Some(addrs) => addrs,
+            None => tls::message::Trust0Connection::create_connection_addrs(&tls_conn.sock),
+        };
+
+        conn_std::Connection::new(Box::new(conn_visitor), tls_conn, &session_addrs)
     }
 }
 
@@ -41,7 +61,7 @@ unsafe impl Send for ServerConnVisitor {}
 
 /// Unit tests
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use pki_types::ServerName;
     use rustls::crypto::CryptoProvider;
@@ -108,20 +128,39 @@ mod tests {
     }
 
     #[test]
+    fn clivisit_new() {
+        let _ = super::ClientVisitor::new();
+    }
+
+    #[test]
     fn clivisit_create_server_conn() {
         let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
         let mut client_visitor = super::ClientVisitor::new();
+        let session_addrs = ("addr1".to_string(), "addr2".to_string());
 
-        let result = client_visitor.create_server_conn(StreamOwned::new(
-            rustls::ClientConnection::new(
-                Arc::new(create_tls_client_config().unwrap()),
-                ServerName::try_from("127.0.0.1".to_string()).unwrap(),
-            )
-            .unwrap(),
-            stream_utils::clone_std_tcp_stream(&connected_tcp_stream.client_stream.0).unwrap(),
-        ));
+        let result = client_visitor.create_server_conn(
+            StreamOwned::new(
+                rustls::ClientConnection::new(
+                    Arc::new(create_tls_client_config().unwrap()),
+                    ServerName::try_from("127.0.0.1".to_string()).unwrap(),
+                )
+                .unwrap(),
+                stream_utils::clone_std_tcp_stream(&connected_tcp_stream.client_stream.0).unwrap(),
+            ),
+            Some(tls::message::SessionMessage::new(
+                &tls::message::DataType::Trust0Connection,
+                &Some(
+                    serde_json::to_value(tls::message::Trust0Connection::new(&session_addrs))
+                        .unwrap(),
+                ),
+            )),
+        );
 
         assert!(result.is_ok());
+
+        let connection = result.unwrap();
+
+        assert_eq!(connection.get_session_addrs(), &session_addrs);
     }
 
     #[test]
