@@ -4,11 +4,10 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
+use trust0_common::control::tls::message::ConnectionAddrs;
 
 use crate::config::AppConfig;
-use crate::service::proxy::proxy_base::{
-    ClientServiceProxy, ClientServiceProxyVisitor, ProxyConnAddrs,
-};
+use crate::service::proxy::proxy_base::{ClientServiceProxy, ClientServiceProxyVisitor};
 use crate::service::proxy::proxy_client::ClientVisitor;
 use trust0_common::crypto::alpn;
 use trust0_common::error::AppError;
@@ -63,7 +62,7 @@ pub struct TcpClientProxyServerVisitor {
     proxy_tasks_sender: Sender<ProxyExecutorEvent>,
     proxy_events_sender: Sender<ProxyEvent>,
     services_by_proxy_key: Arc<Mutex<HashMap<String, u64>>>,
-    proxy_addrs_by_proxy_key: HashMap<ProxyKey, ProxyConnAddrs>,
+    proxy_addrs_by_proxy_key: HashMap<ProxyKey, ConnectionAddrs>,
     shutdown_requested: bool,
 }
 
@@ -93,29 +92,6 @@ impl TcpClientProxyServerVisitor {
             shutdown_requested: false,
         })
     }
-
-    /// Stringified tuple client and gateway connection addresses
-    ///
-    /// # Arguments
-    ///
-    /// * `gateway_stream` - TCP stream for gateway proxy TLS client connection
-    ///
-    /// # Returns
-    ///
-    /// A [`ProxyConnAddrs`] object corresponding to connection socket address pair (local, peer).
-    ///
-    fn create_proxy_addrs(gateway_stream: &TcpStream) -> ProxyConnAddrs {
-        let local_addr = match gateway_stream.local_addr() {
-            Ok(addr) => format!("{:?}", addr),
-            Err(_) => "(NA)".to_string(),
-        };
-        let peer_addr = match gateway_stream.peer_addr() {
-            Ok(addr) => format!("{:?}", addr),
-            Err(_) => "(NA)".to_string(),
-        };
-
-        (local_addr, peer_addr)
-    }
 }
 
 impl server_std::ServerVisitor for TcpClientProxyServerVisitor {
@@ -142,14 +118,14 @@ impl server_std::ServerVisitor for TcpClientProxyServerVisitor {
             tls_client_config,
             self.gateway_proxy_host.clone(),
             self.gateway_proxy_port,
+            true,
         );
 
         tls_client.connect()?;
 
-        let gateway_stream = tls_client
-            .get_connection()
-            .as_ref()
-            .unwrap()
+        let tls_client_conn = tls_client.get_connection().as_ref().unwrap();
+
+        let gateway_stream = tls_client_conn
             .get_tcp_stream()
             .try_clone()
             .map_err(|err| {
@@ -177,7 +153,7 @@ impl server_std::ServerVisitor for TcpClientProxyServerVisitor {
             )
         })?;
 
-        let proxy_conn_addrs = TcpClientProxyServerVisitor::create_proxy_addrs(&gateway_stream);
+        let proxy_conn_addrs = tls_client_conn.get_session_addrs().clone();
 
         let open_proxy_request = ProxyExecutorEvent::OpenTcpAndTcpProxy(
             proxy_key.clone(),
@@ -209,7 +185,7 @@ impl server_std::ServerVisitor for TcpClientProxyServerVisitor {
             .insert(proxy_key.clone(), self.service.service_id);
 
         self.proxy_addrs_by_proxy_key
-            .insert(proxy_key, proxy_conn_addrs);
+            .insert(proxy_key, proxy_conn_addrs.clone());
 
         Ok(())
     }
@@ -236,7 +212,7 @@ impl ClientServiceProxyVisitor for TcpClientProxyServerVisitor {
         self.gateway_proxy_port
     }
 
-    fn get_proxy_keys(&self) -> Vec<(String, ProxyConnAddrs)> {
+    fn get_proxy_keys(&self) -> Vec<(String, ConnectionAddrs)> {
         self.proxy_addrs_by_proxy_key
             .iter()
             .map(|(key, addrs)| (key.clone(), addrs.clone()))
@@ -376,23 +352,6 @@ pub mod tests {
         );
 
         assert!(server_visitor.is_ok());
-    }
-
-    #[test]
-    fn tcpsvrproxyvisit_create_proxy_addrs() {
-        let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
-        let connected_tcp_local_addr = connected_tcp_stream.client_stream.0.local_addr().unwrap();
-        let connected_tcp_peer_addr = connected_tcp_stream.client_stream.0.peer_addr().unwrap();
-
-        let expected_proxy_addrs = (
-            format!("{:?}", connected_tcp_local_addr),
-            format!("{:?}", connected_tcp_peer_addr),
-        );
-
-        let proxy_addrs =
-            TcpClientProxyServerVisitor::create_proxy_addrs(&connected_tcp_stream.client_stream.0);
-
-        assert_eq!(proxy_addrs, expected_proxy_addrs);
     }
 
     #[test]

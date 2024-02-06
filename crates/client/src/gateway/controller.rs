@@ -66,16 +66,16 @@ impl ControlPlane {
         })
     }
 
-    #[cfg(not(event))]
+    #[cfg(not(test))]
     fn spawn_signaling_event_loop(
         signal_controller: &Arc<Mutex<signaling::SignalingController>>,
     ) -> Result<(), AppError> {
         signaling::SignalingController::spawn_event_loop(signal_controller, None)
     }
 
-    #[cfg(event)]
+    #[cfg(test)]
     fn spawn_signaling_event_loop(
-        signal_controller: &Arc<Mutex<signaling::SignalingController>>,
+        _signal_controller: &Arc<Mutex<signaling::SignalingController>>,
     ) -> Result<(), AppError> {
         Ok(())
     }
@@ -155,12 +155,12 @@ impl MessageProcessor for ControlPlane {
             };
 
             // Process message by channel type
-            self.channel_processors
-                .get(&gateway_message.channel)
-                .unwrap()
-                .lock()
-                .unwrap()
-                .process_inbound_message(gateway_message)?;
+            if let Some(processor) = self.channel_processors.get(&gateway_message.channel) {
+                processor
+                    .lock()
+                    .unwrap()
+                    .process_inbound_message(gateway_message)?;
+            }
         }
     }
 }
@@ -552,6 +552,44 @@ pub mod tests {
         };
 
         let result = control_plane.process_inbound_messages(mgmt_pdu1);
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn ctlplane_process_inbound_messages_when_non_control_plane_pdu() {
+        let msg_frame_json =
+            r#"{"channel":"TLS","code":200,"message":"msg1","context":null,"data":[1]}"#;
+        let mut tls_pdu: Vec<u8> = vec![];
+        tls_pdu.append(&mut (msg_frame_json.len() as u16).to_be_bytes().to_vec());
+        tls_pdu.append(&mut msg_frame_json.as_bytes().to_vec());
+        let (tls_pdu0, tls_pdu1) = tls_pdu.split_at(tls_pdu.len() / 2);
+
+        let mut mgmt_controller = MockChannelProc::new();
+        mgmt_controller.expect_process_inbound_message().never();
+        let mut signal_controller = MockChannelProc::new();
+        signal_controller.expect_process_inbound_message().never();
+        let mut channel_processors: HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>> =
+            HashMap::new();
+        channel_processors.insert(
+            ControlChannel::Management,
+            Arc::new(Mutex::new(mgmt_controller)),
+        );
+        channel_processors.insert(
+            ControlChannel::Signaling,
+            Arc::new(Mutex::new(signal_controller)),
+        );
+
+        let mut control_plane = ControlPlane {
+            event_channel_sender: Some(mpsc::channel().0),
+            message_outbox: Arc::new(Mutex::new(VecDeque::new())),
+            message_inbox: VecDeque::from(tls_pdu0.to_vec()),
+            channel_processors,
+        };
+
+        let result = control_plane.process_inbound_messages(tls_pdu1);
 
         if let Err(err) = result {
             panic!("Unexpected result: err={:?}", &err);
