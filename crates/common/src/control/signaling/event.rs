@@ -28,12 +28,12 @@ pub struct SignalEvent {
 }
 
 impl SignalEvent {
-    /// Message constructor
+    /// SignalEvent constructor
     ///
     /// # Arguments
     ///
     /// * `code` - Well-known code status for event
-    /// * `message` - (optional) Top-level response message
+    /// * `message` - (optional) Top-level pdu message
     /// * `event_type` - Corresponding message event type
     /// * `data` - (optional) Event data object (generic as is different per event type)
     ///
@@ -225,6 +225,27 @@ mod tests {
         }
     }
 
+    #[test]
+    fn proxyconn_new() {
+        let proxy_conn = ProxyConnection::new(
+            "svc1",
+            vec![
+                vec!["b0".to_string(), "b1".to_string()],
+                vec!["b2".to_string(), "b3".to_string()],
+            ],
+        );
+
+        assert_eq!(proxy_conn.service_name, "svc1");
+        assert_eq!(proxy_conn.binds.len(), 2);
+        assert_eq!(
+            proxy_conn.binds[0],
+            vec!["b0".to_string(), "b1".to_string()]
+        );
+        assert_eq!(
+            proxy_conn.binds[1],
+            vec!["b2".to_string(), "b3".to_string()]
+        );
+    }
     #[test]
     fn proxyconn_from_serde_value_when_invalid() {
         let conn_json = json!({"service_name_INVALID": "svc1", "binds": [["b0","b1"],["b2","b3"]]});

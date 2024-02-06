@@ -14,7 +14,7 @@ use crate::error::AppError;
 use crate::logging::error;
 use crate::net::stream_utils;
 use crate::net::stream_utils::StreamReaderWriter;
-use crate::target;
+use crate::{control, target};
 
 const READ_BLOCK_SIZE: usize = 1024;
 
@@ -76,6 +76,8 @@ pub struct Connection {
     tls_conn_alt: Option<Box<dyn StreamReaderWriter>>,
     /// Corresponding TCP connection stream
     tcp_stream: Option<TcpStream>,
+    /// Session connection addresses
+    session_addrs: control::tls::message::ConnectionAddrs,
     /// Event message channel
     event_channel: (Sender<ConnectionEvent>, Receiver<ConnectionEvent>),
     /// Connection ALPN protocol
@@ -91,6 +93,7 @@ impl Connection {
     ///
     /// * `visitor` - Connection visitor pattern object
     /// * `tls_conn` - Corresponding TLS connection object
+    /// * `session_addrs` - Address pair (client, gateway) used to denote session
     /// * `alpn_protocol` - ALPN protocol for connection
     ///
     /// # Returns
@@ -101,6 +104,7 @@ impl Connection {
     pub fn new(
         mut visitor: Box<dyn ConnectionVisitor>,
         tls_conn: TlsServerConnection,
+        session_addrs: &control::tls::message::ConnectionAddrs,
         alpn_protocol: alpn::Protocol,
     ) -> Result<Self, AppError> {
         let event_channel = mpsc::channel();
@@ -113,6 +117,7 @@ impl Connection {
             tls_conn: Some(tls_conn),
             tls_conn_alt: None,
             tcp_stream: Some(tcp_stream),
+            session_addrs: session_addrs.clone(),
             event_channel,
             alpn_protocol,
             closed: false,
@@ -157,6 +162,16 @@ impl Connection {
     ///
     pub fn get_tcp_stream(&self) -> &TcpStream {
         self.tcp_stream.as_ref().unwrap()
+    }
+
+    /// Connection 'session_addrs' accessor
+    ///
+    /// # Returns
+    ///
+    /// A reference to the TLS session address pair (client, gateway)
+    ///
+    pub fn get_session_addrs(&self) -> &control::tls::message::ConnectionAddrs {
+        &self.session_addrs
     }
 
     /// Connection 'alpn_protocol' accessor
@@ -532,8 +547,10 @@ pub trait ConnectionVisitor: Send {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::net::tls_server::server_std::tests::create_tls_server_config;
     use mockall::{mock, predicate};
     use std::io::ErrorKind;
+    use std::sync::Arc;
 
     // mocks
     // =====
@@ -552,7 +569,7 @@ pub mod tests {
     // utils
     // =====
 
-    pub fn _create_connection(
+    pub fn create_connection(
         visitor: Box<dyn ConnectionVisitor>,
         tls_conn: Option<TlsServerConnection>,
         tls_conn_alt: Option<Box<dyn StreamReaderWriter>>,
@@ -566,6 +583,7 @@ pub mod tests {
             tls_conn,
             tls_conn_alt,
             tcp_stream,
+            session_addrs: ("addr1".to_string(), "addr2".to_string()),
             event_channel,
             alpn_protocol,
             closed,
@@ -581,17 +599,56 @@ pub mod tests {
     }
 
     #[test]
+    fn conn_new() {
+        let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
+        let session_addrs = ("addr1".to_string(), "addr2".to_string());
+
+        let mut visitor = MockConnVisit::new();
+        visitor
+            .expect_on_connected()
+            .with(predicate::always())
+            .return_once(|_| Ok(()));
+
+        let result = Connection::new(
+            Box::new(visitor),
+            StreamOwned::new(
+                rustls::ServerConnection::new(Arc::new(create_tls_server_config().unwrap()))
+                    .unwrap(),
+                stream_utils::clone_std_tcp_stream(&connected_tcp_stream.server_stream.0).unwrap(),
+            ),
+            &session_addrs,
+            alpn::Protocol::ControlPlane,
+        );
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        let conn = result.unwrap();
+
+        assert!(conn.tcp_stream.is_some());
+        assert_eq!(conn.session_addrs, session_addrs);
+        assert_eq!(conn.alpn_protocol, alpn::Protocol::ControlPlane);
+        assert!(!conn.closed);
+    }
+
+    #[test]
     fn conn_accessors_and_mutators() {
         let mut conn = Connection {
             visitor: Box::new(MockConnVisit::new()),
             tls_conn: None,
             tls_conn_alt: Some(Box::new(stream_utils::tests::MockStreamReadWrite::new())),
             tcp_stream: None,
+            session_addrs: ("addr1".to_string(), "addr2".to_string()),
             event_channel: mpsc::channel(),
             alpn_protocol: alpn::Protocol::ControlPlane,
             closed: false,
         };
 
+        assert_eq!(
+            conn.get_session_addrs(),
+            &("addr1".to_string(), "addr2".to_string())
+        );
         assert!(!conn.is_closed());
         conn.set_closed(true);
         assert!(conn.is_closed());
@@ -627,6 +684,7 @@ pub mod tests {
             tcp_stream: Some(
                 stream_utils::clone_std_tcp_stream(&connected_tcp_stream.server_stream.0).unwrap(),
             ),
+            session_addrs: ("addr1".to_string(), "addr2".to_string()),
             event_channel,
             alpn_protocol: alpn::Protocol::ControlPlane,
             closed: false,
@@ -692,6 +750,7 @@ pub mod tests {
             tcp_stream: Some(
                 stream_utils::clone_std_tcp_stream(&connected_tcp_stream.server_stream.0).unwrap(),
             ),
+            session_addrs: ("addr1".to_string(), "addr2".to_string()),
             event_channel,
             alpn_protocol: alpn::Protocol::ControlPlane,
             closed: false,
@@ -739,6 +798,7 @@ pub mod tests {
             tls_conn: None,
             tls_conn_alt: Some(Box::new(stream_rw)),
             tcp_stream: None,
+            session_addrs: ("addr1".to_string(), "addr2".to_string()),
             event_channel,
             alpn_protocol: alpn::Protocol::ControlPlane,
             closed: false,
@@ -795,6 +855,7 @@ pub mod tests {
             tls_conn: None,
             tls_conn_alt: Some(Box::new(stream_rw)),
             tcp_stream: None,
+            session_addrs: ("addr1".to_string(), "addr2".to_string()),
             event_channel,
             alpn_protocol: alpn::Protocol::ControlPlane,
             closed: false,
@@ -849,6 +910,7 @@ pub mod tests {
             tls_conn: None,
             tls_conn_alt: Some(Box::new(stream_rw)),
             tcp_stream: None,
+            session_addrs: ("addr1".to_string(), "addr2".to_string()),
             event_channel,
             alpn_protocol: alpn::Protocol::ControlPlane,
             closed: false,
@@ -901,6 +963,7 @@ pub mod tests {
             tls_conn: None,
             tls_conn_alt: Some(Box::new(stream_rw)),
             tcp_stream: None,
+            session_addrs: ("addr1".to_string(), "addr2".to_string()),
             event_channel,
             alpn_protocol: alpn::Protocol::ControlPlane,
             closed: false,
@@ -950,6 +1013,7 @@ pub mod tests {
             tls_conn: None,
             tls_conn_alt: Some(Box::new(stream_rw)),
             tcp_stream: None,
+            session_addrs: ("addr1".to_string(), "addr2".to_string()),
             event_channel,
             alpn_protocol: alpn::Protocol::ControlPlane,
             closed: false,
@@ -1000,6 +1064,7 @@ pub mod tests {
             tls_conn: None,
             tls_conn_alt: Some(Box::new(stream_rw)),
             tcp_stream: None,
+            session_addrs: ("addr1".to_string(), "addr2".to_string()),
             event_channel,
             alpn_protocol: alpn::Protocol::ControlPlane,
             closed: false,
@@ -1046,6 +1111,7 @@ pub mod tests {
             tls_conn: None,
             tls_conn_alt: Some(Box::new(stream_rw)),
             tcp_stream: None,
+            session_addrs: ("addr1".to_string(), "addr2".to_string()),
             event_channel,
             alpn_protocol: alpn::Protocol::ControlPlane,
             closed: false,
@@ -1090,6 +1156,7 @@ pub mod tests {
             tls_conn: None,
             tls_conn_alt: Some(Box::new(stream_rw)),
             tcp_stream: None,
+            session_addrs: ("addr1".to_string(), "addr2".to_string()),
             event_channel,
             alpn_protocol: alpn::Protocol::ControlPlane,
             closed: false,
@@ -1134,6 +1201,7 @@ pub mod tests {
             tls_conn: None,
             tls_conn_alt: Some(Box::new(stream_rw)),
             tcp_stream: None,
+            session_addrs: ("addr1".to_string(), "addr2".to_string()),
             event_channel,
             alpn_protocol: alpn::Protocol::ControlPlane,
             closed: false,
@@ -1173,6 +1241,7 @@ pub mod tests {
             tls_conn: None,
             tls_conn_alt: Some(Box::new(stream_rw)),
             tcp_stream: None,
+            session_addrs: ("addr1".to_string(), "addr2".to_string()),
             event_channel,
             alpn_protocol: alpn::Protocol::ControlPlane,
             closed: false,
@@ -1217,6 +1286,7 @@ pub mod tests {
             tls_conn: None,
             tls_conn_alt: Some(Box::new(stream_rw)),
             tcp_stream: None,
+            session_addrs: ("addr1".to_string(), "addr2".to_string()),
             event_channel,
             alpn_protocol: alpn::Protocol::ControlPlane,
             closed: false,
@@ -1263,6 +1333,7 @@ pub mod tests {
             tls_conn: None,
             tls_conn_alt: Some(Box::new(stream_rw)),
             tcp_stream: None,
+            session_addrs: ("addr1".to_string(), "addr2".to_string()),
             event_channel,
             alpn_protocol: alpn::Protocol::ControlPlane,
             closed: false,

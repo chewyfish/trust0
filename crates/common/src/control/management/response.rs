@@ -733,6 +733,15 @@ mod tests {
     }
 
     #[test]
+    fn user_new() {
+        let user = User::new(100, "user100", "Active");
+
+        assert_eq!(user.user_id, 100);
+        assert_eq!(user.name, "user100");
+        assert_eq!(user.status, "Active");
+    }
+
+    #[test]
     fn user_try_into_value() {
         let user = User::new(100, "user100", "Active");
 
@@ -746,6 +755,22 @@ mod tests {
             }
             Err(err) => panic!("Unexpected result: err={:?}", err),
         }
+    }
+
+    #[test]
+    fn about_new() {
+        let user = User::new(100, "user100", "Active");
+        let about = About::new(
+            &Some("csubj1".to_string()),
+            &Some("casubj1".to_string()),
+            &Some("cctxt1".to_string()),
+            &Some(user.clone()),
+        );
+
+        assert_eq!(about.cert_subject, Some("csubj1".to_string()));
+        assert_eq!(about.cert_alt_subj, Some("casubj1".to_string()));
+        assert_eq!(about.cert_context, Some("cctxt1".to_string()));
+        assert_eq!(about.user, Some(user));
     }
 
     #[test]
@@ -768,6 +793,22 @@ mod tests {
             }
             Err(err) => panic!("Unexpected result: err={:?}", err),
         }
+    }
+
+    #[test]
+    fn proxy_new() {
+        let svc = Service::new(
+            200,
+            "svc1",
+            &model::service::Transport::TCP,
+            Some("host:9000".to_string()),
+        );
+        let proxy = Proxy::new(&svc, &Some("gwhost1".to_string()), 8400, &Some(8501));
+
+        assert_eq!(proxy.service, svc);
+        assert_eq!(proxy.client_port, Some(8501));
+        assert_eq!(proxy.gateway_host, Some("gwhost1".to_string()));
+        assert_eq!(proxy.gateway_port, 8400);
     }
 
     #[test]
@@ -843,6 +884,21 @@ mod tests {
     }
 
     #[test]
+    fn service_new() {
+        let svc = Service::new(
+            200,
+            "svc1",
+            &model::service::Transport::TCP,
+            Some("host:9000".to_string()),
+        );
+
+        assert_eq!(svc.id, 200);
+        assert_eq!(svc.name, "svc1");
+        assert_eq!(svc.transport, model::service::Transport::TCP);
+        assert_eq!(svc.address, Some("host:9000".to_string()));
+    }
+
+    #[test]
     fn service_from_serde_value_when_invalid() {
         let service_json =
             json!({"id_INVALID": 200, "name": "svc1", "transport": "TCP", "address": "host:9000"});
@@ -915,6 +971,20 @@ mod tests {
     }
 
     #[test]
+    fn logindata_new() {
+        let login_data = LoginData::new(
+            authenticator::AuthnType::ScramSha256,
+            Some(authenticator::AuthnMessage::Payload("data1".to_string())),
+        );
+
+        assert_eq!(login_data.authn_type, authenticator::AuthnType::ScramSha256);
+        assert_eq!(
+            login_data.message,
+            Some(authenticator::AuthnMessage::Payload("data1".to_string()))
+        );
+    }
+
+    #[test]
     fn logindata_from_serde_value_when_invalid() {
         let login_data_json =
             json!({"authnTypeINVALID": "scramSha256", "message": {"payload": "data1"}});
@@ -977,6 +1047,22 @@ mod tests {
             }
             Err(err) => panic!("Unexpected result: err={:?}", err),
         }
+    }
+
+    #[test]
+    fn connection_new() {
+        let conn = Connection::new(
+            "svc1",
+            vec![
+                vec!["b0".to_string(), "b1".to_string()],
+                vec!["b2".to_string(), "b3".to_string()],
+            ],
+        );
+
+        assert_eq!(conn.service_name, "svc1");
+        assert_eq!(conn.binds.len(), 2);
+        assert_eq!(conn.binds[0], vec!["b0".to_string(), "b1".to_string()]);
+        assert_eq!(conn.binds[1], vec!["b2".to_string(), "b3".to_string()]);
     }
 
     #[test]
