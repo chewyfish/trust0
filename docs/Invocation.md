@@ -66,11 +66,6 @@ Options:
           
           [env: CRL_FILE=]
 
-      --protocol-version <PROTOCOL_VERSION>
-          Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead. Provided value is a comma-separated list of versions
-          
-          [env: PROTOCOL_VERSION=]
-
       --cipher-suite <CIPHER_SUITE>
           Disable default cipher suite list, and use <CIPHER_SUITE(s)> instead. Provided value is a comma-separated list of suites
           
@@ -222,11 +217,6 @@ Options:
           Read root certificates from <CA_ROOT_CERT_FILE>
           
           [env: CA_ROOT_CERT_FILE=/home/tmoir/.local/share/Trust0/pki/ca-root.cert.pem]
-
-      --protocol-version <PROTOCOL_VERSION>
-          Disable default TLS version list, and use <PROTOCOL_VERSION(s)> instead. Provided value is a comma-separated list of versions
-          
-          [env: PROTOCOL_VERSION=]
 
       --cipher-suite <CIPHER_SUITE>
           Disable default cipher suite list, and use <CIPHER_SUITE(s)> instead. Provided value is a comma-separated list of suites

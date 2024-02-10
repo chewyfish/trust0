@@ -179,229 +179,264 @@ Password:
 
 #### Create Root CA PKI Resources
 
-The `trust0-admin.sh` script can be used to create valid Trust0 root CA PKI certificate/key resources. Feel free to bring your own CA PKI resources instead of using this utility.
+The common crate has a PKI manager tool (`trust0-pki-manager`), which can be used to create valid Trust0 root CA PKI certificate/key resources.
+
+Additionally, you may use the legacy [Trust0 Admin - Root CA PKI Creator](../resources/README.md#create-root-ca-pki-resources) tool, which uses `openssl` to create the resources (or bring your own Trust0-compliant PKI files).
 
 Here is the usage description:
 
 ```
-Create root CA certificate and key files usable in a Trust0 environment.
+Create root CA certificate and key files usable in a Trust0 environment
 
-Usage: ./trust0-admin.sh rootca-pki-creator --rootca-cert-filepath <ROOTCA_CERT_FILEPATH> --rootca-key-filepath <ROOTCA_KEY_FILEPATH> [--key-algorithm <KEY_ALGORITHM>] [--md-algorithm <MD_ALGORITHM>] [--cert-expiry-days <CERT_EXPIRY_DAYS>] --subj-common-name <SUBJ_COMMON_NAME> [--subj-country <SUBJ_COUNTRY>] [--subj-state <SUBJ_STATE>] [--subj-city <SUBJ_CITY>] [--subj-company <SUBJ_COMPANY>] [--subj-dept <SUBJ_DEPT>]
-
-       ./trust0-admin.sh rootca-pki-creator --help
+Usage: trust0-pki-manager root-ca-pki-creator [OPTIONS] --cert-file <CERT_FILE> --key-file <KEY_FILE> --key-algorithm <KEY_ALGORITHM> --validity-not-after <VALIDITY_NOT_AFTER> --subject-common-name <SUBJECT_COMMON_NAME>
 
 Options:
-  --rootca-cert-filepath <ROOTCA_CERT_FILEPATH>
-          The filepath spec for the rootca certificate file
+  -c, --cert-file <CERT_FILE>
+          Store root CA certificate to <CERT_FILE>. This certificate will be PEM-encoded
+          
+          [env: CERT_FILE=]
 
-  --rootca-key-filepath <ROOTCA_KEY_FILEPATH>
-          The filepath spec for the rootca key file
+  -k, --key-file <KEY_FILE>
+          Store root CA private key to <KEY_FILE>. This will be a PKCS#8 PEM-encoded ECDSA or EdDSA key
+          Note - For ECDSA keys, NIST curves 'P-256' and 'P-384' are supported
+          Note - For EdDSA keys, 'Ed25519' is supported
+          
+          [env: KEY_FILE=]
 
-  --key-algorithm <KEY_ALGORITHM>
-          Private key algorithm (values: 'rsa:<RSA_SIZE>', 'ec:<EC_PARAMS_FILEPATH>', ed:<ED_SCHEME>)
-          RSA_SIZE: valid key bit length for RSA key
-          EC_PARAMS_FILEPATH: File path to an openssl EC params file (curves 'prime256v1' and 'secp384r1' tested)
-          ED_SCHEME: ED scheme to use. (currently only 'ed25519' supported)
-          [default: rsa:4096]
+  -a, --key-algorithm <KEY_ALGORITHM>
+          Private key algorithm
+          
+          [env: KEY_ALGORITHM=]
 
-  --md-algorithm <MD_ALGORITHM>
-          Valid openssl message digest hash algorithm to use where necessary in PKI resource creation
-          [default: 'sha256']
+          Possible values:
+          - ecdsa-p256: Elliptic curve P-256
+          - ecdsa-p384: Elliptic curve P-384
+          - ed25519:    Edwards curve DSA Ed25519
 
-  --cert-expiry-days <CERT_EXPIRY_DAYS>
-          Number of days certificate is valid
-          [default: 365]
+  -s, --serial-number <SERIAL_NUMBER>
+          Serial number, to uniquely identify certificate, up to 20 (hex character 0-F) octets
+          
+          [env: SERIAL_NUMBER=]
 
-  --subj-common-name <SUBJ_COMMON_NAME>
-          The rootca certificate subject common name value
+      --validity-not-after <VALIDITY_NOT_AFTER>
+          Certificate validity end time (RFC3339 format, for example '2021-01-02T03:04:05Z')
+          
+          [env: VALIDITY_NOT_AFTER=]
 
-  --subj-country <SUBJ_COUNTRY>
-          The rootca certificate subject country value
-          [default: NA]
+      --validity-not-before <VALIDITY_NOT_BEFORE>
+          Certificate validity start time (RFC3339 format, for example '2021-01-02T03:04:05Z'). Defaults to yesterday
+          
+          [env: VALIDITY_NOT_BEFORE=]
 
-  --subj-state <SUBJ_STATE>
-          The rootca certificate subject state value
-          [default: NA]
+      --subject-common-name <SUBJECT_COMMON_NAME>
+          Certificate subject common-name
+          
+          [env: SUBJECT_COMMON_NAME=]
 
-  --subj-city <SUBJ_CITY>
-          The rootca certificate subject city value
-          [default: NA]
+      --subject-organization <SUBJECT_ORGANIZATION>
+          Certificate subject organization. Defaults to 'NA'
+          
+          [env: SUBJECT_ORGANIZATION=]
 
-  --subj-company <SUBJ_COMPANY>
-          The rootca certificate subject company value
-          [default: NA]
+      --subject-country <SUBJECT_COUNTRY>
+          Certificate subject country. Defaults to 'NA'
+          
+          [env: SUBJECT_COUNTRY=]
 
-  --subj-dept <SUBJ_DEPT>
-          The rootca certificate subject department value
-          [default: NA]
-
-  --help
-          Show this usage description
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 Here is a simple invocation of this tool:
 
 ```
-<TRUST0_REPO>/resources$ ./trust0-admin.sh rootca-pki-creator --rootca-cert-filepath rootca.crt.pem --rootca-key-filepath rootca.key.pem --subj-common-name rootca123
+<TRUST0_REPO>/target/debug$ ./trust0-pki-manager root-ca-pki-creator --cert-file rootca.crt.pem --key-file rootca.key.pem --key-algorithm ecdsa-p256 --validity-not-after 2025-01-01T00:00:00Z --subject-common-name rootca123 --subject-organization ExampleCA --subject-country US
+
 ```
 
 #### Create Gateway PKI Resources
 
-The `trust0-admin.sh` script can be used to create valid Trust0 gateway PKI certificate/key resources. Feel free to bring your own gateway PKI resources instead of using this utility.
+The common crate has a PKI manager tool (`trust0-pki-manager`), which can be used to create valid Trust0 gateway PKI certificate/key resources.
+
+Additionally, you may use the legacy [Trust0 Admin - Gateway PKI Creator](../resources/README.md#create-gateway-pki-resources) tool, which uses `openssl` to create the resources (or bring your own Trust0-compliant PKI files).
 
 Here is the usage description:
 
 ```
-Create gateway certificate and key files usable in a Trust0 environment.
+Create gateway certificate and key files usable in a Trust0 environment
 
-Usage: ./trust0-admin.sh gateway-pki-creator --gateway-cert-filepath <GATEWAY_CERT_FILEPATH> --gateway-key-filepath <GATEWAY_KEY_FILEPATH> [--key-algorithm <KEY_ALGORITHM>] [--md-algorithm <MD_ALGORITHM>] [--cert-expiry-days <CERT_EXPIRY_DAYS>] --ca-cert-filepath <CA_CERT_FILEPATH> --ca-key-filepath <CA_KEY_FILEPATH> --subj-common-name <SUBJ_COMMON_NAME> [--subj-country <SUBJ_COUNTRY>] [--subj-state <SUBJ_STATE>] [--subj-city <SUBJ_CITY>] [--subj-company <SUBJ_COMPANY>] [--subj-dept <SUBJ_DEPT>] [--san-dns1 <SAN_DNS1>] [--san-dns2 <SAN_DNS2>]
-
-       ./trust0-admin.sh gateway-pki-creator --help
+Usage: trust0-pki-manager gateway-pki-creator [OPTIONS] --cert-file <CERT_FILE> --key-file <KEY_FILE> --rootca-cert-file <ROOTCA_CERT_FILE> --rootca-key-file <ROOTCA_KEY_FILE> --key-algorithm <KEY_ALGORITHM> --validity-not-after <VALIDITY_NOT_AFTER> --subject-common-name <SUBJECT_COMMON_NAME>
 
 Options:
-  --gateway-cert-filepath <GATEWAY_CERT_FILEPATH>
-          The filepath spec for the gateway certificate file
+  -c, --cert-file <CERT_FILE>
+          Store gateway certificate to <CERT_FILE>. This certificate will be PEM-encoded
+          
+          [env: CERT_FILE=]
 
-  --gateway-key-filepath <GATEWAY_KEY_FILEPATH>
-          The filepath spec for the gateway key file
+  -k, --key-file <KEY_FILE>
+          Store gateway private key to <KEY_FILE>. This will be a PKCS#8 PEM-encoded ECDSA or EdDSA key Note - For ECDSA keys, NIST curves 'P-256' and 'P-384' are supported Note - For EdDSA keys, 'Ed25519' is supported
+          
+          [env: KEY_FILE=]
 
-  --ca-cert-filepath <CA_CERT_FILEPATH>
-          The filepath spec for the CA certificate file used to sign the gateway certificate
+      --rootca-cert-file <ROOTCA_CERT_FILE>
+          root CA certificate from <KEY_FILE>. This will be a PKCS#8 PEM-encoded certificate
+          
+          [env: ROOTCA_CERT_FILE=]
 
-  --ca-key-filepath <CA_KEY_FILEPATH>
-          The filepath spec for the CA key file used to sign the gateway certificate
+      --rootca-key-file <ROOTCA_KEY_FILE>
+          root CA private key from <KEY_FILE>. This will be a PKCS#8 PEM-encoded ECDSA or EdDSA key
+          
+          [env: ROOTCA_KEY_FILE=]
 
-  --key-algorithm <KEY_ALGORITHM>
-          Private key algorithm (values: 'rsa:<RSA_SIZE>', 'ec:<EC_PARAMS_FILEPATH>', ed:<ED_SCHEME>)
-          RSA_SIZE: valid key bit length for RSA key
-          EC_PARAMS_FILEPATH: File path to an openssl EC params file (curves 'prime256v1' and 'secp384r1' tested)
-          ED_SCHEME: ED scheme to use. (currently only 'ed25519' supported)
-          [default: rsa:4096]
+  -a, --key-algorithm <KEY_ALGORITHM>
+          Private key algorithm
+          
+          [env: KEY_ALGORITHM=]
 
-  --md-algorithm <MD_ALGORITHM>
-          Valid openssl message digest hash algorithm to use where necessary in PKI resource creation
-          [default: 'sha256']
+          Possible values:
+          - ecdsa-p256: Elliptic curve P-256
+          - ecdsa-p384: Elliptic curve P-384
+          - ed25519:    Edwards curve DSA Ed25519
 
-  --cert-expiry-days <CERT_EXPIRY_DAYS>
-          Number of days certificate is valid
-          [default: 365]
+  -s, --serial-number <SERIAL_NUMBER>
+          Serial number, to uniquely identify certificate, up to 20 (hex character 0-F) octets
+          
+          [env: SERIAL_NUMBER=]
 
-  --subj-common-name <SUBJ_COMMON_NAME>
-          The gateway certificate subject common name value
+      --validity-not-after <VALIDITY_NOT_AFTER>
+          Certificate validity end time (RFC3339 format, for example '2021-01-02T03:04:05Z')
+          
+          [env: VALIDITY_NOT_AFTER=]
 
-  --subj-country <SUBJ_COUNTRY>
-          The gateway certificate subject country value
-          [default: NA]
+      --validity-not-before <VALIDITY_NOT_BEFORE>
+          Certificate validity start time (RFC3339 format, for example '2021-01-02T03:04:05Z'). Defaults to yesterday
+          
+          [env: VALIDITY_NOT_BEFORE=]
 
-  --subj-state <SUBJ_STATE>
-          The gateway certificate subject state value
-          [default: NA]
+      --subject-common-name <SUBJECT_COMMON_NAME>
+          Certificate subject common-name
+          
+          [env: SUBJECT_COMMON_NAME=]
 
-  --subj-city <SUBJ_CITY>
-          The gateway certificate subject city value
-          [default: NA]
+      --subject-organization <SUBJECT_ORGANIZATION>
+          Certificate subject organization. Defaults to 'NA'
+          
+          [env: SUBJECT_ORGANIZATION=]
 
-  --subj-company <SUBJ_COMPANY>
-          The gateway certificate subject company value
-          [default: NA]
+      --subject-country <SUBJECT_COUNTRY>
+          Certificate subject country. Defaults to 'NA'
+          
+          [env: SUBJECT_COUNTRY=]
 
-  --subj-dept <SUBJ_DEPT>
-          The gateway certificate subject department value
-          [default: NA]
+      --san-dns-names <SAN_DNS_NAMES>
+          Certificate subject alternative name DNS value(s). Provided value is a comma-separated list of host names
+          
+          [env: SAN_DNS_NAMES=]
 
-  --san-dns1 <SAN_DNS1>
-          First DNS SAN (Subject Alternative Name) value
-          [default: '127.0.0.1']
-  --san-dns2 <SAN_DNS2>
-          Second DNS SAN (Subject Alternative Name) value
-          [default: '::1']
-
-  --help
-          Show this usage description
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 Here is a simple invocation of this tool (CA certificate and key must be accessible):
 
 ```
-<TRUST0_REPO>/resources$ ./trust0-admin.sh gateway-pki-creator --gateway-cert-filepath gateway.crt.pem --gateway-key-filepath gateway.key.pem --ca-cert-filepath ca.crt.pem --ca-key-filepath ca.key.pem --subj-common-name gateway123 --san-dns1 trust0-gw.example.com --san-dns2 10.0.0.1
+<TRUST0_REPO>/target/debug$ ./trust0-pki-manager gateway-pki-creator --cert-file gateway.crt.pem --key-file gateway.key.pem --rootca-cert-file rootca.crt.pem --rootca-key-file rootca.key.pem --key-algorithm ecdsa-p256 --serial-number 03e7 --validity-not-after 2025-01-01T00:00:00Z --subject-common-name gateway123 --subject-organization Example0 --subject-country US --san-dns-names trust0-gw1.example.com,trust0-gw2.example.com
+
 ```
 
 #### Create Client PKI Resources
 
-The `trust0-admin.sh` script can be used to create valid Trust0 client PKI certificate/key resources. Feel free to bring your own CA PKI resources instead of using this utility (make sure the certificate specifies the correct SAN details).
+The common crate has a PKI manager tool (`trust0-pki-manager`), which can be used to create valid Trust0 client PKI certificate/key resources.
+
+Additionally, you may use the legacy [Trust0 Admin - Client PKI Creator](../resources/README.md#create-client-pki-resources) tool, which uses `openssl` to create the resources (or bring your own Trust0-compliant PKI files).
 
 Here is the usage description:
 
 ```
-Create client certificate and key files usable in a Trust0 environment.
+Create client certificate and key files usable in a Trust0 environment
 
-Usage: ./trust0-admin.sh client-pki-creator --client-cert-filepath <CLIENT_CERT_FILEPATH> --client-key-filepath <CLIENT_KEY_FILEPATH> [--key-algorithm <KEY_ALGORITHM>] [--md-algorithm <MD_ALGORITHM>] [--cert-expiry-days <CERT_EXPIRY_DAYS>] --ca-cert-filepath <CA_CERT_FILEPATH> --ca-key-filepath <CA_KEY_FILEPATH> --subj-common-name <SUBJ_COMMON_NAME> --auth-user-id <AUTH_USER_ID> --auth-platform <AUTH_PLATFORM> [--subj-country <SUBJ_COUNTRY>] [--subj-state <SUBJ_STATE>] [--subj-city <SUBJ_CITY>] [--subj-company <SUBJ_COMPANY>] [--subj-dept <SUBJ_DEPT>]
-
-       ./trust0-admin.sh client-pki-creator --help
+Usage: trust0-pki-manager client-pki-creator [OPTIONS] --cert-file <CERT_FILE> --key-file <KEY_FILE> --rootca-cert-file <ROOTCA_CERT_FILE> --rootca-key-file <ROOTCA_KEY_FILE> --key-algorithm <KEY_ALGORITHM> --validity-not-after <VALIDITY_NOT_AFTER> --subject-common-name <SUBJECT_COMMON_NAME> --auth-user-id <AUTH_USER_ID> --auth-platform <AUTH_PLATFORM>
 
 Options:
-  --client-cert-filepath <CLIENT_CERT_FILEPATH>
-          The filepath spec for the client certificate file
+  -c, --cert-file <CERT_FILE>
+          Store root CA certificate to <CERT_FILE>. This certificate will be PEM-encoded
+          
+          [env: CERT_FILE=]
 
-  --client-key-filepath <CLIENT_KEY_FILEPATH>
-          The filepath spec for the client key file
+  -k, --key-file <KEY_FILE>
+          Store root CA private key to <KEY_FILE>. This will be a PKCS#8 PEM-encoded ECDSA or EdDSA key
+          Note - For ECDSA keys, NIST curves 'P-256' and 'P-384' are supported
+          Note - For EdDSA keys, 'Ed25519' is supported
+          
+          [env: KEY_FILE=]
 
-  --ca-cert-filepath <CA_CERT_FILEPATH>
-          The filepath spec for the CA certificate file used to sign the client certificate
+      --rootca-cert-file <ROOTCA_CERT_FILE>
+          root CA certificate from <KEY_FILE>. This will be a PKCS#8 PEM-encoded certificate
+          
+          [env: ROOTCA_CERT_FILE=]
 
-  --ca-key-filepath <CA_KEY_FILEPATH>
-          The filepath spec for the CA key file used to sign the client certificate
+      --rootca-key-file <ROOTCA_KEY_FILE>
+          root CA private key from <KEY_FILE>. This will be a PKCS#8 PEM-encoded ECDSA or EdDSA key
+          
+          [env: ROOTCA_KEY_FILE=]
 
-  --key-algorithm <KEY_ALGORITHM>
-          Private key algorithm (values: 'rsa:<RSA_SIZE>', 'ec:<EC_PARAMS_FILEPATH>', ed:<ED_SCHEME>)
-          RSA_SIZE: valid key bit length for RSA key
-          EC_PARAMS_FILEPATH: File path to an openssl EC params file (curves 'prime256v1' and 'secp384r1' tested)
-          ED_SCHEME: ED scheme to use. (currently only 'ed25519' supported)
-          [default: 'rsa:4096']
+  -a, --key-algorithm <KEY_ALGORITHM>
+          Private key algorithm
+          
+          [env: KEY_ALGORITHM=]
 
-  --md-algorithm <MD_ALGORITHM>
-          Valid openssl message digest hash algorithm to use where necessary in PKI resource creation
-          [default: 'sha256']
+          Possible values:
+          - ecdsa-p256: Elliptic curve P-256
+          - ecdsa-p384: Elliptic curve P-384
+          - ed25519:    Edwards curve DSA Ed25519
 
-  --cert-expiry-days <CERT_EXPIRY_DAYS>
-          Number of days certificate is valid
-          [default: '365']
+  -s, --serial-number <SERIAL_NUMBER>
+          Serial number, to uniquely identify certificate, up to 20 (hex character 0-F) octets
+          
+          [env: SERIAL_NUMBER=]
 
-  --auth-user-id <AUTH_USER_ID>
+      --validity-not-after <VALIDITY_NOT_AFTER>
+          Certificate validity end time (RFC3339 format, for example '2021-01-02T03:04:05Z')
+          
+          [env: VALIDITY_NOT_AFTER=]
+
+      --validity-not-before <VALIDITY_NOT_BEFORE>
+          Certificate validity start time (RFC3339 format, for example '2021-01-02T03:04:05Z'). Defaults to yesterday
+          
+          [env: VALIDITY_NOT_BEFORE=]
+
+      --subject-common-name <SUBJECT_COMMON_NAME>
+          Certificate subject common-name
+          
+          [env: SUBJECT_COMMON_NAME=]
+
+      --subject-organization <SUBJECT_ORGANIZATION>
+          Certificate subject organization. Defaults to 'NA'
+          
+          [env: SUBJECT_ORGANIZATION=]
+
+      --subject-country <SUBJECT_COUNTRY>
+          Certificate subject country. Defaults to 'NA'
+          
+          [env: SUBJECT_COUNTRY=]
+
+      --auth-user-id <AUTH_USER_ID>
           The Trust0 user account ID value
+          
+          [env: AUTH_USER_ID=]
 
-  --auth-platform <AUTH_PLATFORM>
+      --auth-platform <AUTH_PLATFORM>
           The machine architecture/platform for the device using the client certificate
+          
+          [env: AUTH_PLATFORM=]
 
-  --subj-common-name <SUBJ_COMMON_NAME>
-          The client certificate subject common name value
-
-  --subj-country <SUBJ_COUNTRY>
-          The client certificate subject country value
-          [default: NA]
-
-  --subj-state <SUBJ_STATE>
-          The client certificate subject state value
-          [default: NA]
-
-  --subj-city <SUBJ_CITY>
-          The client certificate subject city value
-          [default: NA]
-
-  --subj-company <SUBJ_COMPANY>
-          The client certificate subject company value
-          [default: NA]
-
-  --subj-dept <SUBJ_DEPT>
-          The client certificate subject department value
-          [default: NA]
-
-  --help
-          Show this usage description
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 Here is a simple invocation of this tool (CA certificate and key must be accessible):
 
 ```
-<TRUST0_REPO>/resources$ ./trust0-admin.sh client-pki-creator --client-cert-filepath client.crt.pem --client-key-filepath client.key.pem --ca-cert-filepath ca.crt.pem --ca-key-filepath ca.key.pem --auth-user-id 123 --auth-platform Linux --subj-common-name user123
+<TRUST0_REPO>/target/debug$ ./trust0-pki-manager client-pki-creator --cert-file client.crt.pem --key-file client.key.pem --rootca-cert-file rootca.crt.pem --rootca-key-file rootca.key.pem --key-algorithm ecdsa-p256 --serial-number 03e8 --validity-not-after 2025-01-01T00:00:00Z --auth-user-id 100 --auth-platform Linux --subject-common-name user123 --subject-organization Example0 --subject-country US
+
 ```
