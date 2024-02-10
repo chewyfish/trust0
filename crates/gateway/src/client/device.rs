@@ -3,19 +3,12 @@ use std::collections::HashMap;
 use anyhow::Result;
 use iter_group::IntoGroup;
 use pki_types::CertificateDer;
-use serde::{Deserialize, Serialize};
 use x509_parser::nom::AsBytes;
 use x509_parser::prelude::*;
 
 use trust0_common::crypto::asn;
+use trust0_common::crypto::ca::CertAccessContext;
 use trust0_common::error::AppError;
-
-#[derive(Serialize, Deserialize, Clone, Default, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct CertAccessContext {
-    pub user_id: u64,
-    pub platform: String,
-}
 
 /// Represents client device
 #[derive(Clone, Default, Debug)]
