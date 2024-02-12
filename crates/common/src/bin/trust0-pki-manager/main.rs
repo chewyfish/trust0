@@ -5,6 +5,7 @@ use std::{fs, process};
 use anyhow::Result;
 use time::{Duration, OffsetDateTime};
 use trust0_common::crypto::ca::{Certificate, KeyAlgorithm};
+use trust0_common::crypto::crl::{CertificateRevocationListBuilder, RevokedCertificateBuilder};
 use trust0_common::error::AppError;
 use trust0_common::file;
 
@@ -25,6 +26,9 @@ fn process_runner(app_config: &AppConfig) -> Result<(), AppError> {
         Command::RootCaPkiCreator { .. } => process_rootca_pki_creator(app_config),
         Command::GatewayPkiCreator { .. } => process_gateway_pki_creator(app_config),
         Command::ClientPkiCreator { .. } => process_client_pki_creator(app_config),
+        Command::CertRevocationListCreator { .. } => {
+            process_certificate_revocation_list_creator(app_config)
+        }
     }
 }
 
@@ -232,6 +236,92 @@ fn process_client_pki_creator(app_config: &AppConfig) -> Result<(), AppError> {
     }
 }
 
+/// Certificate Revocation List (CRL) creator
+///
+/// # Arguments
+///
+/// * `app_config` - Application configuration object
+///
+/// # Returns
+///
+/// A [`Result`] indicating the success/failure of the processing operation.
+///
+fn process_certificate_revocation_list_creator(app_config: &AppConfig) -> Result<(), AppError> {
+    match &app_config.args.command {
+        Command::CertRevocationListCreator {
+            file,
+            rootca_cert_file,
+            rootca_key_file,
+            key_algorithm,
+            crl_number,
+            update_datetime,
+            next_update_datetime,
+            signature_algorithm,
+            cert_revocation_datetime,
+            cert_revocation_reason,
+            cert_revocation_serial_nums,
+        } => {
+            let key_algorithm: KeyAlgorithm = (*key_algorithm).into();
+            let key_identifier: rcgen::KeyIdMethod = match &signature_algorithm {
+                config::KeyAlgorithm::EcdsaP256 => rcgen::KeyIdMethod::Sha256,
+                config::KeyAlgorithm::EcdsaP384 => rcgen::KeyIdMethod::Sha384,
+                config::KeyAlgorithm::Ed25519 => rcgen::KeyIdMethod::Sha512,
+            };
+            let signature_algorithm: KeyAlgorithm = (*signature_algorithm).into();
+
+            // Create revoked certificates list
+            let mut revoked_certs = Vec::new();
+            if cert_revocation_serial_nums.is_some() {
+                for cert_serial_num in cert_revocation_serial_nums.as_ref().unwrap() {
+                    let mut revoked_cert_builder = RevokedCertificateBuilder::new();
+                    revoked_cert_builder
+                        .serial_number(cert_serial_num.as_slice())
+                        .revocation_datetime(cert_revocation_datetime);
+                    if cert_revocation_reason.is_some() {
+                        revoked_cert_builder
+                            .reason_code(&cert_revocation_reason.as_ref().unwrap().into());
+                    }
+                    revoked_certs.push(revoked_cert_builder.build()?);
+                }
+            }
+
+            // Create CRL object
+            let mut crl_builder = CertificateRevocationListBuilder::new();
+            let crl = crl_builder
+                .crl_number(crl_number.as_slice())
+                .update_datetime(update_datetime)
+                .next_update_datetime(next_update_datetime)
+                .signature_algorithm(&signature_algorithm)
+                .key_ident_method(key_identifier)
+                .build(revoked_certs)?;
+
+            let rootca_certificate = load_existing_rootca_certificate(
+                rootca_cert_file,
+                rootca_key_file,
+                &key_algorithm,
+            )?;
+
+            let crl_pem = rootca_certificate.serialize_certificate_revocation_list(&crl)?;
+
+            // Persist CRL file
+
+            create_parent_directories(file)?;
+
+            fs::write(file, crl_pem).map_err(|err| {
+                AppError::GenWithMsgAndErr(
+                    format!(
+                        "Error writing certificate revocation list file: file={}",
+                        file
+                    ),
+                    Box::new(err),
+                )
+            })
+        }
+
+        _ => unimplemented!(),
+    }
+}
+
 /// Create root CA [`Certificate`] based on existing root CA certificate/key pem files and corresponding key algorithm
 ///
 /// # Arguments
@@ -341,14 +431,18 @@ pub fn main() {
 
 /// Unit tests
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
     use crate::config::tests::setup_new_file_path;
-    use crate::config::AppConfigArgs;
-    use crate::config::Command::{ClientPkiCreator, GatewayPkiCreator, RootCaPkiCreator};
+    use crate::config::Command::{
+        CertRevocationListCreator, ClientPkiCreator, GatewayPkiCreator, RootCaPkiCreator,
+    };
+    use crate::config::{AppConfigArgs, RevokedCertReason};
     use std::path::PathBuf;
     use time::macros::datetime;
-    use trust0_common::crypto::file::{verify_certificates, verify_private_key_file};
+    use trust0_common::crypto::file::{
+        verify_certificates, verify_crl_list, verify_private_key_file,
+    };
 
     const CERTFILE_ROOTCAT_PATHPARTS: [&str; 3] = [
         env!("CARGO_MANIFEST_DIR"),
@@ -497,6 +591,48 @@ mod test {
 
         if let Err(err) = key_verify_result {
             panic!("Unexpected private key verification: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn main_process_runner_when_cert_revoke_list_creator_and_all_valid() {
+        let rootca_cert_filepath: PathBuf = CERTFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_cert_filepath_str = rootca_cert_filepath.to_str().unwrap();
+        let rootca_key_filepath: PathBuf = KEYFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_key_filepath_str = rootca_key_filepath.to_str().unwrap();
+        let expected_file = setup_new_file_path("crl.pem");
+
+        let app_config = AppConfig {
+            args: AppConfigArgs {
+                command: CertRevocationListCreator {
+                    file: expected_file.clone(),
+                    rootca_cert_file: rootca_cert_filepath_str.to_string(),
+                    rootca_key_file: rootca_key_filepath_str.to_string(),
+                    crl_number: vec![0x00u8, 0xa1u8, 0xffu8, 0x47u8],
+                    key_algorithm: config::KeyAlgorithm::EcdsaP256,
+                    update_datetime: datetime!(2024-01-01 0:00 UTC),
+                    next_update_datetime: datetime!(2024-02-01 0:00 UTC),
+                    signature_algorithm: config::KeyAlgorithm::EcdsaP256,
+                    cert_revocation_datetime: datetime!(2024-01-01 0:00 UTC),
+                    cert_revocation_reason: Some(RevokedCertReason::KeyCompromise),
+                    cert_revocation_serial_nums: Some(vec![
+                        vec![0x00u8, 0xa1u8, 0xffu8, 0x50u8],
+                        vec![0x00u8, 0xa1u8, 0xffu8, 0x51u8],
+                    ]),
+                },
+            },
+        };
+
+        let result = process_runner(&app_config);
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        let crl_verify_result = verify_crl_list(expected_file.as_str());
+
+        if let Err(err) = crl_verify_result {
+            panic!("Unexpected crl verification: err={:?}", &err);
         }
     }
 }
