@@ -7,6 +7,7 @@
       * [Create Root CA PKI Resources](#create-root-ca-pki-resources)
       * [Create Gateway PKI Resources](#create-gateway-pki-resources)
       * [Create Client PKI Resources](#create-client-pki-resources)
+      * [Create Certificate Revocation List File](#create-certificate-revocation-list-file)
 <!-- TOC -->
 
 ## Trust0 Utilities
@@ -279,12 +280,12 @@ Options:
           [env: KEY_FILE=]
 
       --rootca-cert-file <ROOTCA_CERT_FILE>
-          root CA certificate from <KEY_FILE>. This will be a PKCS#8 PEM-encoded certificate
+          Root CA certificate from <KEY_FILE>. This will be a PKCS#8 PEM-encoded certificate
           
           [env: ROOTCA_CERT_FILE=]
 
       --rootca-key-file <ROOTCA_KEY_FILE>
-          root CA private key from <KEY_FILE>. This will be a PKCS#8 PEM-encoded ECDSA or EdDSA key
+          Root CA private key from <KEY_FILE>. This will be a PKCS#8 PEM-encoded ECDSA or EdDSA key
           
           [env: ROOTCA_KEY_FILE=]
 
@@ -371,12 +372,12 @@ Options:
           [env: KEY_FILE=]
 
       --rootca-cert-file <ROOTCA_CERT_FILE>
-          root CA certificate from <KEY_FILE>. This will be a PKCS#8 PEM-encoded certificate
+          Root CA certificate from <KEY_FILE>. This will be a PKCS#8 PEM-encoded certificate
           
           [env: ROOTCA_CERT_FILE=]
 
       --rootca-key-file <ROOTCA_KEY_FILE>
-          root CA private key from <KEY_FILE>. This will be a PKCS#8 PEM-encoded ECDSA or EdDSA key
+          Root CA private key from <KEY_FILE>. This will be a PKCS#8 PEM-encoded ECDSA or EdDSA key
           
           [env: ROOTCA_KEY_FILE=]
 
@@ -439,4 +440,92 @@ Here is a simple invocation of this tool (CA certificate and key must be accessi
 ```
 <TRUST0_REPO>/target/debug$ ./trust0-pki-manager client-pki-creator --cert-file client.crt.pem --key-file client.key.pem --rootca-cert-file rootca.crt.pem --rootca-key-file rootca.key.pem --key-algorithm ecdsa-p256 --serial-number 03e8 --validity-not-after 2025-01-01T00:00:00Z --auth-user-id 100 --auth-platform Linux --subject-common-name user123 --subject-organization Example0 --subject-country US
 
+```
+
+#### Create Certificate Revocation List File
+
+The common crate has a PKI manager tool (`trust0-pki-manager`), which can be used to create valid Trust0 certificate revocation list files.
+
+Here is the usage description:
+
+```
+Create certificate revocation list file
+
+Usage: trust0-pki-manager cert-revocation-list-creator [OPTIONS] --file <FILE> --rootca-cert-file <ROOTCA_CERT_FILE> --rootca-key-file <ROOTCA_KEY_FILE> --key-algorithm <KEY_ALGORITHM> --crl-number <CRL_NUMBER> --update-datetime <UPDATE_DATETIME> --next-update-datetime <NEXT_UPDATE_DATETIME> --signature-algorithm <SIGNATURE_ALGORITHM> --cert-revocation-datetime <CERT_REVOCATION_DATETIME>
+
+Options:
+  -f, --file <FILE>
+          Store certificate revocation list to <FILE>
+          
+          [env: FILE=]
+
+      --rootca-cert-file <ROOTCA_CERT_FILE>
+          Root CA certificate from <KEY_FILE>. This will be a PKCS#8 PEM-encoded certificate
+          
+          [env: ROOTCA_CERT_FILE=]
+
+      --rootca-key-file <ROOTCA_KEY_FILE>
+          Root CA private key from <KEY_FILE>. This will be a PKCS#8 PEM-encoded ECDSA or EdDSA key
+          
+          [env: ROOTCA_KEY_FILE=]
+
+      --key-algorithm <KEY_ALGORITHM>
+          Private key algorithm
+          
+          [env: KEY_ALGORITHM=]
+
+          Possible values:
+          - ecdsa-p256: Elliptic curve P-256
+          - ecdsa-p384: Elliptic curve P-384
+          - ed25519:    Edwards curve DSA Ed25519
+
+      --crl-number <CRL_NUMBER>
+          CRL number, to uniquely identify certificate revocation list, up to 20 (hex character 0-F) octets
+          
+          [env: CRL_NUMBER=]
+
+      --update-datetime <UPDATE_DATETIME>
+          Issue datetime of this CRL (RFC3339 format, for example '2021-01-02T03:04:05Z')
+          
+          [env: UPDATE_DATETIME=]
+
+      --next-update-datetime <NEXT_UPDATE_DATETIME>
+          Datetime by which the next CRL will be issued (RFC3339 format, for example '2021-01-02T03:04:05Z')
+          
+          [env: NEXT_UPDATE_DATETIME=]
+
+      --signature-algorithm <SIGNATURE_ALGORITHM>
+          Algorithm used by the CRL issuer to sign the certificate list
+          
+          [env: SIGNATURE_ALGORITHM=]
+
+          Possible values:
+          - ecdsa-p256: Elliptic curve P-256
+          - ecdsa-p384: Elliptic curve P-384
+          - ed25519:    Edwards curve DSA Ed25519
+
+      --cert-revocation-datetime <CERT_REVOCATION_DATETIME>
+          Datetime at which the CA processed the revocation (RFC3339 format, for example '2021-01-02T03:04:05Z')
+          
+          [env: CERT_REVOCATION_DATETIME=]
+
+      --cert-revocation-reason <CERT_REVOCATION_REASON>
+          (Optional) Reason for the certificate(s) revocation
+          
+          [env: CERT_REVOCATION_REASON=]
+          [possible values: unspecified, key-compromise, ca-compromise, affiliation-changed, superseded, cessation-of-operation, certificate-hold, remove-from-crl, privilege-withdrawn, aa-compromise]
+
+      --cert-revocation-serial-nums <CERT_REVOCATION_SERIAL_NUMS>
+          List of serial numbers for each revoked certificate (each value is a hex (0-F) string up to 20 characters). Defaults to empty list
+          
+          [env: CERT_REVOCATION_SERIAL_NUMS=]
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+Here is a simple invocation of this tool (CA certificate and key must be accessible) creating a CRL revoking the certificate with serial number `03a8`:
+
+```
+<TRUST0_REPO>/target/debug$ ./trust0-pki-manager cert-revocation-list-creator --file revoked.crl.pem --rootca-cert-file rootca.crt.pem --rootca-key-file rootca.key.pem --key-algorithm ecdsa-p256 --crl-number 0100 --update-datetime 2024-01-01T00:00:00Z --next-update-datetime 2050-01-01T00:00:00Z --signature-algorithm ecdsa-p256 --cert-revocation-datetime 2024-01-01T00:00:00Z --cert-revocation-reason key-compromise --cert-revocation-serial-nums 03e8
 ```
