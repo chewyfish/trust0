@@ -8,10 +8,11 @@ EXAMPLE_DIR=$(dirname "$0")
 
 source "${EXAMPLE_DIR}"/run-configure.sh
 "${GMAKE_CMD}" clean-all
-"${GMAKE_CMD}" gateway-server-pki
-"${GMAKE_CMD}" client-pki
 "${GMAKE_CMD}" trust0-gateway
 "${GMAKE_CMD}" trust0-client
+"${GMAKE_CMD}" root-ca-pki
+"${GMAKE_CMD}" gateway-server-pki
+"${GMAKE_CMD}" client-pki
 
 # Run example in tmux session
 
