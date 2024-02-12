@@ -1,16 +1,10 @@
 use std::io::{BufReader, Read};
-use std::ops::DerefMut;
-use std::path::PathBuf;
-use std::str::FromStr;
-use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fs, io};
 
 use anyhow::Result;
-use pki_types::{CertificateDer, CertificateRevocationListDer, PrivateKeyDer};
+use pki_types::{CertificateDer, PrivateKeyDer};
 
 use crate::error::AppError;
-use crate::file;
 
 /// Verify validity of certificates for the given PEM file
 ///
@@ -164,416 +158,15 @@ pub fn load_crl_list(filepath: &str) -> Result<Vec<u8>, AppError> {
     }
 }
 
-/// Represents a certificate revocation list (CRL) file.
-/// Exposes the ability to re-parse entries when file has changed.
-pub struct CRLFile {
-    /// Path to CRL file
-    path: PathBuf,
-    /// Last modified file time (used to determine reloading)
-    last_mtime: SystemTime,
-    /// Last loaded CRL object list
-    crl_list: Arc<Mutex<Vec<CertificateRevocationListDer<'static>>>>,
-    /// Controls whether reloading loop is active
-    reloading: Arc<Mutex<bool>>,
-}
-
-impl CRLFile {
-    /// CRLFile constructor
-    ///
-    /// # Arguments
-    ///
-    /// * `filepath_str` - CRL file pathspec
-    /// * `crl_list` - CRL objects list (potentially updated on changes)
-    /// * `reloading` - Controls whether reloading loop is active
-    ///
-    /// # Returns
-    ///
-    /// A [`Result`] containing the new constructed [`CRLFile`] object.
-    /// If the file path is not valid, will return an error.
-    ///
-    pub fn new(
-        filepath_str: &str,
-        crl_list: &Arc<Mutex<Vec<CertificateRevocationListDer<'static>>>>,
-        reloading: &Arc<Mutex<bool>>,
-    ) -> Result<Self, AppError> {
-        let filepath = PathBuf::from_str(filepath_str).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!(
-                    "Error converting string to file path: file={}",
-                    filepath_str
-                ),
-                Box::new(err),
-            )
-        })?;
-        Ok(CRLFile {
-            path: filepath,
-            last_mtime: UNIX_EPOCH,
-            crl_list: crl_list.clone(),
-            reloading: reloading.clone(),
-        })
-    }
-
-    /// CRL list accessor
-    ///
-    /// # Returns
-    ///
-    /// The CRL objects list
-    ///
-    pub fn crl_list(&mut self) -> Arc<Mutex<Vec<CertificateRevocationListDer<'static>>>> {
-        self.crl_list.clone()
-    }
-}
-
-impl file::ReloadableFile for CRLFile {
-    fn filepath(&self) -> &PathBuf {
-        &self.path
-    }
-
-    fn last_file_mtime(&mut self) -> &mut SystemTime {
-        &mut self.last_mtime
-    }
-
-    fn on_reload_data(&mut self) -> Result<(), AppError> {
-        match load_crl_list(self.path.to_str().unwrap()) {
-            Ok(list) => {
-                *self.crl_list.lock().unwrap().deref_mut() =
-                    rustls_pemfile::crls(&mut list.as_slice())
-                        .map(|result| {
-                            result.map_err(|err| {
-                                AppError::GenWithMsgAndErr(
-                                    format!("Error reading CRL entries: file={:?}", &self.path),
-                                    Box::new(err),
-                                )
-                            })
-                        })
-                        .collect::<Result<Vec<CertificateRevocationListDer<'static>>, AppError>>(
-                        )?;
-                Ok(())
-            }
-            Err(err) => Err(AppError::GenWithMsgAndErr(
-                format!("Error loading CRL file: file={:?}", &self.path),
-                Box::new(err),
-            )),
-        }
-    }
-
-    fn on_critical_error(&mut self, err: &AppError) {
-        panic!("Error during CRL reload, exiting: err={:?}", &err);
-    }
-
-    fn reloading(&self) -> &Arc<Mutex<bool>> {
-        &self.reloading
-    }
-}
-
-/// CRL unit tests
-#[cfg(test)]
-mod crl_tests {
-
-    use super::*;
-    use crate::file::ReloadableFile;
-    use std::path::PathBuf;
-
-    const _CERTFILE_CLIENT0_PATHPARTS: [&str; 3] = [
-        env!("CARGO_MANIFEST_DIR"),
-        "testdata",
-        "client0.local.crt.pem",
-    ];
-    const CRLFILE_REVOKED_CERTS_0_PATHPARTS: [&str; 3] = [
-        env!("CARGO_MANIFEST_DIR"),
-        "testdata",
-        "revoked-crts-0.crl.pem",
-    ];
-    const CRLFILE_REVOKED_CERTS_0_1_PATHPARTS: [&str; 3] = [
-        env!("CARGO_MANIFEST_DIR"),
-        "testdata",
-        "revoked-crts-0-1.crl.pem",
-    ];
-    const CRLFILE_INVALID_PATHPARTS: [&str; 3] =
-        [env!("CARGO_MANIFEST_DIR"), "testdata", "invalid.crl.pem"];
-    const CRLFILE_MISSING_PATHPARTS: [&str; 3] =
-        [env!("CARGO_MANIFEST_DIR"), "testdata", "NON-EXISTENT.txt"];
-
-    #[test]
-    fn file_verify_crl_list_when_invalid_filepath() {
-        let crl_filepath: PathBuf = CRLFILE_MISSING_PATHPARTS.iter().collect();
-        let crl_filepath_str = crl_filepath.to_str().unwrap();
-
-        let result = verify_crl_list(crl_filepath_str);
-
-        if let Ok(result_crl_filepath_str) = &result {
-            panic!(
-                "Unexpected successful result: path={}",
-                result_crl_filepath_str
-            );
-        }
-    }
-
-    #[test]
-    fn file_verify_crl_list_when_invalid_crlfile() {
-        let crl_filepath: PathBuf = CRLFILE_INVALID_PATHPARTS.iter().collect();
-        let crl_filepath_str = crl_filepath.to_str().unwrap();
-
-        let result = verify_crl_list(crl_filepath_str);
-
-        if let Err(err) = &result {
-            panic!("Unexpected result: err={:?}", &err);
-        }
-    }
-
-    #[test]
-    fn file_verify_crl_list_when_valid_1_entry_crlfile() {
-        let crl_filepath: PathBuf = CRLFILE_REVOKED_CERTS_0_PATHPARTS.iter().collect();
-        let crl_filepath_str = crl_filepath.to_str().unwrap();
-
-        let result = verify_crl_list(crl_filepath_str);
-
-        if let Err(err) = result {
-            panic!(
-                "Unexpected result: path={}, err={:?}",
-                &crl_filepath_str, &err
-            );
-        }
-
-        assert_eq!(result.unwrap().as_str(), crl_filepath_str);
-    }
-
-    #[test]
-    fn file_verify_crl_list_when_valid_2_entry_crlfile() {
-        let crl_filepath: PathBuf = CRLFILE_REVOKED_CERTS_0_1_PATHPARTS.iter().collect();
-        let crl_filepath_str = crl_filepath.to_str().unwrap();
-
-        let result = verify_crl_list(crl_filepath_str);
-
-        if let Err(err) = result {
-            panic!(
-                "Unexpected result: path={}, err={:?}",
-                &crl_filepath_str, &err
-            );
-        }
-
-        assert_eq!(result.unwrap().as_str(), crl_filepath_str);
-    }
-
-    #[test]
-    fn crlfile_new() {
-        let crl_filepath: PathBuf = CRLFILE_REVOKED_CERTS_0_PATHPARTS.iter().collect();
-        let crl_filepath_str = crl_filepath.to_str().unwrap();
-        let crl_list = Arc::new(Mutex::new(vec![]));
-        let reloading = Arc::new(Mutex::new(false));
-
-        let crl_file = CRLFile::new(crl_filepath_str, &crl_list, &reloading).unwrap();
-
-        assert_eq!(
-            crl_file.path.to_str().unwrap().to_string(),
-            crl_filepath_str.to_string()
-        );
-        assert!(crl_file.crl_list.lock().unwrap().is_empty());
-        assert_eq!(*crl_file.reloading.lock().unwrap(), false);
-    }
-
-    #[test]
-    fn crlfile_accessors() {
-        let crl_filepath: PathBuf = CRLFILE_REVOKED_CERTS_0_PATHPARTS.iter().collect();
-        let crl_list = Arc::new(Mutex::new(vec![]));
-        let last_mtime = file::file_mtime(crl_filepath.as_path()).unwrap();
-
-        let mut crl_file = CRLFile {
-            path: crl_filepath.clone(),
-            last_mtime,
-            crl_list: crl_list.clone(),
-            reloading: Arc::new(Mutex::new(true)),
-        };
-
-        assert_eq!(*crl_file.filepath(), crl_filepath);
-        assert_eq!(*crl_file.last_file_mtime(), last_mtime);
-        assert!(*crl_file.reloading().lock().unwrap());
-    }
-
-    #[test]
-    fn crlfile_crl_list_when_invalid_filepath() {
-        let crl_filepath: PathBuf = CRLFILE_MISSING_PATHPARTS.iter().collect();
-        let crl_filepath_str = crl_filepath.to_str().unwrap();
-        let crl_list = Arc::new(Mutex::new(vec![]));
-        let reloading = Arc::new(Mutex::new(false));
-
-        let mut crl_file = CRLFile::new(crl_filepath_str, &crl_list, &reloading).unwrap();
-
-        let reload_result = crl_file.on_reload_data();
-        if let Ok(()) = reload_result {
-            panic!("Unexpected successful reload result");
-        }
-
-        let crl_list = crl_file.crl_list();
-
-        assert!(crl_list.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn crlfile_crl_list_when_invalid_crlfile() {
-        let crl_filepath: PathBuf = CRLFILE_INVALID_PATHPARTS.iter().collect();
-        let crl_filepath_str = crl_filepath.to_str().unwrap();
-        let crl_list = Arc::new(Mutex::new(vec![]));
-        let reloading = Arc::new(Mutex::new(false));
-
-        let mut crl_file = CRLFile::new(crl_filepath_str, &crl_list, &reloading).unwrap();
-
-        let reload_result = crl_file.on_reload_data();
-        if let Ok(()) = reload_result {
-            panic!("Unexpected successful reload result:");
-        }
-
-        let crl_list = crl_file.crl_list();
-
-        assert!(crl_list.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn crlfile_crl_list_when_valid_1_entry_crlfile() {
-        let crl_filepath: PathBuf = CRLFILE_REVOKED_CERTS_0_PATHPARTS.iter().collect();
-        let crl_filepath_str = crl_filepath.to_str().unwrap();
-        let crl_list = Arc::new(Mutex::new(vec![]));
-        let reloading = Arc::new(Mutex::new(false));
-
-        let mut crl_file = CRLFile::new(crl_filepath_str, &crl_list, &reloading).unwrap();
-
-        let reload_result = crl_file.on_reload_data();
-        if let Err(err) = reload_result {
-            panic!("Unexpected reload result: err={:?}", &err);
-        }
-
-        let crl_list = crl_file.crl_list();
-
-        assert!(!crl_list.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn crlfile_crl_list_when_valid_2_entry_crlfile() {
-        let crl_filepath: PathBuf = CRLFILE_REVOKED_CERTS_0_1_PATHPARTS.iter().collect();
-        let crl_filepath_str = crl_filepath.to_str().unwrap();
-        let crl_list = Arc::new(Mutex::new(vec![]));
-        let reloading = Arc::new(Mutex::new(false));
-
-        let mut crl_file = CRLFile::new(crl_filepath_str, &crl_list, &reloading).unwrap();
-
-        let reload_result = crl_file.on_reload_data();
-        if let Err(err) = reload_result {
-            panic!("Unexpected reload result: err={:?}", &err);
-        }
-
-        let crl_list = crl_file.crl_list();
-
-        assert!(!crl_list.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn crlfile_process_reload_when_file_unchanged() {
-        let crl_filepath: PathBuf = CRLFILE_REVOKED_CERTS_0_PATHPARTS.iter().collect();
-        let crl_filepath_str = crl_filepath.to_str().unwrap().to_string();
-        let crl_list = Arc::new(Mutex::new(vec![]));
-        let last_mtime = file::file_mtime(crl_filepath.as_path()).unwrap();
-        let saved_last_mtime = last_mtime.clone();
-
-        let mut crl_file = CRLFile {
-            path: crl_filepath,
-            last_mtime,
-            crl_list: crl_list.clone(),
-            reloading: Arc::new(Mutex::new(true)),
-        };
-
-        let result = crl_file.process_reload();
-        if let Err(err) = result {
-            panic!(
-                "Unexpected processed CRL list reload result: path={}, err={:?}",
-                &crl_filepath_str, &err
-            );
-        }
-        let was_reloaded = result.unwrap();
-
-        assert_eq!(was_reloaded, false);
-        assert_eq!(crl_file.last_mtime, saved_last_mtime);
-        assert!(crl_list.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn crlfile_process_reload_when_file_changed() {
-        let crl_filepath: PathBuf = CRLFILE_REVOKED_CERTS_0_PATHPARTS.iter().collect();
-        let crl_filepath_str = crl_filepath.to_str().unwrap().to_string();
-        let crl_list = Arc::new(Mutex::new(vec![]));
-        let last_mtime = SystemTime::now();
-        let saved_last_mtime = last_mtime.clone();
-
-        let mut crl_file = CRLFile {
-            path: crl_filepath,
-            last_mtime,
-            crl_list: crl_list.clone(),
-            reloading: Arc::new(Mutex::new(true)),
-        };
-
-        let result = crl_file.process_reload();
-        if let Err(err) = result {
-            panic!(
-                "Unexpected processed CRL list reload result: path={}, err={:?}",
-                &crl_filepath_str, &err
-            );
-        }
-        let was_reloaded = result.unwrap();
-
-        assert_eq!(was_reloaded, true);
-        assert_ne!(crl_file.last_mtime, saved_last_mtime);
-        assert!(!crl_list.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    #[should_panic]
-    fn crlfile_process_reload_when_invalid_filepath() {
-        let crl_filepath: PathBuf = CRLFILE_MISSING_PATHPARTS.iter().collect();
-        let crl_list = Arc::new(Mutex::new(vec![]));
-        let last_mtime = SystemTime::now();
-
-        let mut crl_file = CRLFile {
-            path: crl_filepath,
-            last_mtime,
-            crl_list: crl_list.clone(),
-            reloading: Arc::new(Mutex::new(true)),
-        };
-
-        let _ = crl_file.process_reload();
-    }
-
-    #[test]
-    fn crlfile_process_reload_when_invalid_crlfile() {
-        let crl_filepath: PathBuf = CRLFILE_INVALID_PATHPARTS.iter().collect();
-        let crl_filepath_str = crl_filepath.to_str().unwrap().to_string();
-        let crl_list = Arc::new(Mutex::new(vec![]));
-        let last_mtime = SystemTime::now();
-
-        let mut crl_file = CRLFile {
-            path: crl_filepath,
-            last_mtime,
-            crl_list: crl_list.clone(),
-            reloading: Arc::new(Mutex::new(true)),
-        };
-
-        let result = crl_file.process_reload();
-        if let Ok(was_reloaded) = result {
-            panic!(
-                "Unexpected processed CRL list reload result: path={}, reloaded={}",
-                &crl_filepath_str, &was_reloaded
-            );
-        }
-
-        assert!(crl_list.lock().unwrap().is_empty());
-    }
-}
-
 /// Unit tests
 #[cfg(test)]
 mod tests {
 
     use super::*;
+    use crate::crypto::crl;
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
+    use std::path::PathBuf;
     use x509_parser::nom::AsBytes;
 
     const MISSING_FILE: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "MISSING"];
@@ -754,5 +347,70 @@ mod tests {
         if let Ok(key_file) = result {
             panic!("Unexpected successful result: file={:?}", &key_file);
         }
+    }
+
+    #[test]
+    fn file_verify_crl_list_when_invalid_filepath() {
+        let crl_filepath: PathBuf = crl::tests::CRLFILE_MISSING_PATHPARTS.iter().collect();
+        let crl_filepath_str = crl_filepath.to_str().unwrap();
+
+        let result = verify_crl_list(crl_filepath_str);
+
+        if let Ok(result_crl_filepath_str) = &result {
+            panic!(
+                "Unexpected successful result: path={}",
+                result_crl_filepath_str
+            );
+        }
+    }
+
+    #[test]
+    fn file_verify_crl_list_when_invalid_crlfile() {
+        let crl_filepath: PathBuf = crl::tests::CRLFILE_INVALID_PATHPARTS.iter().collect();
+        let crl_filepath_str = crl_filepath.to_str().unwrap();
+
+        let result = verify_crl_list(crl_filepath_str);
+
+        if let Err(err) = &result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn file_verify_crl_list_when_valid_1_entry_crlfile() {
+        let crl_filepath: PathBuf = crl::tests::CRLFILE_REVOKED_CERTS_0_PATHPARTS
+            .iter()
+            .collect();
+        let crl_filepath_str = crl_filepath.to_str().unwrap();
+
+        let result = verify_crl_list(crl_filepath_str);
+
+        if let Err(err) = result {
+            panic!(
+                "Unexpected result: path={}, err={:?}",
+                &crl_filepath_str, &err
+            );
+        }
+
+        assert_eq!(result.unwrap().as_str(), crl_filepath_str);
+    }
+
+    #[test]
+    fn file_verify_crl_list_when_valid_2_entry_crlfile() {
+        let crl_filepath: PathBuf = crl::tests::CRLFILE_REVOKED_CERTS_0_1_PATHPARTS
+            .iter()
+            .collect();
+        let crl_filepath_str = crl_filepath.to_str().unwrap();
+
+        let result = verify_crl_list(crl_filepath_str);
+
+        if let Err(err) = result {
+            panic!(
+                "Unexpected result: path={}, err={:?}",
+                &crl_filepath_str, &err
+            );
+        }
+
+        assert_eq!(result.unwrap().as_str(), crl_filepath_str);
     }
 }

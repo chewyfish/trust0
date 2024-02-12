@@ -19,10 +19,57 @@ pub enum KeyAlgorithm {
 
 impl From<KeyAlgorithm> for ca::KeyAlgorithm {
     fn from(key_algorithm: KeyAlgorithm) -> Self {
+        Self::from(&key_algorithm)
+    }
+}
+
+impl From<&KeyAlgorithm> for ca::KeyAlgorithm {
+    fn from(key_algorithm: &KeyAlgorithm) -> Self {
         match key_algorithm {
             KeyAlgorithm::EcdsaP256 => ca::KeyAlgorithm::EcdsaP256,
             KeyAlgorithm::EcdsaP384 => ca::KeyAlgorithm::EcdsaP384,
             KeyAlgorithm::Ed25519 => ca::KeyAlgorithm::Ed25519,
+        }
+    }
+}
+
+/// Supported certificate revocation reasons
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+pub enum RevokedCertReason {
+    #[default]
+    Unspecified,
+    KeyCompromise,
+    CaCompromise,
+    AffiliationChanged,
+    Superseded,
+    CessationOfOperation,
+    CertificateHold,
+    RemoveFromCrl,
+    PrivilegeWithdrawn,
+    AaCompromise,
+}
+
+impl From<RevokedCertReason> for rcgen::RevocationReason {
+    fn from(revoked_reason: RevokedCertReason) -> Self {
+        Self::from(&revoked_reason)
+    }
+}
+
+impl From<&RevokedCertReason> for rcgen::RevocationReason {
+    fn from(revoked_reason: &RevokedCertReason) -> Self {
+        match revoked_reason {
+            RevokedCertReason::Unspecified => rcgen::RevocationReason::Unspecified,
+            RevokedCertReason::KeyCompromise => rcgen::RevocationReason::KeyCompromise,
+            RevokedCertReason::CaCompromise => rcgen::RevocationReason::CaCompromise,
+            RevokedCertReason::AffiliationChanged => rcgen::RevocationReason::AffiliationChanged,
+            RevokedCertReason::Superseded => rcgen::RevocationReason::Superseded,
+            RevokedCertReason::CessationOfOperation => {
+                rcgen::RevocationReason::CessationOfOperation
+            }
+            RevokedCertReason::CertificateHold => rcgen::RevocationReason::CertificateHold,
+            RevokedCertReason::RemoveFromCrl => rcgen::RevocationReason::RemoveFromCrl,
+            RevokedCertReason::PrivilegeWithdrawn => rcgen::RevocationReason::PrivilegeWithdrawn,
+            RevokedCertReason::AaCompromise => rcgen::RevocationReason::AaCompromise,
         }
     }
 }
@@ -97,11 +144,11 @@ pub enum Command {
         #[arg(required = true, short = 'k', long = "key-file", env)]
         key_file: String,
 
-        /// root CA certificate from <KEY_FILE>. This will be a PKCS#8 PEM-encoded certificate.
+        /// Root CA certificate from <KEY_FILE>. This will be a PKCS#8 PEM-encoded certificate.
         #[arg(required = true, long = "rootca-cert-file", env)]
         rootca_cert_file: String,
 
-        /// root CA private key from <KEY_FILE>. This will be a PKCS#8 PEM-encoded ECDSA or EdDSA key.
+        /// Root CA private key from <KEY_FILE>. This will be a PKCS#8 PEM-encoded ECDSA or EdDSA key.
         #[arg(required = true, long = "rootca-key-file", env)]
         rootca_key_file: String,
 
@@ -156,11 +203,11 @@ pub enum Command {
         )]
         key_file: String,
 
-        /// root CA certificate from <KEY_FILE>. This will be a PKCS#8 PEM-encoded certificate.
+        /// Root CA certificate from <KEY_FILE>. This will be a PKCS#8 PEM-encoded certificate.
         #[arg(required = true, long = "rootca-cert-file", env)]
         rootca_cert_file: String,
 
-        /// root CA private key from <KEY_FILE>. This will be a PKCS#8 PEM-encoded ECDSA or EdDSA key.
+        /// Root CA private key from <KEY_FILE>. This will be a PKCS#8 PEM-encoded ECDSA or EdDSA key.
         #[arg(required = true, long = "rootca-key-file", env)]
         rootca_key_file: String,
 
@@ -199,6 +246,54 @@ pub enum Command {
         /// The machine architecture/platform for the device using the client certificate
         #[arg(required = true, long = "auth-platform", env)]
         auth_platform: String,
+    },
+
+    /// Create certificate revocation list file
+    CertRevocationListCreator {
+        /// Store certificate revocation list to <FILE>
+        #[arg(required = true, short = 'f', long = "file", env)]
+        file: String,
+
+        /// Root CA certificate from <KEY_FILE>. This will be a PKCS#8 PEM-encoded certificate.
+        #[arg(required = true, long = "rootca-cert-file", env)]
+        rootca_cert_file: String,
+
+        /// Root CA private key from <KEY_FILE>. This will be a PKCS#8 PEM-encoded ECDSA or EdDSA key.
+        #[arg(required = true, long = "rootca-key-file", env)]
+        rootca_key_file: String,
+
+        /// Private key algorithm
+        #[arg(required = true, long = "key-algorithm", env)]
+        key_algorithm: KeyAlgorithm,
+
+        /// CRL number, to uniquely identify certificate revocation list, up to 20 (hex character 0-F) octets
+        #[arg(required = true, long = "crl-number", value_parser=crate::config::AppConfig::parse_serial_number, env)]
+        crl_number: std::vec::Vec<u8>,
+
+        /// Issue datetime of this CRL (RFC3339 format, for example '2021-01-02T03:04:05Z')
+        #[arg(required=true, long="update-datetime", value_parser=crate::config::AppConfig::parse_offset_date_time, env)]
+        update_datetime: OffsetDateTime,
+
+        /// Datetime by which the next CRL will be issued (RFC3339 format, for example '2021-01-02T03:04:05Z')
+        #[arg(required=true, long="next-update-datetime", value_parser=crate::config::AppConfig::parse_offset_date_time, env)]
+        next_update_datetime: OffsetDateTime,
+
+        /// Algorithm used by the CRL issuer to sign the certificate list
+        #[arg(required = true, long = "signature-algorithm", env)]
+        signature_algorithm: KeyAlgorithm,
+
+        /// Datetime at which the CA processed the revocation (RFC3339 format, for example '2021-01-02T03:04:05Z')
+        #[arg(required=true, long="cert-revocation-datetime", value_parser=crate::config::AppConfig::parse_offset_date_time, env)]
+        cert_revocation_datetime: OffsetDateTime,
+
+        /// (Optional) Reason for the certificate(s) revocation
+        #[arg(required = false, long = "cert-revocation-reason", env)]
+        cert_revocation_reason: Option<RevokedCertReason>,
+
+        /// List of serial numbers for each revoked certificate (each value is a hex (0-F) string up to 20 characters).
+        /// Defaults to empty list.
+        #[arg(required = false, long = "cert-revocation-serial-nums", value_parser=crate::config::AppConfig::parse_serial_number, value_delimiter = ',', env)]
+        cert_revocation_serial_nums: Option<Vec<std::vec::Vec<u8>>>,
     },
 }
 
@@ -313,6 +408,42 @@ pub mod tests {
         assert_eq!(key_algorithm, ca::KeyAlgorithm::EcdsaP384);
         let key_algorithm: ca::KeyAlgorithm = KeyAlgorithm::Ed25519.into();
         assert_eq!(key_algorithm, ca::KeyAlgorithm::Ed25519);
+    }
+
+    #[test]
+    fn revokecertreason_into_rcgen_revocation_reason() {
+        let revocation_reason: rcgen::RevocationReason = RevokedCertReason::Unspecified.into();
+        assert_eq!(revocation_reason, rcgen::RevocationReason::Unspecified);
+        let revocation_reason: rcgen::RevocationReason = RevokedCertReason::KeyCompromise.into();
+        assert_eq!(revocation_reason, rcgen::RevocationReason::KeyCompromise);
+        let revocation_reason: rcgen::RevocationReason = RevokedCertReason::CaCompromise.into();
+        assert_eq!(revocation_reason, rcgen::RevocationReason::CaCompromise);
+        let revocation_reason: rcgen::RevocationReason =
+            RevokedCertReason::AffiliationChanged.into();
+        assert_eq!(
+            revocation_reason,
+            rcgen::RevocationReason::AffiliationChanged
+        );
+        let revocation_reason: rcgen::RevocationReason = RevokedCertReason::Superseded.into();
+        assert_eq!(revocation_reason, rcgen::RevocationReason::Superseded);
+        let revocation_reason: rcgen::RevocationReason =
+            RevokedCertReason::CessationOfOperation.into();
+        assert_eq!(
+            revocation_reason,
+            rcgen::RevocationReason::CessationOfOperation
+        );
+        let revocation_reason: rcgen::RevocationReason = RevokedCertReason::CertificateHold.into();
+        assert_eq!(revocation_reason, rcgen::RevocationReason::CertificateHold);
+        let revocation_reason: rcgen::RevocationReason = RevokedCertReason::RemoveFromCrl.into();
+        assert_eq!(revocation_reason, rcgen::RevocationReason::RemoveFromCrl);
+        let revocation_reason: rcgen::RevocationReason =
+            RevokedCertReason::PrivilegeWithdrawn.into();
+        assert_eq!(
+            revocation_reason,
+            rcgen::RevocationReason::PrivilegeWithdrawn
+        );
+        let revocation_reason: rcgen::RevocationReason = RevokedCertReason::AaCompromise.into();
+        assert_eq!(revocation_reason, rcgen::RevocationReason::AaCompromise);
     }
 
     #[test]
@@ -585,6 +716,86 @@ pub mod tests {
                 assert_eq!(subject_country.as_ref().unwrap(), "country1");
                 assert_eq!(auth_user_id, &100);
                 assert_eq!(auth_platform, "Linux");
+            }
+
+            _ => panic!("Invalid sub-command parsed: cmd={:?}", &config_args.command),
+        }
+    }
+
+    #[test]
+    fn appcfg_new_when_cert_revoke_list_creator_and_all_supplied() {
+        let expected_crl_file = setup_new_file_path("crl.pem");
+        let expected_rootca_cert_file = setup_new_file_path("rootca.crt.pem");
+        let expected_rootca_key_file = setup_new_file_path("rootca.key.pem");
+
+        let result = AppConfigArgs::try_parse_from([
+            "test",
+            "cert-revocation-list-creator",
+            "--file",
+            &expected_crl_file,
+            "--rootca-cert-file",
+            &expected_rootca_cert_file,
+            "--rootca-key-file",
+            &expected_rootca_key_file,
+            "--key-algorithm",
+            "ecdsa-p256",
+            "--crl-number",
+            "00a1ff47",
+            "--update-datetime",
+            "2024-01-01T00:00:00Z",
+            "--next-update-datetime",
+            "2024-02-01T00:00:00Z",
+            "--signature-algorithm",
+            "ecdsa-p256",
+            "--cert-revocation-datetime",
+            "2024-01-01T00:00:00Z",
+            "--cert-revocation-reason",
+            "key-compromise",
+            "--cert-revocation-serial-nums",
+            "00a1ff50,00a1ff51",
+        ]);
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+        let config_args = result.unwrap();
+
+        match &config_args.command {
+            Command::CertRevocationListCreator {
+                file,
+                rootca_cert_file,
+                rootca_key_file,
+                key_algorithm,
+                crl_number,
+                update_datetime,
+                next_update_datetime,
+                signature_algorithm,
+                cert_revocation_datetime,
+                cert_revocation_reason,
+                cert_revocation_serial_nums,
+            } => {
+                assert_eq!(file, &expected_crl_file);
+                assert_eq!(rootca_key_file, &expected_rootca_key_file);
+                assert_eq!(rootca_cert_file, &expected_rootca_cert_file);
+                assert_eq!(key_algorithm, &KeyAlgorithm::EcdsaP256);
+                assert_eq!(crl_number, &vec![0x00u8, 0xa1u8, 0xffu8, 0x47u8]);
+                assert_eq!(update_datetime, &datetime!(2024-01-01 0:00 UTC));
+                assert_eq!(next_update_datetime, &datetime!(2024-02-01 0:00 UTC));
+                assert_eq!(signature_algorithm, &KeyAlgorithm::EcdsaP256);
+                assert_eq!(cert_revocation_datetime, &datetime!(2024-01-01 0:00 UTC));
+                assert!(cert_revocation_reason.is_some());
+                assert_eq!(
+                    cert_revocation_reason.as_ref().unwrap(),
+                    &RevokedCertReason::KeyCompromise
+                );
+                assert!(cert_revocation_serial_nums.is_some());
+                assert_eq!(
+                    cert_revocation_serial_nums.as_ref().unwrap(),
+                    &vec![
+                        vec![0x00u8, 0xa1u8, 0xffu8, 0x50u8],
+                        vec![0x00u8, 0xa1u8, 0xffu8, 0x51u8],
+                    ]
+                );
             }
 
             _ => panic!("Invalid sub-command parsed: cmd={:?}", &config_args.command),

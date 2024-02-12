@@ -24,7 +24,7 @@ use rustls::server::danger::ClientCertVerifier;
 use rustls::server::WebPkiClientVerifier;
 use trust0_common::authn::authenticator::AuthnType;
 use trust0_common::crypto::alpn;
-use trust0_common::crypto::file::CRLFile;
+use trust0_common::crypto::crl::CRLFile;
 use trust0_common::crypto::file::{load_certificates, load_private_key};
 use trust0_common::error::AppError;
 use trust0_common::file::ReloadableFile;

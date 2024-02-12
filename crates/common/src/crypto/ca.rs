@@ -64,7 +64,7 @@ impl KeyAlgorithm {
     ///
     /// [`rcgen::SignatureAlgorithm`] object for [`Self`]
     ///
-    fn signature_algorithm(&self) -> &'static rcgen::SignatureAlgorithm {
+    pub fn signature_algorithm(&self) -> &'static rcgen::SignatureAlgorithm {
         match self {
             KeyAlgorithm::EcdsaP256 => &rcgen::PKCS_ECDSA_P256_SHA256,
             KeyAlgorithm::EcdsaP384 => &rcgen::PKCS_ECDSA_P384_SHA384,
@@ -200,7 +200,7 @@ impl Certificate {
         }
     }
 
-    /// Create a PEM string pertaining to the certificate's key pait
+    /// Create a PEM string pertaining to the certificate's key pair
     ///
     /// # Returns
     ///
@@ -208,6 +208,29 @@ impl Certificate {
     ///
     pub fn serialize_private_key(&self) -> String {
         self.certificate.serialize_private_key_pem()
+    }
+
+    /// Create a PEM string pertaining to the signed certificate revocation list (CRL) object
+    ///
+    /// # Arguments
+    ///
+    /// * `crl` - A [`rcgen::CertificateRevocationList`] object to serialize
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the generated CRL PEM string.
+    ///
+    pub fn serialize_certificate_revocation_list(
+        &self,
+        crl: &rcgen::CertificateRevocationList,
+    ) -> Result<String, AppError> {
+        crl.serialize_pem_with_signer(&self.certificate)
+            .map_err(|err| {
+                AppError::GenWithMsgAndErr(
+                    "Error serializing certificate revocation list".to_string(),
+                    Box::new(err),
+                )
+            })
     }
 }
 
@@ -240,10 +263,6 @@ impl CommonCertificateBuilder {
     ///
     /// * `serial_number` - Serial number (to uniquely identify certificate, up to 20 octets)
     ///
-    /// # Returns
-    ///
-    /// [`Self`] for further function invocation.
-    ///
     fn serial_number(&mut self, serial_number: &[u8]) {
         self.serial_number = Some(serial_number.to_vec());
     }
@@ -253,10 +272,6 @@ impl CommonCertificateBuilder {
     /// # Arguments
     ///
     /// * `key_algorithm` - Public key algorithm
-    ///
-    /// # Returns
-    ///
-    /// [`Self`] for further function invocation.
     ///
     fn key_algorithm(&mut self, key_algorithm: &KeyAlgorithm) {
         self.key_algorithm = Some(key_algorithm.clone());
@@ -268,10 +283,6 @@ impl CommonCertificateBuilder {
     ///
     /// * `key_pair_pem` - key pair PEM string
     ///
-    /// # Returns
-    ///
-    /// [`Self`] for further function invocation.
-    ///
     fn key_pair_pem(&mut self, key_pair_pem: &str) {
         self.key_pair_pem = Some(key_pair_pem.to_string());
     }
@@ -281,10 +292,6 @@ impl CommonCertificateBuilder {
     /// # Arguments
     ///
     /// * `certificate_pem` - certificate PEM string
-    ///
-    /// # Returns
-    ///
-    /// [`Self`] for further function invocation.
     ///
     fn certificate_pem(&mut self, certificate_pem: &str) {
         self.certificate_pem = Some(certificate_pem.to_string());
@@ -296,10 +303,6 @@ impl CommonCertificateBuilder {
     ///
     /// * `not_after` - Validity not-after datetime
     ///
-    /// # Returns
-    ///
-    /// [`Self`] for further function invocation.
-    ///
     fn validity_not_after(&mut self, not_after: &OffsetDateTime) {
         self.validity_not_after = Some(*not_after);
     }
@@ -309,10 +312,6 @@ impl CommonCertificateBuilder {
     /// # Arguments
     ///
     /// * `not_before` - Validity not-before datetime
-    ///
-    /// # Returns
-    ///
-    /// [`Self`] for further function invocation.
     ///
     fn validity_not_before(&mut self, not_before: &OffsetDateTime) {
         self.validity_not_before = Some(*not_before);
@@ -324,10 +323,6 @@ impl CommonCertificateBuilder {
     ///
     /// * `common_name` - Distinguished name - common name
     ///
-    /// # Returns
-    ///
-    /// [`Self`] for further function invocation.
-    ///
     fn dn_common_name(&mut self, common_name: &str) {
         self.dn_common_name = Some(common_name.to_string());
     }
@@ -338,10 +333,6 @@ impl CommonCertificateBuilder {
     ///
     /// * `country_name` - Distinguished name - country name
     ///
-    /// # Returns
-    ///
-    /// [`Self`] for further function invocation.
-    ///
     fn dn_country(&mut self, country_name: &str) {
         self.dn_country = country_name.to_string();
     }
@@ -351,10 +342,6 @@ impl CommonCertificateBuilder {
     /// # Arguments
     ///
     /// * `organization_name` - Distinguished name - organization name
-    ///
-    /// # Returns
-    ///
-    /// [`Self`] for further function invocation.
     ///
     fn dn_organization(&mut self, organization_name: &str) {
         self.dn_organization = organization_name.to_string();
@@ -374,11 +361,11 @@ impl CommonCertificateBuilder {
     fn build(&self, errors: &mut Vec<String>) -> Option<(KeyAlgorithm, rcgen::CertificateParams)> {
         let mut cert_params = None;
 
+        // Validation
+
         if self.key_algorithm.is_none() {
             errors.push(VALIDATION_MSG_KEY_ALGORITHM_REQUIRED.to_string());
         }
-
-        // Validation
 
         if self.key_pair_pem.is_some() || self.certificate_pem.is_some() {
             let mut key_pair = None;
@@ -1086,9 +1073,11 @@ impl ClientCertificateBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto::crl;
     use std::collections::HashSet;
     use std::fs;
     use std::path::PathBuf;
+    use time::macros::datetime;
     use time::Duration;
 
     const KEYFILE_ROOTCAT_PATHPARTS: [&str; 3] = [
@@ -1317,6 +1306,31 @@ mod tests {
         let client_certificate = create_client_certificate(&KeyAlgorithm::EcdsaP384);
 
         let _ = client_certificate.serialize_private_key();
+    }
+
+    #[test]
+    fn cert_serialize_certificate_revocation_list() {
+        let rootca_certificate = load_rootca_certificate(&KeyAlgorithm::EcdsaP256);
+        let crl = crl::CertificateRevocationListBuilder::new()
+            .crl_number(&[0u8, 1u8])
+            .update_datetime(&datetime!(2024-01-01 0:00 UTC))
+            .next_update_datetime(&datetime!(2024-02-01 0:00 UTC))
+            .signature_algorithm(&KeyAlgorithm::EcdsaP256)
+            .key_ident_method(rcgen::KeyIdMethod::Sha256)
+            .build(vec![crl::RevokedCertificateBuilder::new()
+                .serial_number(&[2u8, 3u8])
+                .revocation_datetime(&datetime!(2024-01-10 0:00 UTC))
+                .reason_code(&rcgen::RevocationReason::KeyCompromise)
+                .invalidity_datetime(&datetime!(2024-02-10 0:00 UTC))
+                .build()
+                .unwrap()])
+            .unwrap();
+
+        let result = rootca_certificate.serialize_certificate_revocation_list(&crl);
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
     }
 
     #[test]
