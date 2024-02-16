@@ -13,6 +13,7 @@
       * [mTLS Authentication](#mtls-authentication)
       * [Secondary Authentication](#secondary-authentication)
       * [RBAC Authorization](#rbac-authorization)
+      * [Certificate Authority](#certificate-authority)
       * [Certificate Revocation](#certificate-revocation)
     * [Database](#database)
       * [User Table](#user-table)
@@ -86,11 +87,13 @@ A bidirectional channel will be established between the client and gateway to as
 
 Here is the current list of signaling events in use:
 
-| Event Type        | Direction        | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-|-------------------|------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Proxy Connections | `T0C` <--> `T0G` | <p>This event is sent bidirectionally every `6 secs`. It contains the current list of service<br>proxy connections' bind address pairs (as known by the gateway (1)) for the<br>respective user session.</p><p>Each side will keep track of missing binds as a consecutive count. When that reaches `5`,<br>those corresponding missing connection(s) will be shut down.</p><p>Additionally, each side will also keep track of consecutive missing `Proxy Connections`<br>signal events. when that reaches `5`, the entire user session(control plane, service<br>proxy connections) will be shut down.</p><p>(1) - Upon TLS connection establishment an initial message, detailing the connection bind<br>addresses, is sent from the gateway to the client. This address pair will be used in<br>coordinating the active state for the respective connection. |
+| Event Type          | Direction        | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+|---------------------|------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Proxy Connections   | `T0C` <--> `T0G` | <p>This event is sent bidirectionally every `6 secs`. It contains the current list of service<br>proxy connections' bind address pairs (as known by the gateway (1)) for the<br>respective user session.</p><p>Each side will keep track of missing binds as a consecutive count. When that reaches `5`,<br>those corresponding missing connection(s) will be shut down.</p><p>Additionally, each side will also keep track of consecutive missing `Proxy Connections`<br>signal events. when that reaches `5`, the entire user session(control plane, service<br>proxy connections) will be shut down.</p><p>(1) - Upon TLS connection establishment an initial message, detailing the connection bind<br>addresses, is sent from the gateway to the client. This address pair will be used in<br>coordinating the active state for the respective connection. |
+| Certificate Reissue | `T0C` <--- `T0G` | <p>If the client certificate is expiring in the near future, the gateway (if CA is enabled) will<br>send a new certificate and public/private key pair via this event. The client will backup<br>the current PKI resources and save these new files (which will be used on client restart).</p><p>Refer to [Certificate Authority](#certificate-authority) for more information about its design and implementation.</p>                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 
+The Trust0 Gateway can enable a certificate authority (CA) to send clients new certificates, when their existing certificates are expiring.
 ### Service Proxy
 
 Regarding the [Management Channel](#management-channel) REPL shell, `start` is a key command which is used to open up new service proxies.
@@ -165,6 +168,33 @@ The SCRAM SHA256 authentication will use the user credentials stored in the user
 #### RBAC Authorization
 
 The gateway can enforce the appropriate authorization for their session for all service proxy connection requests. It will validate the service and whether the user has appropriate access for the service. It does this by looking up the appropriate records in the [Service Table](#service-table) and [Access Table](#access-table). The access table can contain entries for service accessibility either directly by user ID or indirectly by role ID. User records can be associated to roles (refer to [User Table](#user-table) for how that is specified).
+
+#### Certificate Authority
+
+The gateway can be enabled as a certificate authority (CA) to be able to reissue new client certificate and public/private key pairs, when necessary. Currently, an upcoming certificate expiry is the only triggering event for this re-issuance event. Furthermore, the client must be fully authenticated. That is, using a valid client certificate and must have successfully passed secondary authentication (if enabled). Refer to the other sections in [Client Auth](#client-auth).
+
+The CA will use a `Certificate Reissue` [Signaling Channel](#signaling-channel) event to send the PKI resources. The client will automatically store these PEM files in the same location as is used by the [Trust0 Client Install](./Utilities.md#trust0-client-installer). This location is a well-known installation path for the particular client platform. If the certificate and/or key pair PEM files already exist in this location, they will be backed up to a well-known path location (again, platform-dependent).
+
+The following shows the client management shell message displayed upon receiving new PKI resources (Example came from a Linux environment, <USER_HOME> would be the actual home path):
+
+```
+Received new client certificate, key pair PEMs from gateway CA
+Backed up certificate file: path="<USER_HOME>/.cache/Trust0/pki/trust0-client.cert.pem.1708116423"
+Backed up key file: path="<USER_HOME>/.cache/Trust0/pki/trust0-client.key.pem.1708116423"
+Created new certificate file: path="<USER_HOME>/.local/share/Trust0/pki/trust0-client.cert.pem"
+Created new key pair file: path="<USER_HOME>/.local/share/Trust0/pki/trust0-client.key.pem"
+New certificate will be used upon client restart
+```
+
+Refer to [Trust0 Gateway](./Invocation.md#trust0-gateway) invocation documentation on enabling the CA in the gateway. Briefly, the following arguments are pertinent for CA enablement:
+
+| Argument                     | Description                                                                                                                                          |
+|------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
+| ca-enabled                   | Must be toggled to enable CA                                                                                                                         |
+| auth-key-file                | The root CA private key, needed in signing new certificates                                                                                          |
+| ca-key-algorithm             | The public key algorithm used in key pair creation                                                                                                   |
+| ca-validity-period-days      | New certificates use a validity period of: `not-before` today and `not-after` today plus the number of days of this argument value                   |
+| ca-reissuance-threshold-days | Only reissue certificates where current time is after the current certificate validity `not-after` minus the number of days of this argument's value |
 
 #### Certificate Revocation
 

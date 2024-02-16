@@ -43,11 +43,12 @@ impl ControlPlane {
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
         let management_controller = Arc::new(Mutex::new(management::ManagementController::new(
-            app_config,
+            app_config.clone(),
             service_mgr,
             message_outbox.clone(),
         )));
         let signaling_controller = Arc::new(Mutex::new(signaling::SignalingController::new(
+            &app_config,
             service_mgr,
             message_outbox.clone(),
         )));

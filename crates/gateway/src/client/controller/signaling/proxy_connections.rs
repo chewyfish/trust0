@@ -7,7 +7,8 @@ use serde_json::Value::Array;
 
 use crate::client::controller::signaling::SignalingEventHandler;
 use crate::service::manager::ServiceMgr;
-use trust0_common::control::signaling::event::{EventType, ProxyConnection, SignalEvent};
+use trust0_common::control::signaling::event::{EventType, SignalEvent};
+use trust0_common::control::signaling::heartbeat::ProxyConnectionEvent;
 use trust0_common::control::tls::message::ConnectionAddrs;
 use trust0_common::error::AppError;
 use trust0_common::error::AppError::General;
@@ -47,14 +48,14 @@ impl ProxyConnectionsProcessor {
     /// A newly constructed [`ProxyConnectionsProcessor`] object.
     ///
     pub fn new(
-        service_mgr: Arc<Mutex<dyn ServiceMgr>>,
-        user: model::user::User,
-        message_outbox: Arc<Mutex<VecDeque<Vec<u8>>>>,
+        service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
+        user: &model::user::User,
+        message_outbox: &Arc<Mutex<VecDeque<Vec<u8>>>>,
     ) -> Self {
         Self {
-            service_mgr,
-            user,
-            message_outbox,
+            service_mgr: service_mgr.clone(),
+            user: user.clone(),
+            message_outbox: message_outbox.clone(),
             missing_connection_binds: HashMap::new(),
             missing_signal_probes: 0,
         }
@@ -113,7 +114,7 @@ impl ProxyConnectionsProcessor {
         let client_conn_addrs: HashSet<ConnectionAddrs> = match signal_event.data {
             None => HashSet::new(),
             Some(data) => HashSet::from_iter(
-                ProxyConnection::from_serde_value(&data)?
+                ProxyConnectionEvent::from_serde_value(&data)?
                     .iter()
                     .flat_map(|proxy_conn| proxy_conn.binds.clone())
                     .map(|conn_addrs| {
@@ -220,7 +221,7 @@ impl ProxyConnectionsProcessor {
 
         for (service_name, service_proxy_keys) in proxy_keys.values() {
             proxy_connections.push(
-                ProxyConnection::new(
+                ProxyConnectionEvent::new(
                     service_name.as_str(),
                     service_proxy_keys
                         .iter()
@@ -250,7 +251,11 @@ impl ProxyConnectionsProcessor {
 unsafe impl Send for ProxyConnectionsProcessor {}
 
 impl SignalingEventHandler for ProxyConnectionsProcessor {
-    fn on_loop_cycle(&mut self, signal_events: VecDeque<SignalEvent>) -> Result<(), AppError> {
+    fn on_loop_cycle(
+        &mut self,
+        signal_events: VecDeque<SignalEvent>,
+        _is_authenticated: bool,
+    ) -> Result<(), AppError> {
         let proxy_keys = self.current_user_proxy_keys();
         let service_mgr = self.service_mgr.clone();
 
@@ -291,7 +296,6 @@ pub mod tests {
     use crate::service::proxy::proxy_base::tests::MockGwSvcProxyVisitor;
     use mockall::predicate;
     use serde_json::json;
-    use trust0_common::control::pdu;
     use trust0_common::control::pdu::ControlChannel;
 
     // utils
@@ -315,10 +319,11 @@ pub mod tests {
 
     #[test]
     fn proxyconnproc_new() {
+        let service_mgr: Arc<Mutex<dyn ServiceMgr>> = Arc::new(Mutex::new(MockSvcMgr::new()));
         let processor = ProxyConnectionsProcessor::new(
-            Arc::new(Mutex::new(MockSvcMgr::new())),
-            create_user(),
-            Arc::new(Mutex::new(VecDeque::new())),
+            &service_mgr,
+            &create_user(),
+            &Arc::new(Mutex::new(VecDeque::new())),
         );
 
         assert!(processor.missing_connection_binds.is_empty());
@@ -433,17 +438,20 @@ pub mod tests {
             ),
         );
 
-        let result = processor.on_loop_cycle(VecDeque::from(vec![SignalEvent::new(
-            control::pdu::CODE_OK,
-            &None,
-            &EventType::ProxyConnections,
-            &Some(json!([
-                {
-                    "service_name": "Service200",
-                    "binds": [["addr1","addr2"]]
-                },
-            ])),
-        )]));
+        let result = processor.on_loop_cycle(
+            VecDeque::from(vec![SignalEvent::new(
+                control::pdu::CODE_OK,
+                &None,
+                &EventType::ProxyConnections,
+                &Some(json!([
+                    {
+                        "serviceName": "Service200",
+                        "binds": [["addr1","addr2"]]
+                    },
+                ])),
+            )]),
+            true,
+        );
 
         if let Err(err) = result {
             panic!("Unexpected result: err={:?}", &err);
@@ -473,20 +481,20 @@ pub mod tests {
                 .unwrap()
                 .clone(),
         );
-        let message_result = pdu::MessageFrame::consume_next_pdu(&mut message);
+        let message_result = control::pdu::MessageFrame::consume_next_pdu(&mut message);
         assert!(message_result.is_ok());
         let message_frame = message_result.unwrap();
         assert!(message_frame.is_some());
         assert_eq!(
             message_frame.unwrap(),
-            pdu::MessageFrame::new(
+            control::pdu::MessageFrame::new(
                 ControlChannel::Signaling,
-                pdu::CODE_OK,
+                control::pdu::CODE_OK,
                 &None,
                 &Some(serde_json::to_value(EventType::ProxyConnections).unwrap()),
                 &Some(json!([
                     {
-                        "service_name": "Service200",
+                        "serviceName": "Service200",
                         "binds": [
                             ["addr1", "addr2"],
                             ["addr3", "addr4"],
@@ -545,7 +553,7 @@ pub mod tests {
         .unwrap();
         processor.missing_signal_probes = LIVENESS_MAX_CONSECUTIVE_MISSING_SIGNAL_PROBES - 1;
 
-        let result = processor.on_loop_cycle(VecDeque::new());
+        let result = processor.on_loop_cycle(VecDeque::new(), true);
 
         if let Ok(()) = result {
             panic!("Unexpected successful result");

@@ -6,8 +6,9 @@
       * [Linux](#linux)
       * [macOS](#macos)
       * [Windows](#windows)
-    * [Example - Chat TCP service](#example---chat-tcp-service)
-    * [Example - Echo UDP service](#example---echo-udp-service)
+    * [Example - Chat TCP Service](#example---chat-tcp-service)
+    * [Example - Echo UDP Service](#example---echo-udp-service)
+    * [Example - Reissue Certificate](#example---reissue-certificate)
     * [Example - Revoke Certificate](#example---revoke-certificate)
 <!-- TOC -->
 
@@ -17,9 +18,10 @@
 
 The following examples are provided in the `examples` directory:
 
-* [Chat TCP](#example---chat-tcp-service)
-* [Echo UDP](#example---echo-udp-service)
-* [Revoke Cert](#example---revoke-certificate)
+* [Chat TCP Service](#example---chat-tcp-service)
+* [Echo UDP Service](#example---echo-udp-service)
+* [Reissue Certificate](#example---reissue-certificate)
+* [Revoke Certificate](#example---revoke-certificate)
 
 ### Pre-requisites
 
@@ -73,7 +75,7 @@ Note - The GNU make command is `make` and not `gmake`. Either add `gmake` as a s
 
 Additionally, [NMAP](https://nmap.org/download#windows) was installed (not available as a `MSYS2` package as of the time of this writing).
 
-### Example - Chat TCP service
+### Example - Chat TCP Service
 
 In the `example` directory, you can run an example, which lets clients access a "chat" (TCP-based) service.
 
@@ -101,7 +103,7 @@ Follow the instructions in step order. The following shows a screencast (using a
 
 [![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-chat-tcp.png)](https://asciinema.org/a/626132)
 
-### Example - Echo UDP service
+### Example - Echo UDP Service
 
 In the `example` directory, you can run an example, which lets clients access an "echo" (UDP-based) service. The service will merely return the same text data, which it was given by a client.
 
@@ -127,6 +129,34 @@ You will be presented with a tmux session w/multiple panes, which represent:
 Follow the instructions in step order. The following shows a screencast (using asciinema) of a echo session:
 
 [![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-echo-udp.png)](https://asciinema.org/a/626134)
+
+### Example - Reissue Certificate
+
+In the `example` directory, you can run an example, which shows certificate re-issuance from a CA-enabled Trust0 gateway (refer to [Certificate Authority](./Architecture.md#certificate-authority) for an explanation of this feature). The example is a modified [Chat TCP](#example---chat-tcp-service), which will initially create an expiring client certificate. Upon (secondary auth) login, the gateway will issue a new certificate/key pair to the client. The client will store those in a well-known location. By restarting the client session, the new non-expiring certificate will be used for the Trust0 client session.
+
+To run this example, execute the `run-reissue-cert-example.sh` script. You will be asked for free ports to be used for the client, gateway and the echo service (script uses these ports to update the echo service DB record and also now knows how to run the gateway).
+
+```
+[example] $ ./run-echo-udp-example.sh
+Enter an available port for the trust0 gateway: 8400
+...
+Enter an available port for the echo service: 8600
+Enter an available port for the echo proxy: 8601
+
+(... PKI certificates/keys created, trust0 binaries built ...)
+```
+
+You will be presented with a tmux session w/multiple panes, which represent:
+* Chat service
+* Trust0 Gateway
+* Trust0 Client
+* Chat client 1
+* Chat client 2
+* Shutdown example action
+
+Follow the instructions in step order. The following shows a screencast (using asciinema) of a revoke certificate session:
+
+[![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-reissue-cert.png)](https://asciinema.org/a/640971)
 
 ### Example - Revoke Certificate
 

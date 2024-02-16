@@ -78,17 +78,17 @@ impl ManagementController {
     ///
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        app_config: Arc<AppConfig>,
-        service_mgr: Arc<Mutex<dyn ServiceMgr>>,
-        access_repo: Arc<Mutex<dyn AccessRepository>>,
-        service_repo: Arc<Mutex<dyn ServiceRepository>>,
-        user_repo: Arc<Mutex<dyn UserRepository>>,
-        event_channel_sender: mpsc::Sender<conn_std::ConnectionEvent>,
-        device: Device,
-        user: model::user::User,
-        message_outbox: Arc<Mutex<VecDeque<Vec<u8>>>>,
+        app_config: &Arc<AppConfig>,
+        service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
+        access_repo: &Arc<Mutex<dyn AccessRepository>>,
+        service_repo: &Arc<Mutex<dyn ServiceRepository>>,
+        user_repo: &Arc<Mutex<dyn UserRepository>>,
+        event_channel_sender: &mpsc::Sender<conn_std::ConnectionEvent>,
+        device: &Device,
+        user: &model::user::User,
+        message_outbox: &Arc<Mutex<VecDeque<Vec<u8>>>>,
     ) -> Result<Self, AppError> {
-        let (services_by_id, services_by_name) = Self::setup_services_maps(&service_repo)?;
+        let (services_by_id, services_by_name) = Self::setup_services_maps(service_repo)?;
 
         let authenticator: Box<dyn AuthenticatorServer> = match &app_config.mfa_scheme {
             AuthnType::ScramSha256 => Box::new(ScramSha256AuthenticatorServer::new(
@@ -99,14 +99,14 @@ impl ManagementController {
         };
 
         Ok(Self {
-            app_config,
-            service_mgr,
-            access_repo,
-            user_repo,
-            event_channel_sender,
-            device,
-            user,
-            message_outbox,
+            app_config: app_config.clone(),
+            service_mgr: service_mgr.clone(),
+            access_repo: access_repo.clone(),
+            user_repo: user_repo.clone(),
+            event_channel_sender: event_channel_sender.clone(),
+            device: device.clone(),
+            user: user.clone(),
+            message_outbox: message_outbox.clone(),
             authn_context: Rc::new(Mutex::new(AuthnContext {
                 authenticator,
                 authn_thread_handle: None,
@@ -971,15 +971,15 @@ pub mod tests {
         app_config.mfa_scheme = mfa_scheme;
 
         Ok(ManagementController::new(
-            Arc::new(app_config),
-            service_mgr,
-            access_repo.clone(),
-            service_repo.clone(),
-            user_repo.clone(),
-            event_channel_sender,
-            create_device().unwrap(),
-            create_user(),
-            message_outbox,
+            &Arc::new(app_config),
+            &service_mgr,
+            &access_repo,
+            &service_repo,
+            &user_repo,
+            &event_channel_sender,
+            &create_device().unwrap(),
+            &create_user(),
+            &message_outbox,
         )?)
     }
 

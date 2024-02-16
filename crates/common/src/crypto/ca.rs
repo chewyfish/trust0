@@ -26,7 +26,7 @@ const VALIDATION_MSG_SAN_URI_USER_ID_REQUIRED: &str = "SAN URI User ID is requir
 const VALIDATION_MSG_SAN_URI_PLATFORM_REQUIRED: &str = "SAN URI Platform is required";
 
 /// User/device access context, stored as JSON in client certificate's SAN URI entry
-#[derive(Serialize, Deserialize, Clone, Default, Debug)]
+#[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CertAccessContext {
     /// DB User ID for user
@@ -47,13 +47,15 @@ enum EntityType {
 }
 
 /// Supported public key algorithms
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum KeyAlgorithm {
     /// Elliptic curve P-256
     EcdsaP256,
     /// Elliptic curve P-384
     EcdsaP384,
     /// Edwards curve DSA Ed25519
+    #[default]
     Ed25519,
 }
 

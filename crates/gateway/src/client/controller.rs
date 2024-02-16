@@ -53,59 +53,78 @@ impl ControlPlane {
     ///
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        app_config: Arc<AppConfig>,
-        service_mgr: Arc<Mutex<dyn ServiceMgr>>,
-        access_repo: Arc<Mutex<dyn AccessRepository>>,
-        service_repo: Arc<Mutex<dyn ServiceRepository>>,
-        user_repo: Arc<Mutex<dyn UserRepository>>,
-        event_channel_sender: mpsc::Sender<conn_std::ConnectionEvent>,
-        device: Device,
-        user: model::user::User,
+        app_config: &Arc<AppConfig>,
+        service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
+        access_repo: &Arc<Mutex<dyn AccessRepository>>,
+        service_repo: &Arc<Mutex<dyn ServiceRepository>>,
+        user_repo: &Arc<Mutex<dyn UserRepository>>,
+        event_channel_sender: &mpsc::Sender<conn_std::ConnectionEvent>,
+        device: &Device,
+        user: &model::user::User,
     ) -> Result<Self, AppError> {
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
         let management_controller = Arc::new(Mutex::new(management::ManagementController::new(
             app_config,
-            service_mgr.clone(),
+            service_mgr,
             access_repo,
             service_repo,
             user_repo,
-            event_channel_sender.clone(),
+            event_channel_sender,
             device,
-            user.clone(),
-            message_outbox.clone(),
+            user,
+            &message_outbox,
         )?));
         let signaling_controller = Arc::new(Mutex::new(signaling::SignalingController::new(
+            app_config,
             service_mgr,
-            event_channel_sender.clone(),
+            event_channel_sender,
             user,
-            message_outbox.clone(),
+            device,
+            &message_outbox,
         )));
-        Self::spawn_signaling_event_loop(&signaling_controller)?;
-
         let mut channel_processors: HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>> =
             HashMap::new();
         channel_processors.insert(ControlChannel::Management, management_controller);
-        channel_processors.insert(ControlChannel::Signaling, signaling_controller);
+        channel_processors.insert(ControlChannel::Signaling, signaling_controller.clone());
+
+        Self::spawn_signaling_event_loop(&channel_processors, &signaling_controller)?;
 
         Ok(Self {
-            event_channel_sender,
+            event_channel_sender: event_channel_sender.clone(),
             message_inbox: VecDeque::new(),
             message_outbox,
             channel_processors,
         })
     }
 
-    #[cfg(not(event))]
+    /// Spawn thread to start an event loop to process signaling events
+    ///
+    /// # Arguments
+    ///
+    /// * `channel_processors` - Control plane channel processors
+    /// * `signal_controller` - The [`SignalingController`] to use for the event loop processor
+    /// * `loop_cycle_delay` - Duration to sleep each cycle iteration. If not supplied, uses default [`EVENT_LOOP_CYCLE_DELAY_MSECS`].
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating the success/failure of the spawning operation.
+    ///
+    #[cfg(not(test))]
     fn spawn_signaling_event_loop(
+        channel_processors: &HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>>,
         signal_controller: &Arc<Mutex<signaling::SignalingController>>,
     ) -> Result<(), AppError> {
-        signaling::SignalingController::spawn_event_loop(signal_controller, None)
+        signaling::SignalingController::spawn_event_loop(
+            channel_processors,
+            signal_controller,
+            None,
+        )
     }
-
-    #[cfg(event)]
+    #[cfg(test)]
     fn spawn_signaling_event_loop(
-        signal_controller: &Arc<Mutex<signaling::SignalingController>>,
+        _channel_processors: &HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>>,
+        _signal_controller: &Arc<Mutex<signaling::SignalingController>>,
     ) -> Result<(), AppError> {
         Ok(())
     }
@@ -135,6 +154,26 @@ impl ControlPlane {
         }
 
         Ok(())
+    }
+
+    /// Returns (secondary) authentication state. Each channel processor can decide this state. If not applicable
+    /// for a specific channel processor, it will merely return `None`, which implies that the session
+    /// is authenticated (as far as it is concerned).
+    ///
+    /// # Arguments
+    ///
+    /// * `channel_processors` - Control plane channel processors
+    ///
+    /// # Returns
+    ///
+    /// Whether the session has passed (secondary) authentication.
+    ///
+    pub fn is_authenticated(
+        channel_processors: &HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>>,
+    ) -> bool {
+        channel_processors
+            .values()
+            .all(|processor| processor.lock().unwrap().is_authenticated().unwrap_or(true))
     }
 }
 
@@ -171,9 +210,7 @@ impl MessageProcessor for ControlPlane {
     }
 
     fn is_authenticated(&self) -> bool {
-        self.channel_processors
-            .values()
-            .all(|processor| processor.lock().unwrap().is_authenticated().unwrap_or(true))
+        Self::is_authenticated(&self.channel_processors)
     }
 }
 
@@ -275,7 +312,7 @@ impl server_std::ServerVisitor for ControlPlaneServerVisitor {
 }
 
 /// Control plane channel (management or signaling) message processor
-pub trait ChannelProcessor {
+pub trait ChannelProcessor: Send {
     /// Process control plane channel message.
     ///
     /// # Arguments
@@ -380,7 +417,6 @@ pub mod tests {
         let mut expected_pdu_msg = String::from_utf8(expected_msg.to_vec()).unwrap();
 
         if max_msg_size.is_some() {
-            println!("PM:{}", &pdu_msg);
             if pdu_msg.len() > max_msg_size.unwrap() {
                 pdu_msg = pdu_msg[0..max_msg_size.unwrap()].to_string();
             }
@@ -423,9 +459,10 @@ pub mod tests {
             .times(1)
             .return_once(|| Ok(vec![]));
 
-        let access_repo = Arc::new(Mutex::new(MockAccessRepo::new()));
-        let service_repo = Arc::new(Mutex::new(service_repo));
-        let user_repo = Arc::new(Mutex::new(MockUserRepo::new()));
+        let access_repo: Arc<Mutex<dyn AccessRepository>> =
+            Arc::new(Mutex::new(MockAccessRepo::new()));
+        let service_repo: Arc<Mutex<dyn ServiceRepository>> = Arc::new(Mutex::new(service_repo));
+        let user_repo: Arc<Mutex<dyn UserRepository>> = Arc::new(Mutex::new(MockUserRepo::new()));
         let mut app_config = config::tests::create_app_config_with_repos(
             user_repo.clone(),
             service_repo.clone(),
@@ -434,16 +471,17 @@ pub mod tests {
         )
         .unwrap();
         app_config.mfa_scheme = AuthnType::Insecure;
+        let service_mgr: Arc<Mutex<dyn ServiceMgr>> = Arc::new(Mutex::new(MockSvcMgr::new()));
 
         let control_plane = ControlPlane::new(
-            Arc::new(app_config),
-            Arc::new(Mutex::new(MockSvcMgr::new())),
-            access_repo,
-            service_repo,
-            user_repo,
-            mpsc::channel().0,
-            create_device().unwrap(),
-            create_user(),
+            &Arc::new(app_config),
+            &service_mgr,
+            &access_repo,
+            &service_repo,
+            &user_repo,
+            &mpsc::channel().0,
+            &create_device().unwrap(),
+            &create_user(),
         );
 
         if let Err(err) = control_plane {

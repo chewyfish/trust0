@@ -1,3 +1,4 @@
+mod certificate_reissue;
 mod proxy_connections;
 
 use std::collections::{HashMap, VecDeque};
@@ -9,6 +10,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 
+use crate::config::AppConfig;
+use crate::gateway::controller::signaling::certificate_reissue::CertReissuanceProcessor;
 use crate::gateway::controller::signaling::proxy_connections::ProxyConnectionsProcessor;
 use crate::gateway::controller::ChannelProcessor;
 use crate::service::manager::ServiceMgr;
@@ -38,6 +41,7 @@ impl SignalingController {
     ///
     /// # Arguments
     ///
+    /// * `app_config` - Application configuration object
     /// * `service_mgr` - Service manager
     /// * `message_outbox` - Queued PDU responses to be sent to client
     ///
@@ -46,9 +50,13 @@ impl SignalingController {
     /// A newly constructed [`SignalingController`] object.
     ///
     pub fn new(
+        app_config: &Arc<AppConfig>,
         service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
         message_outbox: Arc<Mutex<VecDeque<Vec<u8>>>>,
     ) -> Self {
+        let cert_reissue_processor = Rc::new(Mutex::new(CertReissuanceProcessor::new(
+            &app_config.console_shell_output,
+        )));
         let proxy_conns_processor = Rc::new(Mutex::new(ProxyConnectionsProcessor::new(
             service_mgr,
             message_outbox,
@@ -56,15 +64,16 @@ impl SignalingController {
 
         let mut event_processors: HashMap<EventType, Rc<Mutex<dyn SignalingEventHandler>>> =
             HashMap::new();
+        event_processors.insert(EventType::CertificateReissue, cert_reissue_processor);
         event_processors.insert(EventType::ProxyConnections, proxy_conns_processor);
 
         Self {
             event_channel_sender: None,
             event_processors,
-            message_inbox: Arc::new(Mutex::new(HashMap::from([(
-                EventType::ProxyConnections,
-                VecDeque::new(),
-            )]))),
+            message_inbox: Arc::new(Mutex::new(HashMap::from([
+                (EventType::CertificateReissue, VecDeque::new()),
+                (EventType::ProxyConnections, VecDeque::new()),
+            ]))),
             event_loop_processing: Arc::new(Mutex::new(false)),
         }
     }
@@ -194,6 +203,7 @@ pub trait SignalingEventHandler {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::config;
     use crate::service::manager::tests::MockSvcMgr;
     use mockall::{mock, predicate};
     use serde_json::json;
@@ -216,18 +226,19 @@ pub mod tests {
 
     fn create_controller(
         event_channel_sender: mpsc::Sender<conn_std::ConnectionEvent>,
+        cert_reissuance_processor: Rc<Mutex<dyn SignalingEventHandler>>,
         proxy_connections_processor: Rc<Mutex<dyn SignalingEventHandler>>,
     ) -> Result<SignalingController, AppError> {
         Ok(SignalingController {
             event_channel_sender: Some(event_channel_sender),
-            event_processors: HashMap::from([(
-                EventType::ProxyConnections,
-                proxy_connections_processor,
-            )]),
-            message_inbox: Arc::new(Mutex::new(HashMap::from([(
-                EventType::ProxyConnections,
-                VecDeque::new(),
-            )]))),
+            event_processors: HashMap::from([
+                (EventType::CertificateReissue, cert_reissuance_processor),
+                (EventType::ProxyConnections, proxy_connections_processor),
+            ]),
+            message_inbox: Arc::new(Mutex::new(HashMap::from([
+                (EventType::CertificateReissue, VecDeque::new()),
+                (EventType::ProxyConnections, VecDeque::new()),
+            ]))),
             event_loop_processing: Arc::new(Mutex::new(false)),
         })
     }
@@ -237,12 +248,22 @@ pub mod tests {
 
     #[test]
     fn sigcontrol_new() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
         let service_mgr: Arc<Mutex<dyn ServiceMgr>> = Arc::new(Mutex::new(MockSvcMgr::new()));
-        let _ = SignalingController::new(&service_mgr, Arc::new(Mutex::new(VecDeque::new())));
+        let _ = SignalingController::new(
+            &app_config,
+            &service_mgr,
+            Arc::new(Mutex::new(VecDeque::new())),
+        );
     }
 
     #[test]
     fn sigcontrol_spawn_event_loop_when_inbox_has_message() {
+        let mut cert_reissue_processor = MockSigEvtHandler::new();
+        cert_reissue_processor
+            .expect_on_loop_cycle()
+            .with(predicate::always())
+            .return_once(|_| Ok(()));
         let mut proxy_conns_processor = MockSigEvtHandler::new();
         proxy_conns_processor
             .expect_on_loop_cycle()
@@ -250,6 +271,7 @@ pub mod tests {
             .return_once(|_| Ok(()));
         let controller = create_controller(
             mpsc::channel().0,
+            Rc::new(Mutex::new(cert_reissue_processor)),
             Rc::new(Mutex::new(proxy_conns_processor)),
         )
         .unwrap();
@@ -290,6 +312,17 @@ pub mod tests {
         assert!(message_inbox
             .lock()
             .unwrap()
+            .get(&EventType::CertificateReissue)
+            .is_some());
+        assert!(message_inbox
+            .lock()
+            .unwrap()
+            .get(&EventType::CertificateReissue)
+            .unwrap()
+            .is_empty());
+        assert!(message_inbox
+            .lock()
+            .unwrap()
             .get(&EventType::ProxyConnections)
             .is_some());
         assert!(message_inbox
@@ -302,6 +335,11 @@ pub mod tests {
 
     #[test]
     fn sigcontrol_spawn_event_loop_when_inbox_no_message() {
+        let mut cert_reissue_processor = MockSigEvtHandler::new();
+        cert_reissue_processor
+            .expect_on_loop_cycle()
+            .with(predicate::always())
+            .return_once(|_| Ok(()));
         let mut proxy_conns_processor = MockSigEvtHandler::new();
         proxy_conns_processor
             .expect_on_loop_cycle()
@@ -309,6 +347,7 @@ pub mod tests {
             .return_once(|_| Ok(()));
         let controller = create_controller(
             mpsc::channel().0,
+            Rc::new(Mutex::new(cert_reissue_processor)),
             Rc::new(Mutex::new(proxy_conns_processor)),
         )
         .unwrap();
@@ -338,6 +377,17 @@ pub mod tests {
         assert!(message_inbox
             .lock()
             .unwrap()
+            .get(&EventType::CertificateReissue)
+            .is_some());
+        assert!(message_inbox
+            .lock()
+            .unwrap()
+            .get(&EventType::CertificateReissue)
+            .unwrap()
+            .is_empty());
+        assert!(message_inbox
+            .lock()
+            .unwrap()
             .get(&EventType::ProxyConnections)
             .is_some());
         assert!(message_inbox
@@ -350,14 +400,23 @@ pub mod tests {
 
     #[test]
     fn sigcontrol_spawn_event_loop_when_inbox_no_message_and_process_err() {
+        let mut cert_reissue_processor = MockSigEvtHandler::new();
+        cert_reissue_processor
+            .expect_on_loop_cycle()
+            .with(predicate::always())
+            .return_once(|_| Ok(()));
         let mut proxy_conns_processor = MockSigEvtHandler::new();
         proxy_conns_processor
             .expect_on_loop_cycle()
             .with(predicate::always())
             .return_once(|_| Err(AppError::General("process error".to_string())));
         let event_channel = mpsc::channel();
-        let controller =
-            create_controller(event_channel.0, Rc::new(Mutex::new(proxy_conns_processor))).unwrap();
+        let controller = create_controller(
+            event_channel.0,
+            Rc::new(Mutex::new(cert_reissue_processor)),
+            Rc::new(Mutex::new(proxy_conns_processor)),
+        )
+        .unwrap();
 
         let event_loop_processing = controller.event_loop_processing.clone();
         let message_inbox = controller.message_inbox.clone();
@@ -395,6 +454,17 @@ pub mod tests {
         assert!(message_inbox
             .lock()
             .unwrap()
+            .get(&EventType::CertificateReissue)
+            .is_some());
+        assert!(message_inbox
+            .lock()
+            .unwrap()
+            .get(&EventType::CertificateReissue)
+            .unwrap()
+            .is_empty());
+        assert!(message_inbox
+            .lock()
+            .unwrap()
             .get(&EventType::ProxyConnections)
             .is_some());
         assert!(message_inbox
@@ -409,6 +479,7 @@ pub mod tests {
     fn sigcontrol_process_inbound_message_when_wrong_control_channel() {
         let mut controller = create_controller(
             mpsc::channel().0,
+            Rc::new(Mutex::new(MockSigEvtHandler::new())),
             Rc::new(Mutex::new(MockSigEvtHandler::new())),
         )
         .unwrap();
@@ -433,6 +504,7 @@ pub mod tests {
         let mut controller = create_controller(
             mpsc::channel().0,
             Rc::new(Mutex::new(MockSigEvtHandler::new())),
+            Rc::new(Mutex::new(MockSigEvtHandler::new())),
         )
         .unwrap();
 
@@ -452,9 +524,88 @@ pub mod tests {
     }
 
     #[test]
+    fn sigcontrol_process_inbound_message_when_event_type_is_cert_reissue() {
+        let mut controller = create_controller(
+            mpsc::channel().0,
+            Rc::new(Mutex::new(MockSigEvtHandler::new())),
+            Rc::new(Mutex::new(MockSigEvtHandler::new())),
+        )
+        .unwrap();
+
+        let msg_frame = MessageFrame::new(
+            ControlChannel::Signaling,
+            control::pdu::CODE_OK,
+            &None,
+            &Some(json!(EventType::CertificateReissue)),
+            &Some(json!([])),
+        );
+
+        assert!(controller
+            .message_inbox
+            .lock()
+            .unwrap()
+            .get(&EventType::CertificateReissue)
+            .is_some());
+        assert!(controller
+            .message_inbox
+            .lock()
+            .unwrap()
+            .get(&EventType::CertificateReissue)
+            .unwrap()
+            .is_empty());
+
+        let result = controller.process_inbound_message(msg_frame);
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        assert!(controller
+            .message_inbox
+            .lock()
+            .unwrap()
+            .get(&EventType::ProxyConnections)
+            .is_some());
+        assert!(controller
+            .message_inbox
+            .lock()
+            .unwrap()
+            .get(&EventType::ProxyConnections)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            controller
+                .message_inbox
+                .lock()
+                .unwrap()
+                .get(&EventType::CertificateReissue)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            *controller
+                .message_inbox
+                .lock()
+                .unwrap()
+                .get(&EventType::CertificateReissue)
+                .unwrap()
+                .get(0)
+                .unwrap(),
+            SignalEvent::new(
+                control::pdu::CODE_OK,
+                &None,
+                &EventType::CertificateReissue,
+                &Some(json!([])),
+            )
+        );
+    }
+
+    #[test]
     fn sigcontrol_process_inbound_message_when_event_type_is_proxy_conns() {
         let mut controller = create_controller(
             mpsc::channel().0,
+            Rc::new(Mutex::new(MockSigEvtHandler::new())),
             Rc::new(Mutex::new(MockSigEvtHandler::new())),
         )
         .unwrap();
@@ -487,6 +638,19 @@ pub mod tests {
             panic!("Unexpected result: err={:?}", &err);
         }
 
+        assert!(controller
+            .message_inbox
+            .lock()
+            .unwrap()
+            .get(&EventType::CertificateReissue)
+            .is_some());
+        assert!(controller
+            .message_inbox
+            .lock()
+            .unwrap()
+            .get(&EventType::CertificateReissue)
+            .unwrap()
+            .is_empty());
         assert_eq!(
             controller
                 .message_inbox

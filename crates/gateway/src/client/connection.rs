@@ -13,7 +13,7 @@ use crate::repository::user_repo::UserRepository;
 use crate::service::manager::ServiceMgr;
 use trust0_common::crypto::alpn;
 use trust0_common::error::AppError;
-use trust0_common::logging::error;
+use trust0_common::logging::{error, info};
 use trust0_common::model::user::{Status, User};
 use trust0_common::net::tls_server::conn_std::{self, TlsConnection};
 use trust0_common::{crypto, target};
@@ -73,7 +73,26 @@ impl ClientConnVisitor {
         }
     }
 
-    /// Create device and user from peer certificate
+    /// Authorize new connection.
+    ///
+    /// Will validate:
+    /// * Trust0 conforming certificate
+    /// * connection type
+    /// * user existence and status
+    /// * service existence
+    /// * accessibliliy of service for user
+    ///
+    /// If valid, will create device and user from peer certificate.
+    ///
+    /// # Arguments
+    ///
+    /// * `tls_conn` - TLS connection object
+    /// * `service_id` - Service corresponding to connection
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the ALPN protocol for an authorized connection.
+    ///
     pub fn process_authorization(
         &mut self,
         tls_conn: &dyn TlsConnection,
@@ -91,6 +110,7 @@ impl ClientConnVisitor {
             .collect();
 
         let device = Device::new(peer_certificates)?;
+        let serial_num = hex::encode(device.get_cert_serial_num());
 
         // Validate user
         let user_id = device.get_cert_access_context().user_id;
@@ -98,7 +118,7 @@ impl ClientConnVisitor {
         if user_id == 0 {
             return Err(AppError::GenWithCodeAndMsg(
                 config::RESPCODE_0420_INVALID_CLIENT_CERTIFICATE,
-                "Invalid certificate user identity".to_string(),
+                format!("Invalid certificate user identity: ser={}", &serial_num),
             ));
         }
 
@@ -111,22 +131,25 @@ impl ClientConnVisitor {
                 AppError::GenWithCodeAndMsg(
                     config::RESPCODE_0500_SYSTEM_ERROR,
                     format!(
-                        "Error retrieving user from user repo: uid={}, err={:?}",
-                        user_id, err
+                        "Error retrieving user from user repo: uid={}, ser={}, err={:?}",
+                        user_id, &serial_num, err
                     ),
                 )
             })?
             .ok_or(AppError::GenWithCodeAndMsg(
                 config::RESPCODE_0421_UNKNOWN_USER,
-                format!("User is not found in user repo: uid={}", user_id),
+                format!(
+                    "User is not found in user repo: uid={}, ser={}",
+                    user_id, &serial_num
+                ),
             ))?;
 
         if user.status != Status::Active {
             return Err(AppError::GenWithCodeAndMsg(
                 config::RESPCODE_0422_INACTIVE_USER,
                 format!(
-                    "User is not active: uid={}, status={:?}",
-                    user_id, user.status
+                    "User is not active: uid={}, ser={}, status={:?}",
+                    user_id, &serial_num, user.status
                 ),
             ));
         }
@@ -146,8 +169,8 @@ impl ClientConnVisitor {
                 return Err(AppError::GenWithCodeAndMsg(
                     config::RESPCODE_0426_CONTROL_PLANE_ALREADY_CONNECTED,
                     format!(
-                        "Not allowed to have multiple control planes: uid={}",
-                        &user_id
+                        "Not allowed to have multiple control planes: uid={}, ser={}",
+                        user_id, &serial_num
                     ),
                 ));
             }
@@ -164,8 +187,8 @@ impl ClientConnVisitor {
                 return Err(AppError::GenWithCodeAndMsg(
                     config::RESPCODE_0427_CONTROL_PLANE_NOT_AUTHENTICATED,
                     format!(
-                        "Service proxy connections require an authenticated control plane: uid={}",
-                        &user_id
+                        "Service proxy connections require an authenticated control plane: uid={}, ser={}",
+                        user_id, &serial_num
                     ),
                 ));
             }
@@ -182,8 +205,8 @@ impl ClientConnVisitor {
                 return Err(AppError::GenWithCodeAndMsg(
                     config::RESPCODE_0424_INVALID_ALPN_PROTOCOL,
                     format!(
-                        "ALPN has wrong service ID: alpn={:?}, svc_id={}",
-                        alpn_protocol, service_id
+                        "ALPN has wrong service ID: user={}, ser={}, alpn={:?}, svc_id={}",
+                        user_id, &serial_num, alpn_protocol, service_id
                     ),
                 ));
             }
@@ -199,8 +222,8 @@ impl ClientConnVisitor {
                 return Err(AppError::GenWithCodeAndMsg(
                     config::RESPCODE_0403_FORBIDDEN,
                     format!(
-                        "User is not authorized for service: uid={}, svc_id={}",
-                        user_id, service_id
+                        "User is not authorized for service: uid={}, ser={}, svc_id={}",
+                        user_id, &serial_num, service_id
                     ),
                 ));
             }
@@ -210,28 +233,60 @@ impl ClientConnVisitor {
         self.user = Some(user);
         self.protocol = Some(alpn_protocol.clone());
 
+        info(
+            &target!(),
+            &format!(
+                "Connection authorized: uid={}, ser={}, svc_id={:?}",
+                user_id, &serial_num, &service_id
+            ),
+        );
+
         Ok(alpn_protocol)
     }
 
     #[cfg(not(test))]
     /// User accessor
+    ///
+    /// # Returns
+    ///
+    /// User associated to connection (if available).
+    ///
     pub fn get_user(&self) -> &Option<User> {
         &self.user
     }
 
     #[cfg(test)]
     /// User mutator
+    ///
+    /// # Arguments
+    ///
+    /// * `user` - Optional [`User`] object to set
+    ///
     pub fn set_user(&mut self, user: Option<User>) {
         self.user = user;
     }
 
     #[cfg(test)]
     /// Protocol mutator
+    ///
+    /// # Arguments
+    ///
+    /// * `protocol` - Optional [`alpn::Protocol`] object to set
+    ///
     pub fn set_protocol(&mut self, protocol: Option<alpn::Protocol>) {
         self.protocol = protocol;
     }
 
-    /// Parse TLS ALPN protocol
+    /// Parse TLS ALPN protocol. Should be valid [`alpn::Protocol`] string (as represented as byte vector)
+    ///
+    /// # Arguments
+    ///
+    /// * `protocol_name` - Byte vector of a protocol string value
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the corresponding [`alpn::Protocol`] object.
+    ///
     pub fn parse_alpn_protocol(
         protocol_name: &Option<Vec<u8>>,
     ) -> Result<alpn::Protocol, AppError> {
@@ -269,14 +324,14 @@ impl conn_std::ConnectionVisitor for ClientConnVisitor {
         {
             let message_processor: Arc<Mutex<dyn MessageProcessor>> =
                 Arc::new(Mutex::new(ControlPlane::new(
-                    self.app_config.clone(),
-                    self.service_mgr.clone(),
-                    self.access_repo.clone(),
-                    self.service_repo.clone(),
-                    self.user_repo.clone(),
-                    event_channel_sender.clone(),
-                    self.device.as_ref().unwrap().clone(),
-                    user.clone(),
+                    &self.app_config,
+                    &self.service_mgr,
+                    &self.access_repo,
+                    &self.service_repo,
+                    &self.user_repo,
+                    &event_channel_sender,
+                    self.device.as_ref().unwrap(),
+                    user,
                 )?));
             self.service_mgr
                 .lock()

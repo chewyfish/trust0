@@ -51,7 +51,7 @@ Options:
 
   -k, --key-file <KEY_FILE>
           Read private key from <KEY_FILE>. This should be an ECDSA, EdDSA or RSA private key encoded as PKCS1, PKCS8 or Sec1 in a PEM file.
-          Note - For ECDSA keys, curves 'prime256v1' and 'secp384r1' have been tested (others may be supported as well)
+          Note - For ECDSA keys, curves 'NIST P-256' and 'NIST P-384' have been tested
           Note - For EdDSA keys, currently only 'Ed25519' is supported
           
           [env: KEY_FILE=]
@@ -60,6 +60,12 @@ Options:
           Accept client authentication certificates signed by those roots provided in <AUTH_CERT_FILE>
           
           [env: AUTH_CERT_FILE=]
+
+      --auth-key-file <AUTH_KEY_FILE>
+          Public key pair corresponding to <AUTH_CERT_FILE> certificates, used to sign client authentication certificates.
+          This is not required, is CA is not enabled (<CA_ENABLED>)
+          
+          [env: AUTH_KEY_FILE=]
 
       --crl-file <CRL_FILE>
           Perform client certificate revocation checking using the DER-encoded <CRL_FILE(s)>. Will update list during runtime, if file has changed
@@ -148,6 +154,34 @@ Options:
           User entity store connect specifier string
           
           [env: USER_DB_CONNECT=]
+
+      --ca-enabled
+          [CA] Enable certificate authority. This will dynamically issue expiring certificates to clients
+          
+          [env: CA_ENABLED=]
+
+      --ca-key-algorithm <CA_KEY_ALGORITHM>
+          [CA] Public key algorithm used by certificate authority for new client certificates. (Requires CA to be enabled)
+          
+          [env: CA_KEY_ALGORITHM=]
+          [default: ed25519]
+
+          Possible values:
+          - ecdsa-p256: Elliptic curve P-256
+          - ecdsa-p384: Elliptic curve P-384
+          - ed25519:    Edwards curve DSA Ed25519
+
+      --ca-validity-period-days <CA_VALIDITY_PERIOD_DAYS>
+          [CA] Client certificate validity period as expressed in number of days (Requires CA to be enabled)
+          
+          [env: CA_VALIDITY_PERIOD_DAYS=]
+          [default: 365]
+
+      --ca-reissuance-threshold-days <CA_REISSUANCE_THRESHOLD_DAYS>
+          [CA] Certificate re-issuance time period (before certificate expiry) threshold in days (Requires CA to be enabled)
+          
+          [env: CA_REISSUANCE_THRESHOLD_DAYS=]
+          [default: 20]
 
       --help
           Print help
