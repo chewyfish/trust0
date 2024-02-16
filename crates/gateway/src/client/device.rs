@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use ::time::OffsetDateTime;
 use anyhow::Result;
 use iter_group::IntoGroup;
 use pki_types::CertificateDer;
@@ -10,8 +11,18 @@ use trust0_common::crypto::asn;
 use trust0_common::crypto::ca::CertAccessContext;
 use trust0_common::error::AppError;
 
+pub const CERT_OID_COMMON_NAME: &str = "2.5.4.3";
+pub const CERT_OID_ORGANIZATION: &str = "2.5.4.10";
+#[allow(dead_code)]
+pub const CERT_OID_DEPARTMENT: &str = "2.5.4.11";
+#[allow(dead_code)]
+pub const CERT_OID_LOCALITY: &str = "2.5.4.7";
+#[allow(dead_code)]
+pub const CERT_OID_STATE: &str = "2.5.4.8";
+pub const CERT_OID_COUNTRY: &str = "2.5.4.6";
+
 /// Represents client device
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Debug)]
 pub struct Device {
     /// Certificate subject attributes
     pub cert_subj: HashMap<String, Vec<String>>,
@@ -21,10 +32,25 @@ pub struct Device {
 
     /// Device certificate info
     pub cert_access_context: CertAccessContext,
+
+    /// Certificate serial number
+    pub cert_serial_num: Vec<u8>,
+
+    /// Certificate validity period
+    pub cert_validity: Validity,
 }
 
 impl Device {
     /// Device constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `device_cert_chain` - [`CertificateDer`] chain
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing a newly constructed [`Device`] object.
+    ///
     pub fn new(device_cert_chain: Vec<CertificateDer<'static>>) -> Result<Self, AppError> {
         let x509_cert = Device::device_cert(&device_cert_chain)?;
 
@@ -72,25 +98,67 @@ impl Device {
             cert_subj,
             cert_alt_subj,
             cert_access_context,
+            cert_serial_num: x509_cert.raw_serial().to_vec(),
+            cert_validity: x509_cert.validity.clone(),
         })
     }
 
     /// Certificate subject attributes
+    ///
+    /// # Returns
+    ///
+    /// Reference to the map containing the certificate subject entries.
+    ///
     pub fn get_cert_subj(&self) -> &HashMap<String, Vec<String>> {
         &self.cert_subj
     }
 
     /// Certificate alternate subject name attributes
+    ///
+    /// # Returns
+    ///
+    /// Reference to the map containing the subject alternative name entries.
+    ///
     pub fn get_cert_alt_subj(&self) -> &HashMap<String, Vec<String>> {
         &self.cert_alt_subj
     }
 
     /// Certificate access context accessor
+    ///
+    /// # Returns
+    ///
+    /// The [`CertAccessContext`] for the certificate.
+    ///
     pub fn get_cert_access_context(&self) -> CertAccessContext {
         self.cert_access_context.clone()
     }
 
+    /// Certificate serial number
+    ///
+    /// # Returns
+    ///
+    /// Reference to the certificate serial number
+    ///
+    pub fn get_cert_serial_num(&self) -> &Vec<u8> {
+        &self.cert_serial_num
+    }
+
+    /// Certificate validity period accessor
+    ///
+    /// # Returns
+    ///
+    /// Reference to the certificate validity period.
+    ///
+    pub fn get_cert_validity(&self) -> &Validity {
+        &self.cert_validity
+    }
+
     /// Retrieve the end-entity (aka device) certificate, must be the first one.
+    ///
+    /// # Returns
+    ///
+    /// The first certificate in the [`CertificateDer`] chain.
+    ///
     fn device_cert<'a>(
         cert_chain: &'a [CertificateDer<'a>],
     ) -> Result<X509Certificate<'a>, AppError> {
@@ -110,10 +178,26 @@ impl Device {
     }
 }
 
+impl Default for Device {
+    fn default() -> Self {
+        Self {
+            cert_subj: HashMap::new(),
+            cert_alt_subj: HashMap::new(),
+            cert_access_context: CertAccessContext::default(),
+            cert_serial_num: Vec::new(),
+            cert_validity: Validity {
+                not_before: ASN1Time::from(OffsetDateTime::UNIX_EPOCH),
+                not_after: ASN1Time::from(OffsetDateTime::UNIX_EPOCH),
+            },
+        }
+    }
+}
+
 /// Unit tests
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ::time::macros::datetime;
     use std::path::PathBuf;
     use trust0_common::crypto::file::load_certificates;
 
@@ -133,6 +217,13 @@ mod tests {
         let device_result = Device::new(certs);
 
         if let Ok(device) = &device_result {
+            assert_eq!(
+                device.cert_serial_num,
+                vec![
+                    116u8, 198u8, 8u8, 125u8, 113u8, 69u8, 193u8, 99u8, 4u8, 11u8, 25u8, 228u8,
+                    105u8, 11u8, 99u8, 229u8, 219u8, 34u8, 148u8, 112u8
+                ]
+            );
             assert_eq!(device.cert_access_context.user_id, 100);
             assert_eq!(device.cert_access_context.platform, "Linux");
             return Ok(());
@@ -150,6 +241,13 @@ mod tests {
 
         if let Ok(device) = &device_result {
             let default_device = Device::default();
+            assert_eq!(
+                device.cert_serial_num,
+                vec![
+                    94u8, 51u8, 9u8, 59u8, 79u8, 225u8, 97u8, 148u8, 183u8, 195u8, 188u8, 141u8,
+                    4u8, 157u8, 253u8, 51u8, 209u8, 33u8, 97u8, 146u8
+                ]
+            );
             assert_eq!(
                 device.cert_access_context.user_id,
                 default_device.cert_access_context.user_id
@@ -173,5 +271,61 @@ mod tests {
         }
 
         panic!("Unexpected result: val={:?}", &device_result);
+    }
+
+    #[test]
+    fn device_accessors() -> Result<(), AppError> {
+        let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().unwrap().to_string())?;
+
+        let device = Device::new(certs)?;
+
+        assert_eq!(
+            device.get_cert_subj(),
+            &HashMap::from([
+                (
+                    CERT_OID_COMMON_NAME.to_string(),
+                    vec!["example-client.local".to_string()]
+                ),
+                (CERT_OID_DEPARTMENT.to_string(), vec!["IT1".to_string()]),
+                (
+                    CERT_OID_ORGANIZATION.to_string(),
+                    vec!["Example1".to_string()]
+                ),
+                (CERT_OID_LOCALITY.to_string(), vec!["Nowhere1".to_string()]),
+                (CERT_OID_STATE.to_string(), vec!["CA".to_string()]),
+                (CERT_OID_COUNTRY.to_string(), vec!["US".to_string()]),
+            ])
+        );
+        assert_eq!(
+            device.get_cert_alt_subj(),
+            &HashMap::from([(
+                "URI".to_string(),
+                vec![r#"{"userId":100,"platform":"Linux"}"#.to_string()]
+            ),])
+        );
+        assert_eq!(
+            device.get_cert_access_context(),
+            CertAccessContext {
+                user_id: 100,
+                platform: "Linux".to_string()
+            }
+        );
+        assert_eq!(
+            device.get_cert_serial_num(),
+            &vec![
+                116u8, 198u8, 8u8, 125u8, 113u8, 69u8, 193u8, 99u8, 4u8, 11u8, 25u8, 228u8, 105u8,
+                11u8, 99u8, 229u8, 219u8, 34u8, 148u8, 112u8
+            ]
+        );
+        assert_eq!(
+            device.get_cert_validity(),
+            &Validity {
+                not_before: ASN1Time::from(datetime!(2024-01-16 0:57:52.0 +00:00:00)),
+                not_after: ASN1Time::from(datetime!(2025-01-15 0:57:52.0 +00:00:00)),
+            }
+        );
+
+        Ok(())
     }
 }

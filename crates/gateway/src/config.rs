@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::env;
 use std::sync::{Arc, Mutex};
+use std::{env, fmt};
 
 use clap::*;
 use hickory_resolver::Resolver;
@@ -23,9 +23,9 @@ use rustls::crypto::CryptoProvider;
 use rustls::server::danger::ClientCertVerifier;
 use rustls::server::WebPkiClientVerifier;
 use trust0_common::authn::authenticator::AuthnType;
-use trust0_common::crypto::alpn;
 use trust0_common::crypto::crl::CRLFile;
 use trust0_common::crypto::file::{load_certificates, load_private_key};
+use trust0_common::crypto::{alpn, ca};
 use trust0_common::error::AppError;
 use trust0_common::file::ReloadableFile;
 
@@ -33,6 +33,10 @@ use trust0_common::file::ReloadableFile;
 pub const LINE_ENDING: &'static str = "\r\n";
 #[cfg(not(windows))]
 pub const LINE_ENDING: &str = "\n";
+
+pub const DEFAULT_CA_CERTIFICATE_VALIDITY_PERIOD_DAYS: u16 = 365;
+pub const DEFAULT_CA_CERTIFICATE_REISSUANCE_THRESHOLD_DAYS: u16 = 20;
+pub const DEFAULT_CA_KEY_ALGORITHM: KeyAlgorithm = KeyAlgorithm::Ed25519;
 
 /// Client response messages
 pub const RESPCODE_0403_FORBIDDEN: u16 = 403;
@@ -124,6 +128,48 @@ impl DataSource {
     }
 }
 
+/// Supported public key algorithms
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+pub enum KeyAlgorithm {
+    /// Elliptic curve P-256
+    #[default]
+    EcdsaP256,
+    /// Elliptic curve P-384
+    EcdsaP384,
+    /// Edwards curve DSA Ed25519
+    Ed25519,
+}
+
+impl fmt::Display for KeyAlgorithm {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            formatter,
+            "{}",
+            match self {
+                KeyAlgorithm::EcdsaP256 => "ecdsa-p256",
+                KeyAlgorithm::EcdsaP384 => "ecdsa-p384",
+                KeyAlgorithm::Ed25519 => "ed25519",
+            }
+        )
+    }
+}
+
+impl From<KeyAlgorithm> for ca::KeyAlgorithm {
+    fn from(key_algorithm: KeyAlgorithm) -> Self {
+        Self::from(&key_algorithm)
+    }
+}
+
+impl From<&KeyAlgorithm> for ca::KeyAlgorithm {
+    fn from(key_algorithm: &KeyAlgorithm) -> Self {
+        match key_algorithm {
+            KeyAlgorithm::EcdsaP256 => ca::KeyAlgorithm::EcdsaP256,
+            KeyAlgorithm::EcdsaP384 => ca::KeyAlgorithm::EcdsaP384,
+            KeyAlgorithm::Ed25519 => ca::KeyAlgorithm::Ed25519,
+        }
+    }
+}
+
 /// Runs a Trust0 gateway server on <HOST>:<PORT>
 #[derive(Parser)]
 #[command(author, version, long_about, disable_help_flag = true)]
@@ -160,7 +206,7 @@ pub struct AppConfigArgs {
     pub cert_file: String,
 
     /// Read private key from <KEY_FILE>. This should be an ECDSA, EdDSA or RSA private key encoded as PKCS1, PKCS8 or Sec1 in a PEM file.
-    /// Note - For ECDSA keys, curves 'prime256v1' and 'secp384r1' have been tested (others may be supported as well)
+    /// Note - For ECDSA keys, curves 'NIST P-256' and 'NIST P-384' have been tested
     /// Note - For EdDSA keys, currently only 'Ed25519' is supported
     #[arg(required=true, short='k', long="key-file", env, value_parser=trust0_common::crypto::file::verify_private_key_file, verbatim_doc_comment)]
     pub key_file: String,
@@ -168,6 +214,11 @@ pub struct AppConfigArgs {
     /// Accept client authentication certificates signed by those roots provided in <AUTH_CERT_FILE>
     #[arg(required=true, short='a', long="auth-cert-file", env, value_parser=trust0_common::crypto::file::verify_certificates)]
     pub auth_cert_file: String,
+
+    /// Public key pair corresponding to <AUTH_CERT_FILE> certificates, used to sign client authentication certificates.
+    /// This is not required, is CA is not enabled (<CA_ENABLED>)
+    #[arg(required=false, long="auth-key-file", env, value_parser=trust0_common::crypto::file::verify_private_key_file, verbatim_doc_comment)]
+    pub auth_key_file: Option<String>,
 
     /// Perform client certificate revocation checking using the DER-encoded <CRL_FILE(s)>. Will update list during runtime, if file has changed.
     #[arg(required=false, long="crl-file", env, value_parser=trust0_common::crypto::file::verify_crl_list)]
@@ -234,6 +285,37 @@ pub struct AppConfigArgs {
     /// User entity store connect specifier string
     #[arg(required = false, long = "user-db-connect", env)]
     pub user_db_connect: Option<String>,
+
+    /// [CA] Enable certificate authority. This will dynamically issue expiring certificates to clients.
+    #[arg(required = false, long = "ca-enabled", default_value_t = false, env)]
+    pub ca_enabled: bool,
+
+    /// [CA] Public key algorithm used by certificate authority for new client certificates. (Requires CA to be enabled)
+    #[arg(
+        required = false,
+        long = "ca-key-algorithm",
+        default_value_t = crate::config::DEFAULT_CA_KEY_ALGORITHM,
+        env,
+    )]
+    pub ca_key_algorithm: KeyAlgorithm,
+
+    /// [CA] Client certificate validity period as expressed in number of days (Requires CA to be enabled)
+    #[arg(
+        required = false,
+        long = "ca-validity-period-days",
+        default_value_t = crate::config::DEFAULT_CA_CERTIFICATE_VALIDITY_PERIOD_DAYS,
+        env,
+    )]
+    pub ca_validity_period_days: u16,
+
+    /// [CA] Certificate re-issuance time period (before certificate expiry) threshold in days (Requires CA to be enabled)
+    #[arg(
+        required = false,
+        long = "ca-reissuance-threshold-days",
+        default_value_t = crate::config::DEFAULT_CA_CERTIFICATE_REISSUANCE_THRESHOLD_DAYS,
+        env,
+    )]
+    pub ca_reissuance_threshold_days: u16,
 
     /// Print help
     #[clap(long, action = clap::ArgAction::HelpLong)]
@@ -327,6 +409,12 @@ pub struct AppConfig {
     pub gateway_service_ports: Option<(u16, u16)>,
     pub gateway_service_reply_host: String,
     pub mask_addresses: bool,
+    pub ca_enabled: bool,
+    pub ca_signer_cert_file: String,
+    pub ca_signer_key_file: Option<String>,
+    pub ca_key_algorithm: KeyAlgorithm,
+    pub ca_validity_period_days: u16,
+    pub ca_reissuance_threshold_days: u16,
     pub dns_client: Resolver,
 }
 
@@ -427,6 +515,12 @@ impl AppConfig {
                 .gateway_service_reply_host
                 .unwrap_or("127.0.0.1".to_string()),
             mask_addresses: !config_args.no_mask_addresses,
+            ca_enabled: config_args.ca_enabled,
+            ca_signer_cert_file: config_args.auth_cert_file.clone(),
+            ca_signer_key_file: config_args.auth_key_file.clone(),
+            ca_key_algorithm: config_args.ca_key_algorithm,
+            ca_validity_period_days: config_args.ca_validity_period_days,
+            ca_reissuance_threshold_days: config_args.ca_reissuance_threshold_days,
             dns_client,
         })
     }
@@ -550,6 +644,7 @@ pub mod tests {
     use once_cell::sync::Lazy;
     use std::env;
     use std::path::PathBuf;
+    use trust0_common::model;
 
     const CONFIG_FILE_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "config-file.rc"];
@@ -622,6 +717,12 @@ pub mod tests {
             gateway_service_ports: None,
             gateway_service_reply_host: "127.0.0.1".to_string(),
             mask_addresses: false,
+            ca_enabled: false,
+            ca_signer_cert_file: "".to_string(),
+            ca_signer_key_file: None,
+            ca_key_algorithm: Default::default(),
+            ca_validity_period_days: 0,
+            ca_reissuance_threshold_days: 0,
             dns_client,
         })
     }
@@ -633,6 +734,7 @@ pub mod tests {
         env::remove_var("KEY_FILE");
         env::remove_var("CERT_FILE");
         env::remove_var("AUTH_CERT_FILE");
+        env::remove_var("AUTH_KEY_FILE");
         env::remove_var("PROTOCOL_VERSION");
         env::remove_var("CIPHER_SUITE");
         env::remove_var("SESSION_RESUMPTION");
@@ -647,11 +749,61 @@ pub mod tests {
         env::remove_var("SERVICE_DB_CONNECT");
         env::remove_var("ROLE_DB_CONNECT");
         env::remove_var("USER_DB_CONNECT");
+        env::remove_var("CA_ENABLED");
+        env::remove_var("CA_KEY_ALGORITHM");
+        env::remove_var("CA_VALIDITY_PERIOD_DAYS");
+        env::remove_var("CA_REISSUANCE_THRESHOLD_DAYS");
         env::remove_var("VERBOSE");
     }
 
     // tests
     // =====
+
+    #[test]
+    fn keyalg_into_ca_key_algorithm() {
+        let key_algorithm: ca::KeyAlgorithm = KeyAlgorithm::EcdsaP256.into();
+        assert_eq!(key_algorithm, ca::KeyAlgorithm::EcdsaP256);
+        let key_algorithm: ca::KeyAlgorithm = KeyAlgorithm::EcdsaP384.into();
+        assert_eq!(key_algorithm, ca::KeyAlgorithm::EcdsaP384);
+        let key_algorithm: ca::KeyAlgorithm = KeyAlgorithm::Ed25519.into();
+        assert_eq!(key_algorithm, ca::KeyAlgorithm::Ed25519);
+    }
+
+    #[test]
+    fn keyalg_display() {
+        assert_eq!(format!("{}", KeyAlgorithm::EcdsaP256), "ecdsa-p256");
+        assert_eq!(format!("{}", KeyAlgorithm::EcdsaP384), "ecdsa-p384");
+        assert_eq!(format!("{}", KeyAlgorithm::Ed25519), "ed25519");
+    }
+
+    #[test]
+    fn datasource_repository_factories() {
+        let (access_repo_factory, service_repo_factory, role_repo_factory, user_repo_factory) =
+            DataSource::default().repository_factories();
+
+        let access_repo = access_repo_factory();
+        let access = access_repo
+            .lock()
+            .unwrap()
+            .get(200, &model::access::EntityType::User, 100);
+        assert!(access.is_ok());
+        assert!(access.unwrap().is_none());
+
+        let service_repo = service_repo_factory();
+        let services = service_repo.lock().unwrap().get_all();
+        assert!(services.is_ok());
+        assert!(services.unwrap().is_empty());
+
+        let role_repo = role_repo_factory();
+        let roles = role_repo.lock().unwrap().get_all();
+        assert!(roles.is_ok());
+        assert!(roles.unwrap().is_empty());
+
+        let user_repo = user_repo_factory();
+        let users = user_repo.lock().unwrap().get_all();
+        assert!(users.is_ok());
+        assert!(users.unwrap().is_empty());
+    }
 
     #[test]
     fn appcfg_new_when_all_supplied_and_valid() {
@@ -677,6 +829,7 @@ pub mod tests {
             env::set_var("KEY_FILE", gateway_key_file_str);
             env::set_var("CERT_FILE", gateway_cert_file_str);
             env::set_var("AUTH_CERT_FILE", gateway_cert_file_str);
+            env::set_var("AUTH_KEY_FILE", gateway_key_file_str);
             env::set_var("PROTOCOL_VERSION", "1.3");
             env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
             env::set_var("SESSION_RESUMPTION", "true");
@@ -691,6 +844,10 @@ pub mod tests {
             env::set_var("SERVICE_DB_CONNECT", service_db_file_str);
             env::set_var("ROLE_DB_CONNECT", role_db_file_str);
             env::set_var("USER_DB_CONNECT", user_db_file_str);
+            env::set_var("CA_ENABLED", "true");
+            env::set_var("CA_KEY_ALGORITHM", "ecdsa-p384");
+            env::set_var("CA_VALIDITY_PERIOD_DAYS", "200");
+            env::set_var("CA_REISSUANCE_THRESHOLD_DAYS", "30");
             env::set_var("VERBOSE", "true");
 
             result = AppConfig::new();
@@ -709,11 +866,24 @@ pub mod tests {
         assert_eq!(config.gateway_service_ports.unwrap(), (8000, 8010));
         assert!(!config.mask_addresses);
         assert_eq!(config.gateway_service_reply_host, "gwhost2".to_string());
+        assert!(config.ca_enabled);
+        assert_eq!(
+            config.ca_signer_cert_file,
+            gateway_cert_file_str.to_string()
+        );
+        assert!(config.ca_signer_key_file.is_some());
+        assert_eq!(
+            config.ca_signer_key_file.as_ref().unwrap(),
+            &gateway_key_file_str.to_string()
+        );
+        assert_eq!(config.ca_key_algorithm, KeyAlgorithm::EcdsaP384);
+        assert_eq!(config.ca_validity_period_days, 200);
+        assert_eq!(config.ca_reissuance_threshold_days, 30);
         assert!(config.verbose_logging);
     }
 
     #[test]
-    fn appcfg_new_when_mixed_configfile_and_env_supplied() {
+    fn appcfg_new_when_mixed_configfile_and_env_and_defaults() {
         let config_file: PathBuf = CONFIG_FILE_PATHPARTS.iter().collect();
         let config_file_str = config_file.to_str().unwrap();
         let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
@@ -738,6 +908,7 @@ pub mod tests {
             env::set_var("KEY_FILE", gateway_key_file_str);
             env::set_var("CERT_FILE", gateway_cert_file_str);
             env::set_var("AUTH_CERT_FILE", gateway_cert_file_str);
+            env::set_var("AUTH_KEY_FILE", gateway_key_file_str);
             env::set_var("PROTOCOL_VERSION", "1.3");
             env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
             env::set_var("SESSION_RESUMPTION", "true");
@@ -768,6 +939,25 @@ pub mod tests {
         assert_eq!(config.gateway_service_ports.unwrap(), (8000, 8010));
         assert!(!config.mask_addresses);
         assert_eq!(config.gateway_service_reply_host, "gwhost2".to_string());
+        assert!(!config.ca_enabled);
+        assert_eq!(
+            config.ca_signer_cert_file,
+            gateway_cert_file_str.to_string()
+        );
+        assert!(config.ca_signer_key_file.is_some());
+        assert_eq!(
+            config.ca_signer_key_file.as_ref().unwrap(),
+            &gateway_key_file_str.to_string()
+        );
+        assert_eq!(config.ca_key_algorithm, DEFAULT_CA_KEY_ALGORITHM);
+        assert_eq!(
+            config.ca_validity_period_days,
+            DEFAULT_CA_CERTIFICATE_VALIDITY_PERIOD_DAYS
+        );
+        assert_eq!(
+            config.ca_reissuance_threshold_days,
+            DEFAULT_CA_CERTIFICATE_REISSUANCE_THRESHOLD_DAYS
+        );
         assert!(config.verbose_logging);
     }
 

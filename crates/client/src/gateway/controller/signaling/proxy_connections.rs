@@ -7,7 +7,8 @@ use serde_json::Value::Array;
 
 use crate::gateway::controller::signaling::SignalingEventHandler;
 use crate::service::manager::ServiceMgr;
-use trust0_common::control::signaling::event::{EventType, ProxyConnection, SignalEvent};
+use trust0_common::control::signaling::event::{EventType, SignalEvent};
+use trust0_common::control::signaling::heartbeat::ProxyConnectionEvent;
 use trust0_common::control::tls::message::ConnectionAddrs;
 use trust0_common::error::AppError;
 use trust0_common::error::AppError::General;
@@ -103,7 +104,7 @@ impl ProxyConnectionsProcessor {
         let client_conn_addrs: HashSet<ConnectionAddrs> = match signal_event.data {
             None => HashSet::new(),
             Some(data) => HashSet::from_iter(
-                ProxyConnection::from_serde_value(&data)?
+                ProxyConnectionEvent::from_serde_value(&data)?
                     .iter()
                     .flat_map(|proxy_conn| proxy_conn.binds.clone())
                     .map(|proxy_addrs| {
@@ -209,7 +210,7 @@ impl ProxyConnectionsProcessor {
 
         for (service_name, service_proxy_keys) in proxy_keys.values() {
             proxy_connections.push(
-                ProxyConnection::new(
+                ProxyConnectionEvent::new(
                     service_name.as_str(),
                     service_proxy_keys
                         .iter()
@@ -422,7 +423,7 @@ pub mod tests {
             &EventType::ProxyConnections,
             &Some(json!([
                 {
-                    "service_name": "Service200",
+                    "serviceName": "Service200",
                     "binds": [["addr1","addr2"]]
                 },
             ])),
@@ -469,7 +470,7 @@ pub mod tests {
                 &Some(serde_json::to_value(EventType::ProxyConnections).unwrap()),
                 &Some(json!([
                     {
-                        "service_name": "Service200",
+                        "serviceName": "Service200",
                         "binds": [
                             ["addr1", "addr2"],
                             ["addr3", "addr4"],

@@ -285,7 +285,7 @@ pub mod tests {
         "client-uid100.key.pem",
     ];
 
-    static TEST_MUTEX: Lazy<Arc<Mutex<bool>>> = Lazy::new(|| Arc::new(Mutex::new(true)));
+    pub static TEST_MUTEX: Lazy<Arc<Mutex<bool>>> = Lazy::new(|| Arc::new(Mutex::new(true)));
 
     // utils
     // =====
