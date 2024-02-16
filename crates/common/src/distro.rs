@@ -7,6 +7,8 @@ use std::os::windows::fs::OpenOptionsExt;
 #[cfg(windows)]
 use std::os::windows::io::AsRawHandle;
 use std::path::{Path, PathBuf};
+#[cfg(not(test))]
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{env, fs};
 
 use crate::error::AppError;
@@ -24,7 +26,7 @@ static APP_CONFIG_DIR: Lazy<PathBuf> = Lazy::new(AppInstallDir::config_dir);
 static APP_TRANSIENT_DIR: Lazy<PathBuf> = Lazy::new(AppInstallDir::transient_dir);
 
 /// Application directory types
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum AppInstallDir {
     /// Backup/save files directory
     Backup,
@@ -182,6 +184,52 @@ pub enum AppInstallFile {
 }
 
 impl AppInstallFile {
+    /// Install directory accessor
+    ///
+    /// # Returns
+    ///
+    /// A [`AppInstallDir`] corresponding to [`Self`].
+    ///
+    pub fn app_install_dir(&self) -> &AppInstallDir {
+        match self {
+            AppInstallFile::CARootCertificate => &AppInstallDir::Pki,
+            AppInstallFile::ClientConfig => &AppInstallDir::Config,
+            AppInstallFile::ClientBinary => &AppInstallDir::Binary,
+            AppInstallFile::ClientCertificate => &AppInstallDir::Pki,
+            AppInstallFile::ClientKey => &AppInstallDir::Pki,
+            AppInstallFile::GatewayConfig => &AppInstallDir::Config,
+            AppInstallFile::GatewayBinary => &AppInstallDir::Binary,
+            AppInstallFile::GatewayCertificate => &AppInstallDir::Pki,
+            AppInstallFile::GatewayKey => &AppInstallDir::Pki,
+            AppInstallFile::Custom(dir, _, _) => dir,
+        }
+    }
+
+    /// File path, relative to the parent [`AppInstallDir`]
+    ///
+    /// # Returns
+    ///
+    /// The relative file path corresponding to [`Self`].
+    ///
+    pub fn relative_path(&self) -> PathBuf {
+        match self {
+            AppInstallFile::CARootCertificate => "ca-root.cert.pem".into(),
+            AppInstallFile::ClientConfig => "trust0-client.conf".into(),
+            AppInstallFile::ClientBinary => {
+                format!("trust0-client{}", env::consts::EXE_SUFFIX).into()
+            }
+            AppInstallFile::ClientCertificate => "trust0-client.cert.pem".into(),
+            AppInstallFile::ClientKey => "trust0-client.key.pem".into(),
+            AppInstallFile::GatewayConfig => "trust0-gateway.conf".into(),
+            AppInstallFile::GatewayBinary => {
+                format!("trust0-gateway{}", env::consts::EXE_SUFFIX).into()
+            }
+            AppInstallFile::GatewayCertificate => "trust0-gateway.cert.pem".into(),
+            AppInstallFile::GatewayKey => "trust0-gateway.key.pem".into(),
+            AppInstallFile::Custom(_, relative_path, _) => relative_path.clone(),
+        }
+    }
+
     /// File pathspec
     ///
     /// # Returns
@@ -189,40 +237,7 @@ impl AppInstallFile {
     /// A [`PathBuf`] corresponding to [`Self`].
     ///
     pub fn pathspec(&self) -> PathBuf {
-        match self {
-            AppInstallFile::CARootCertificate => {
-                AppInstallDir::Pki.pathspec().join("ca-root.cert.pem")
-            }
-            AppInstallFile::ClientConfig => {
-                AppInstallDir::Config.pathspec().join("trust0-client.conf")
-            }
-            AppInstallFile::ClientBinary => {
-                let mut pathspec = AppInstallDir::Binary.pathspec().join("trust0-client");
-                let _ = pathspec.set_extension(env::consts::EXE_EXTENSION);
-                pathspec
-            }
-            AppInstallFile::ClientCertificate => {
-                AppInstallDir::Pki.pathspec().join("trust0-client.cert.pem")
-            }
-            AppInstallFile::ClientKey => {
-                AppInstallDir::Pki.pathspec().join("trust0-client.key.pem")
-            }
-            AppInstallFile::GatewayConfig => {
-                AppInstallDir::Config.pathspec().join("trust0-gateway.conf")
-            }
-            AppInstallFile::GatewayBinary => {
-                let mut pathspec = AppInstallDir::Binary.pathspec().join("trust0-gateway");
-                let _ = pathspec.set_extension(env::consts::EXE_EXTENSION);
-                pathspec
-            }
-            AppInstallFile::GatewayCertificate => AppInstallDir::Pki
-                .pathspec()
-                .join("trust0-gateway.cert.pem"),
-            AppInstallFile::GatewayKey => {
-                AppInstallDir::Pki.pathspec().join("trust0-gateway.key.pem")
-            }
-            AppInstallFile::Custom(dir, path, _) => dir.pathspec().join(path.clone()),
-        }
+        self.app_install_dir().pathspec().join(self.relative_path())
     }
 
     /// File permissions
@@ -231,7 +246,7 @@ impl AppInstallFile {
     ///
     /// The unix permissions bit mask for [`Self`].
     ///
-    fn permissions(&self) -> u32 {
+    pub fn permissions(&self) -> u32 {
         match self {
             AppInstallFile::CARootCertificate => 0o600,
             AppInstallFile::ClientConfig => 0o600,
@@ -323,6 +338,7 @@ impl AppInstallFile {
             .create(true)
             .read(true)
             .write(true)
+            .truncate(true)
             .mode(mode)
             .open(path)
             .map_err(|err| {
@@ -400,6 +416,54 @@ impl AppInstallFile {
             })?;
 
         Ok(file)
+    }
+
+    /// Backup to predetermined location, which uses the file's relative path spec rooted under [`AppInstallDir::Backup`].
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing a tuple of the corresponding [`File`] object and path for the successfully backed up file.
+    /// If no current existing file, then `None` is returned
+    ///
+    pub fn backup(&self) -> Result<Option<(File, PathBuf)>, AppError> {
+        if !self.pathspec().exists() {
+            return Ok(None);
+        }
+        let backup_file_pathspec = format!(
+            "{}.{}",
+            self.relative_path().to_str().unwrap(),
+            Self::backup_file_extension()
+        );
+        let backup_file = AppInstallFile::Custom(
+            AppInstallDir::Backup,
+            PathBuf::from(backup_file_pathspec),
+            self.permissions(),
+        );
+        Ok(Some((
+            backup_file.create_from_file(&self.pathspec())?,
+            backup_file.pathspec(),
+        )))
+    }
+
+    /// File extension to use in new back file
+    ///
+    /// # Returns
+    ///
+    /// A string of the current duration in seconds since the Epoch.
+    ///
+    #[cfg(not(test))]
+    fn backup_file_extension() -> String {
+        format!(
+            "{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+        )
+    }
+    #[cfg(test)]
+    fn backup_file_extension() -> String {
+        "9876543210".to_string()
     }
 }
 
@@ -577,6 +641,96 @@ pub mod tests {
     }
 
     #[test]
+    fn appinstallfile_app_install_dir() {
+        assert_eq!(
+            AppInstallFile::CARootCertificate.app_install_dir(),
+            &AppInstallDir::Pki
+        );
+        assert_eq!(
+            AppInstallFile::ClientConfig.app_install_dir(),
+            &AppInstallDir::Config
+        );
+        assert_eq!(
+            AppInstallFile::ClientBinary.app_install_dir(),
+            &AppInstallDir::Binary
+        );
+        assert_eq!(
+            AppInstallFile::ClientCertificate.app_install_dir(),
+            &AppInstallDir::Pki
+        );
+        assert_eq!(
+            AppInstallFile::ClientKey.app_install_dir(),
+            &AppInstallDir::Pki
+        );
+        assert_eq!(
+            AppInstallFile::GatewayConfig.app_install_dir(),
+            &AppInstallDir::Config
+        );
+        assert_eq!(
+            AppInstallFile::GatewayBinary.app_install_dir(),
+            &AppInstallDir::Binary
+        );
+        assert_eq!(
+            AppInstallFile::GatewayCertificate.app_install_dir(),
+            &AppInstallDir::Pki
+        );
+        assert_eq!(
+            AppInstallFile::GatewayKey.app_install_dir(),
+            &AppInstallDir::Pki
+        );
+        assert_eq!(
+            AppInstallFile::Custom(AppInstallDir::Home, "file123.txt".into(), 0o700)
+                .app_install_dir(),
+            &AppInstallDir::Home
+        );
+    }
+
+    #[test]
+    fn appinstallfile_relative_path() {
+        assert_eq!(
+            AppInstallFile::CARootCertificate.relative_path(),
+            PathBuf::from("ca-root.cert.pem")
+        );
+        assert_eq!(
+            AppInstallFile::ClientConfig.relative_path(),
+            PathBuf::from("trust0-client.conf")
+        );
+        assert_eq!(
+            AppInstallFile::ClientBinary.relative_path(),
+            PathBuf::from(format!("trust0-client{}", env::consts::EXE_SUFFIX))
+        );
+        assert_eq!(
+            AppInstallFile::ClientCertificate.relative_path(),
+            PathBuf::from("trust0-client.cert.pem")
+        );
+        assert_eq!(
+            AppInstallFile::ClientKey.relative_path(),
+            PathBuf::from("trust0-client.key.pem")
+        );
+        assert_eq!(
+            AppInstallFile::GatewayConfig.relative_path(),
+            PathBuf::from("trust0-gateway.conf")
+        );
+        assert_eq!(
+            AppInstallFile::GatewayBinary.relative_path(),
+            PathBuf::from(format!("trust0-gateway{}", env::consts::EXE_SUFFIX))
+        );
+        assert_eq!(
+            AppInstallFile::GatewayCertificate.relative_path(),
+            PathBuf::from("trust0-gateway.cert.pem")
+        );
+        assert_eq!(
+            AppInstallFile::GatewayKey.relative_path(),
+            PathBuf::from("trust0-gateway.key.pem")
+        );
+        assert_eq!(
+            AppInstallFile::Custom(AppInstallDir::Home, "file123.txt".into(), 0o700)
+                .relative_path(),
+            PathBuf::from("file123.txt")
+        );
+    }
+
+    #[test]
     fn appinstallfile_pathspec() {
         let expected_data_home_path;
         let expected_config_home_path;
@@ -716,7 +870,7 @@ pub mod tests {
     }
 
     #[test]
-    fn appinstallfile_create_from_file_when_file_not_exists() {
+    fn appinstallfile_create_from_file_when_file_doesnt_exist() {
         let non_existent_file: PathBuf;
         let install_file;
         {
@@ -834,6 +988,144 @@ pub mod tests {
             panic!(
                 "Error reading file contents: file={:?}, err={:?}",
                 &created_file, &err
+            );
+        }
+        assert_eq!(file_data.replace(&[' ', '\t', '\r', '\n'], ""),
+                   "-----BEGINX509CRL-----WRONG1-----ENDX509CRL----------BEGINX509CRL-----WRONG2-----ENDX509CRL-----".to_string());
+    }
+
+    #[test]
+    fn appinstallfile_backup_when_file_doesnt_exist() {
+        let install_file = AppInstallFile::GatewayBinary;
+
+        let backed_up_file = install_file.backup();
+        if let Err(err) = backed_up_file {
+            panic!("Unexpected backup result: err={:?}", &err);
+        }
+
+        assert!(backed_up_file.unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn appinstallfile_backup_when_file_exists() {
+        let mutex = testutils::TEST_MUTEX.clone();
+        let _lock = mutex.lock().unwrap();
+        testutils::setup_xdg_vars().unwrap();
+        let backup_install_dir = AppInstallDir::Backup;
+        let existing_file = EXISTING_FILE_PATHPARTS.iter().collect();
+        let install_file = AppInstallFile::Custom(AppInstallDir::Home, "file123.txt".into(), 0o700);
+
+        let created_file = install_file.create_from_file(&existing_file);
+        if let Err(err) = created_file {
+            panic!("Unexpected create result: err={:?}", &err);
+        }
+
+        let backed_up_file = install_file.backup();
+        if let Err(err) = backed_up_file {
+            panic!("Unexpected backup result: err={:?}", &err);
+        }
+
+        let backed_up_file = backed_up_file.unwrap();
+        assert!(backed_up_file.is_some());
+        let (mut backed_up_file, backed_up_file_path) = backed_up_file.unwrap();
+
+        let expected_back_up_file_path =
+            backup_install_dir.pathspec().join("file123.txt.9876543210");
+        assert_eq!(backed_up_file_path, expected_back_up_file_path);
+
+        let backed_up_file_meta = backed_up_file.metadata();
+        if let Err(err) = backed_up_file_meta {
+            panic!("Unexpected file metadata result: err={:?}", &err);
+        }
+        let backed_up_file_meta = backed_up_file_meta.unwrap();
+
+        let backed_up_file_perms = backed_up_file_meta.permissions().mode() & 0o777;
+        assert_eq!(backed_up_file_perms, 0o700);
+
+        let mut file_data = String::new();
+        if let Err(err) = backed_up_file.read_to_string(&mut file_data) {
+            panic!(
+                "Error reading file contents: file={:?}, err={:?}",
+                &backed_up_file, &err
+            );
+        }
+        assert_eq!(file_data.replace(&[' ', '\t', '\r', '\n'], ""),
+                   "-----BEGINX509CRL-----WRONG1-----ENDX509CRL----------BEGINX509CRL-----WRONG2-----ENDX509CRL-----".to_string());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn appinstallfile_backup_when_file_exists() {
+        let mutex = testutils::TEST_MUTEX.clone();
+        let _lock = mutex.lock().unwrap();
+        testutils::setup_xdg_vars().unwrap();
+        let backup_install_dir = AppInstallDir::Backup;
+        let existing_file = EXISTING_FILE_PATHPARTS.iter().collect();
+        let install_file = AppInstallFile::Custom(AppInstallDir::Home, "file123.txt".into(), 0o700);
+
+        let created_file = install_file.create_from_file(&existing_file);
+        if let Err(err) = created_file {
+            panic!("Unexpected create result: err={:?}", &err);
+        }
+
+        let backed_up_file = install_file.backup();
+        if let Err(err) = backed_up_file {
+            panic!("Unexpected backup result: err={:?}", &err);
+        }
+
+        let backed_up_file = backed_up_file.unwrap();
+        assert!(backed_up_file.is_some());
+        let (mut backed_up_file, backed_up_file_path) = backed_up_file.unwrap();
+
+        let expected_back_up_file_path =
+            backup_install_dir.pathspec().join("file123.txt.9876543210");
+        assert_eq!(backed_up_file_path, expected_back_up_file_path);
+
+        let acl_result = windows_acl::acl::ACL::from_file_handle(
+            backed_up_file.as_raw_handle() as *mut winapi::ctypes::c_void,
+            false,
+        );
+        if let Err(err_code) = acl_result {
+            panic!(
+                "Unexpected file acl retrieval result: file={:?}, err_code={}",
+                &backed_up_file, err_code
+            );
+        }
+        let acl = acl_result.unwrap();
+
+        let acl_entries = acl.all().unwrap_or(Vec::new());
+        assert!(!acl_entries.is_empty());
+
+        let curr_user_name = windows_acl::helper::current_user()
+            .ok_or(AppError::General(
+                "Unable to retrieve current username".to_string(),
+            ))
+            .unwrap();
+        let curr_user_sid = windows_acl::helper::sid_to_string(
+            windows_acl::helper::name_to_sid(&curr_user_name.as_str(), None)
+                .unwrap_or(vec![])
+                .as_ptr() as winapi::um::winnt::PSID,
+        )
+        .unwrap_or(String::new());
+
+        let mut expected_acl = windows_acl::acl::ACLEntry::new();
+        expected_acl.entry_type = windows_acl::acl::AceType::AccessAllow;
+        expected_acl.string_sid = curr_user_sid;
+        expected_acl.flags = 0;
+        expected_acl.mask = winapi::um::winnt::FILE_GENERIC_READ
+            | winapi::um::winnt::FILE_GENERIC_WRITE
+            | winapi::um::winnt::FILE_GENERIC_EXECUTE;
+
+        if let None = acl_entry_exists(&acl_entries, &expected_acl) {
+            panic!("ACL entry not found: file={:?}", &backed_up_file);
+        }
+
+        let mut file_data = String::new();
+        if let Err(err) = backed_up_file.read_to_string(&mut file_data) {
+            panic!(
+                "Error reading file contents: file={:?}, err={:?}",
+                &backed_up_file, &err
             );
         }
         assert_eq!(file_data.replace(&[' ', '\t', '\r', '\n'], ""),
