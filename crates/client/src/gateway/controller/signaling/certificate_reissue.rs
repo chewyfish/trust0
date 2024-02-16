@@ -231,10 +231,13 @@ pub mod tests {
         let mut processor = CertReissuanceProcessor::new(&Arc::new(Mutex::new(output_writer)));
 
         let cert_install_file_path = cert_install_file.pathspec();
+        let key_install_file_path = key_install_file.pathspec();
+        fs::create_dir_all(cert_install_file_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(key_install_file_path.parent().unwrap()).unwrap();
+
         if cert_install_file_path.exists() {
             fs::remove_file(&cert_install_file_path).unwrap();
         }
-        let key_install_file_path = key_install_file.pathspec();
         if key_install_file_path.exists() {
             fs::remove_file(&key_install_file_path).unwrap();
         }
@@ -322,8 +325,14 @@ pub mod tests {
 
         let backup_cert_install_file_path = backup_cert_install_file.pathspec();
         let backup_key_install_file_path = backup_key_install_file.pathspec();
-
         let cert_install_file_path = cert_install_file.pathspec();
+        let key_install_file_path = key_install_file.pathspec();
+
+        fs::create_dir_all(backup_cert_install_file_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(backup_key_install_file_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(cert_install_file_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(key_install_file_path.parent().unwrap()).unwrap();
+
         if cert_install_file_path.exists() {
             fs::remove_file(&cert_install_file_path).unwrap();
         }
@@ -332,7 +341,6 @@ pub mod tests {
             .write_all("OLD CERTIFICATE PEM".as_bytes())
             .unwrap();
 
-        let key_install_file_path = key_install_file.pathspec();
         if key_install_file_path.exists() {
             fs::remove_file(&key_install_file_path).unwrap();
         }
