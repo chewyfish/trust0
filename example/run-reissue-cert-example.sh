@@ -14,7 +14,13 @@ XDG_DATA_HOME="${EXAMPLE_BUILD_DIR}"/xdg/data
 mkdir -p "${XDG_CACHE_HOME}" "${XDG_CONFIG_HOME}" "${XDG_DATA_HOME}"
 export XDG_CACHE_HOME XDG_CONFIG_HOME XDG_DATA_HOME
 
-next_week=$(date -u --date '7 day' +"%FT%TZ")
+# (assume) GNU date
+if date --version 2> /dev/null; then
+  next_week=$(date -u --date '7 day' +"%FT%TZ")
+# (assume) BSD date
+else
+  next_week=$(date -u -v+1w "+%Y-%m-%dT%H:%M:%SZ")
+fi
 
 GMAKE_CMD="${GMAKE_CMD} CA_ENABLED=true TRUST0_CLIENT__PKI_CERT_FILE=${XDG_DATA_HOME}/Trust0/pki/trust0-client.cert.pem TRUST0_CLIENT__PKI_KEY_FILE=${XDG_DATA_HOME}/Trust0/pki/trust0-client.key.pem TRUST0_CLIENT__PKI_VALID_NOT_AFTER=${next_week}"
 
