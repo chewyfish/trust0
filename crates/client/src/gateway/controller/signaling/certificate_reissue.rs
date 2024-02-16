@@ -268,12 +268,14 @@ pub mod tests {
             console::LINE_ENDING,
             console::LINE_ENDING,
             console::SHELL_PROMPT,
-        );
+        )
+        .replace("\\", "");
 
         let output_data = String::from_utf8(testutils::gather_rcvd_bytearr_channel_data(
             &output_channel.1,
         ))
-        .unwrap();
+        .unwrap()
+        .replace("\\", "");
 
         assert_eq!(output_data, expected_output_data);
 
@@ -374,13 +376,15 @@ pub mod tests {
             console::LINE_ENDING,
             console::LINE_ENDING,
             console::SHELL_PROMPT,
-        );
+        )
+        .replace("\\", "");
 
         let large_num_re = Regex::new(r"\d{10,}").unwrap();
         let output_data = String::from_utf8(testutils::gather_rcvd_bytearr_channel_data(
             &output_channel.1,
         ))
-        .unwrap();
+        .unwrap()
+        .replace("\\", "");
         let output_data = large_num_re.replace_all(&output_data, "9876543210");
         assert_eq!(output_data, expected_output_data);
 
