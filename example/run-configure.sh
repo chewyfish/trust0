@@ -2,7 +2,9 @@
 
 set -euo pipefail
 
-EXAMPLE_DIR=$(dirname "$0")
+cd $(dirname "$0")
+
+EXAMPLE_DIR=$(pwd)
 EXAMPLE_BUILD_DIR="${EXAMPLE_DIR}/target"
 EXAMPLE_CONFIG_FILE="${EXAMPLE_BUILD_DIR}/example.conf"
 
@@ -15,6 +17,7 @@ DATASOURCE_INMEMDB_ROLE_FILE="${EXAMPLE_BUILD_DIR}/example-db-role.json"
 DATASOURCE_INMEMDB_USER_M4_FILE="${EXAMPLE_DIR}/example-db-user.json.m4"
 DATASOURCE_INMEMDB_USER_FILE="${EXAMPLE_BUILD_DIR}/example-db-user.json"
 
+DATE_CMD=${DATE_CMD:-date}
 GMAKE_CMD=${GMAKE_CMD:-gmake}
 CARGO_CMD=${CARGO_CMD:-cargo}
 OPENSSL_CMD=${OPENSSL_CMD:-openssl}
@@ -42,6 +45,7 @@ function check_command_exists() {
   return 0
 }
 
+check_command_exists "${DATE_CMD}" && DATE_CMD=$(which "${DATE_CMD}")
 check_command_exists "${GMAKE_CMD}" && GMAKE_CMD=$(which "${GMAKE_CMD}")
 check_command_exists "${CARGO_CMD}" && CARGO_CMD=$(which "${CARGO_CMD}")
 check_command_exists "${OPENSSL_CMD}" && OPENSSL_CMD=$(which "${OPENSSL_CMD}")
