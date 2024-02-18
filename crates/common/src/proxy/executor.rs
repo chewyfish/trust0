@@ -145,12 +145,12 @@ impl ProxyExecutor {
 
                     match ChannelAndTcpStreamProxy::new(
                         &proxy_key,
-                        proxy_context.0,
+                        &proxy_context.0,
                         proxy_context.1,
-                        proxy_context.2,
+                        &proxy_context.2,
                         proxy_context.3,
-                        proxy_context.4,
-                        proxy_context.5,
+                        &proxy_context.4,
+                        &proxy_context.5,
                     ) {
                         Ok(proxy_stream) => {
                             let proxy_stream = Arc::new(Mutex::new(proxy_stream));
@@ -190,9 +190,9 @@ impl ProxyExecutor {
                         &proxy_key,
                         proxy_context.0,
                         proxy_context.1,
-                        proxy_context.2,
-                        proxy_context.3,
-                        proxy_context.4,
+                        &proxy_context.2,
+                        &proxy_context.3,
+                        &proxy_context.4,
                     ) {
                         Ok(proxy_stream) => {
                             let proxy_stream = Arc::new(Mutex::new(proxy_stream));
@@ -232,8 +232,8 @@ impl ProxyExecutor {
                         &proxy_key,
                         proxy_context.0,
                         proxy_context.1,
-                        proxy_context.2,
-                        proxy_context.3,
+                        &proxy_context.2,
+                        &proxy_context.3,
                     ) {
                         Ok(proxy_stream) => {
                             let proxy_stream = Arc::new(Mutex::new(proxy_stream));

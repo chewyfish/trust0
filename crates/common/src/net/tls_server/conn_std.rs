@@ -105,10 +105,10 @@ impl Connection {
         mut visitor: Box<dyn ConnectionVisitor>,
         tls_conn: TlsServerConnection,
         session_addrs: &control::tls::message::ConnectionAddrs,
-        alpn_protocol: alpn::Protocol,
+        alpn_protocol: &alpn::Protocol,
     ) -> Result<Self, AppError> {
         let event_channel = mpsc::channel();
-        visitor.on_connected(event_channel.0.clone())?;
+        visitor.on_connected(&event_channel.0)?;
 
         let tcp_stream = stream_utils::clone_std_tcp_stream(&tls_conn.sock)?;
 
@@ -119,7 +119,7 @@ impl Connection {
             tcp_stream: Some(tcp_stream),
             session_addrs: session_addrs.clone(),
             event_channel,
-            alpn_protocol,
+            alpn_protocol: alpn_protocol.clone(),
             closed: false,
         })
     }
@@ -495,7 +495,7 @@ pub trait ConnectionVisitor: Send {
     ///
     fn on_connected(
         &mut self,
-        _event_channel_sender: Sender<ConnectionEvent>,
+        _event_channel_sender: &Sender<ConnectionEvent>,
     ) -> Result<(), AppError> {
         Ok(())
     }
@@ -558,7 +558,7 @@ pub mod tests {
     mock! {
         pub ConnVisit {}
         impl ConnectionVisitor for ConnVisit {
-            fn on_connected(&mut self, _event_channel_sender: Sender<ConnectionEvent>) -> Result<(), AppError>;
+            fn on_connected(&mut self, _event_channel_sender: &Sender<ConnectionEvent>) -> Result<(), AppError>;
             fn on_connection_read(&mut self, _data: &[u8]) -> Result<(), AppError>;
             fn on_polling_cycle(&mut self) -> Result<(), AppError>;
             fn on_shutdown(&mut self) -> Result<(), AppError>;
@@ -617,7 +617,7 @@ pub mod tests {
                 stream_utils::clone_std_tcp_stream(&connected_tcp_stream.server_stream.0).unwrap(),
             ),
             &session_addrs,
-            alpn::Protocol::ControlPlane,
+            &alpn::Protocol::ControlPlane,
         );
 
         if let Err(err) = result {
@@ -1373,7 +1373,7 @@ pub mod tests {
             err_response: String::new(),
         };
 
-        if let Err(err) = conn_visitor.on_connected(mpsc::channel().0) {
+        if let Err(err) = conn_visitor.on_connected(&mpsc::channel().0) {
             panic!("Unexpected 'on_connected' result: err={:?}", &err);
         }
         if let Err(err) = conn_visitor.on_connection_read(&[0x10]) {

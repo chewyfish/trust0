@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use pki_types::CertificateDer;
+use x509_parser::nom::AsBytes;
 
 use crate::client::controller::{ControlPlane, MessageProcessor};
 use crate::client::device::Device;
@@ -54,14 +55,14 @@ impl ClientConnVisitor {
     ///
     /// A [`Result`] containing a newly constructed [`ClientConnVisitor`] object.
     ///
-    pub fn new(app_config: Arc<AppConfig>, service_mgr: Arc<Mutex<dyn ServiceMgr>>) -> Self {
+    pub fn new(app_config: &Arc<AppConfig>, service_mgr: &Arc<Mutex<dyn ServiceMgr>>) -> Self {
         let access_repo = Arc::clone(&app_config.access_repo);
         let service_repo = Arc::clone(&app_config.service_repo);
         let user_repo = Arc::clone(&app_config.user_repo);
 
         Self {
             app_config: app_config.clone(),
-            service_mgr,
+            service_mgr: service_mgr.clone(),
             access_repo,
             service_repo,
             user_repo,
@@ -106,7 +107,7 @@ impl ClientConnVisitor {
                 "Empty client certificate chain".to_string(),
             ))?
             .iter()
-            .map(|c| crypto::x509::create_der_certificate(c.to_vec()))
+            .map(|c| crypto::x509::create_der_certificate(c.as_bytes()))
             .collect();
 
         let device = Device::new(peer_certificates)?;
@@ -313,7 +314,7 @@ impl ClientConnVisitor {
 impl conn_std::ConnectionVisitor for ClientConnVisitor {
     fn on_connected(
         &mut self,
-        event_channel_sender: Sender<conn_std::ConnectionEvent>,
+        event_channel_sender: &Sender<conn_std::ConnectionEvent>,
     ) -> Result<(), AppError> {
         let user = self.user.as_ref().unwrap();
         if self
@@ -329,17 +330,17 @@ impl conn_std::ConnectionVisitor for ClientConnVisitor {
                     &self.access_repo,
                     &self.service_repo,
                     &self.user_repo,
-                    &event_channel_sender,
+                    event_channel_sender,
                     self.device.as_ref().unwrap(),
                     user,
                 )?));
             self.service_mgr
                 .lock()
                 .unwrap()
-                .add_control_plane(user.user_id, message_processor.clone())?;
+                .add_control_plane(user.user_id, &message_processor)?;
             self.message_processor = Some(message_processor);
         }
-        self.event_channel_sender = Some(event_channel_sender);
+        self.event_channel_sender = Some(event_channel_sender.clone());
 
         Ok(())
     }
@@ -467,19 +468,19 @@ mod tests {
         )?);
         let proxy_tasks_sender: Sender<ProxyExecutorEvent> = mpsc::channel().0;
         let proxy_events_sender: Sender<ProxyEvent> = mpsc::channel().0;
-        let service_mgr = Arc::new(Mutex::new(GatewayServiceMgr::new(
-            app_config.clone(),
-            proxy_tasks_sender,
-            proxy_events_sender,
+        let service_mgr: Arc<Mutex<dyn ServiceMgr>> = Arc::new(Mutex::new(GatewayServiceMgr::new(
+            &app_config,
+            &proxy_tasks_sender,
+            &proxy_events_sender,
         )));
         if user_control_plane.is_some() {
             let user_control_plane = user_control_plane.unwrap();
             service_mgr
                 .lock()
                 .unwrap()
-                .add_control_plane(user_control_plane.0, user_control_plane.1.clone())?;
+                .add_control_plane(user_control_plane.0, &user_control_plane.1)?;
         }
-        Ok(ClientConnVisitor::new(app_config, service_mgr))
+        Ok(ClientConnVisitor::new(&app_config, &service_mgr))
     }
 
     fn create_msg_processor(is_authenticated: bool) -> Arc<Mutex<dyn MessageProcessor>> {
@@ -495,7 +496,7 @@ mod tests {
     fn cliconnvis_process_authorization_fn_when_nosvc_and_gooduser_and_goodproto_and_1stcontrol(
     ) -> Result<(), AppError> {
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap().to_string())?;
+        let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
         let alpn_proto = alpn::PROTOCOL_CONTROL_PLANE.as_bytes().to_vec();
 
         let mut tls_conn = MockTlsSvrConn::new();
@@ -563,7 +564,7 @@ mod tests {
     fn cliconnvis_process_authorization_fn_when_nosvc_and_gooduser_and_goodproto_and_2ndcontrol(
     ) -> Result<(), AppError> {
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap().to_string())?;
+        let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
         let alpn_proto = alpn::PROTOCOL_CONTROL_PLANE.as_bytes().to_vec();
 
         let mut tls_conn = MockTlsSvrConn::new();
@@ -628,7 +629,7 @@ mod tests {
     fn cliconnvis_process_authorization_fn_when_goodsvc_and_gooduser_and_goodproto_and_hascontrol(
     ) -> Result<(), AppError> {
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap().to_string())?;
+        let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
         let alpn_proto = alpn::Protocol::create_service_protocol(200)
             .as_bytes()
             .to_vec();
@@ -711,7 +712,7 @@ mod tests {
     fn cliconnvis_process_authorization_fn_when_goodsvc_and_gooduser_and_goodproto_and_nocontrol(
     ) -> Result<(), AppError> {
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap().to_string())?;
+        let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
         let alpn_proto = alpn::Protocol::create_service_protocol(200)
             .as_bytes()
             .to_vec();
@@ -779,7 +780,7 @@ mod tests {
     fn cliconnvis_process_authorization_fn_when_goodsvc_and_gooduser_and_goodproto_and_nonauthed_control(
     ) -> Result<(), AppError> {
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap().to_string())?;
+        let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
         let alpn_proto = alpn::Protocol::create_service_protocol(200)
             .as_bytes()
             .to_vec();
@@ -847,7 +848,7 @@ mod tests {
     fn cliconnvis_process_authorization_fn_when_wrongsvc_and_gooduser_and_goodproto_and_hascontrol(
     ) -> Result<(), AppError> {
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap().to_string())?;
+        let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
         let alpn_proto = alpn::Protocol::create_service_protocol(200)
             .as_bytes()
             .to_vec();
@@ -918,7 +919,7 @@ mod tests {
     fn cliconnvis_process_authorization_fn_when_goodsvc_and_gooduser_and_wrongproto_and_hascontrol(
     ) -> Result<(), AppError> {
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap().to_string())?;
+        let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
         let alpn_proto = alpn::PROTOCOL_CONTROL_PLANE.as_bytes().to_vec();
 
         let mut tls_conn = MockTlsSvrConn::new();
@@ -983,7 +984,7 @@ mod tests {
     fn cliconnvis_process_authorization_fn_when_nosvc_and_badcert_and_nocontrol(
     ) -> Result<(), AppError> {
         let peer_certs_file: PathBuf = CERTFILE_NON_CLIENT_PATHPARTS.iter().collect();
-        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap().to_string())?;
+        let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
 
         let mut tls_conn = MockTlsSvrConn::new();
         tls_conn
@@ -1031,7 +1032,7 @@ mod tests {
     fn cliconnvis_process_authorization_fn_when_nosvc_and_baduid_and_nocontrol(
     ) -> Result<(), AppError> {
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap().to_string())?;
+        let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
 
         let mut tls_conn = MockTlsSvrConn::new();
         tls_conn
@@ -1083,7 +1084,7 @@ mod tests {
     fn cliconnvis_process_authorization_fn_when_nosvc_and_inactiveuser_and_nocontrol(
     ) -> Result<(), AppError> {
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let peer_certs = load_certificates(peer_certs_file.to_str().unwrap().to_string())?;
+        let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
 
         let mut tls_conn = MockTlsSvrConn::new();
         tls_conn

@@ -57,12 +57,12 @@ impl ChannelAndTcpStreamProxy {
     ///
     pub fn new(
         proxy_key: &str,
-        socket_channel_addr: SocketAddr,
+        socket_channel_addr: &SocketAddr,
         socket_channel_receiver: sync::mpsc::Receiver<ProxyEvent>,
-        server_socket_channel_sender: sync::mpsc::Sender<ProxyEvent>,
+        server_socket_channel_sender: &sync::mpsc::Sender<ProxyEvent>,
         tcp_stream: std::net::TcpStream,
-        tcp_stream_reader_writer: Arc<Mutex<Box<dyn StreamReaderWriter>>>,
-        proxy_channel_sender: sync::mpsc::Sender<ProxyEvent>,
+        tcp_stream_reader_writer: &Arc<Mutex<Box<dyn StreamReaderWriter>>>,
+        proxy_channel_sender: &sync::mpsc::Sender<ProxyEvent>,
     ) -> Result<Self, AppError> {
         // Convert tcp stream to non-blocking
         let tcp_stream = stream_utils::clone_std_tcp_stream(&tcp_stream)?;
@@ -80,12 +80,12 @@ impl ChannelAndTcpStreamProxy {
         // Instantiate TcpStreamProxy
         Ok(ChannelAndTcpStreamProxy {
             proxy_key: proxy_key.to_string(),
-            socket_channel_addr,
+            socket_channel_addr: *socket_channel_addr,
             socket_channel_receiver: Arc::new(Mutex::new(socket_channel_receiver)),
-            server_socket_channel_sender,
+            server_socket_channel_sender: server_socket_channel_sender.clone(),
             tcp_stream,
-            tcp_stream_reader_writer,
-            proxy_channel_sender,
+            tcp_stream_reader_writer: tcp_stream_reader_writer.clone(),
+            proxy_channel_sender: proxy_channel_sender.clone(),
             closing: Arc::new(Mutex::new(false)),
             closed: Arc::new(Mutex::new(false)),
         })
@@ -426,12 +426,12 @@ pub mod tests {
         let proxy_channel = sync::mpsc::channel();
         let proxy = ChannelAndTcpStreamProxy::new(
             proxy_key,
-            socket_channel_addr.clone(),
+            &socket_channel_addr,
             socket_channel.1,
-            server_socket_channel.0,
+            &server_socket_channel.0,
             client_tcp_stream,
-            Arc::new(Mutex::new(client_reader_writer)),
-            proxy_channel.0.clone(),
+            &Arc::new(Mutex::new(client_reader_writer)),
+            &proxy_channel.0,
         )?;
         Ok((
             proxy,

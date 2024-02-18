@@ -50,7 +50,7 @@ impl User {
         user_name: Option<&str>,
         password: Option<&str>,
         name: &str,
-        status: Status,
+        status: &Status,
         roles: &[u64],
     ) -> Self {
         Self {
@@ -58,7 +58,7 @@ impl User {
             user_name: user_name.map(|u| u.to_string()),
             password: password.map(|p| p.to_string()),
             name: name.to_string(),
-            status,
+            status: status.clone(),
             roles: roles.to_owned(),
         }
     }
@@ -77,7 +77,7 @@ pub mod tests {
             Some("uname100"),
             Some("pass100"),
             "user100",
-            Status::Active,
+            &Status::Active,
             &roles,
         );
         assert_eq!(user.user_id, 100);

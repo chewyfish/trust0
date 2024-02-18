@@ -284,7 +284,7 @@ mod tests {
         .unwrap();
         app_config.ca_reissuance_threshold_days = 20;
         let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let certs = load_certificates(certs_file.to_str().unwrap().to_string()).unwrap();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
         let device = Device::new(certs).unwrap();
 
         let processor = CertReissuanceProcessor::new(
@@ -317,7 +317,7 @@ mod tests {
         app_config.ca_reissuance_threshold_days = 20;
         app_config.ca_signer_cert_file = rootca_certs_file.to_str().unwrap().to_string();
         app_config.ca_signer_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
-        let certs = load_certificates(certs_file.to_str().unwrap().to_string()).unwrap();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
         let device = Device::new(certs).unwrap();
 
         let mut processor = CertReissuanceProcessor::new(
@@ -356,7 +356,7 @@ mod tests {
         app_config.ca_reissuance_threshold_days = 20;
         app_config.ca_signer_cert_file = rootca_certs_file.to_str().unwrap().to_string();
         app_config.ca_signer_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
-        let certs = load_certificates(certs_file.to_str().unwrap().to_string()).unwrap();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
         let device = Device::new(certs).unwrap();
 
         let mut processor = CertReissuanceProcessor::new(
@@ -394,7 +394,7 @@ mod tests {
         app_config.ca_key_algorithm = config::KeyAlgorithm::EcdsaP384;
         app_config.ca_signer_cert_file = rootca_certs_file.to_str().unwrap().to_string();
         app_config.ca_signer_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
-        let certs = load_certificates(certs_file.to_str().unwrap().to_string()).unwrap();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
         let device = Device::new(certs).unwrap();
 
         let mut processor = CertReissuanceProcessor::new(
@@ -432,7 +432,7 @@ mod tests {
         app_config.ca_key_algorithm = config::KeyAlgorithm::EcdsaP384;
         app_config.ca_signer_cert_file = rootca_certs_file.to_str().unwrap().to_string();
         app_config.ca_signer_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
-        let certs = load_certificates(certs_file.to_str().unwrap().to_string()).unwrap();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
         let device = Device::new(certs).unwrap();
 
         let mut processor = CertReissuanceProcessor::new(
@@ -474,7 +474,7 @@ mod tests {
         app_config.ca_key_algorithm = config::KeyAlgorithm::EcdsaP384;
         app_config.ca_signer_cert_file = rootca_certs_file.to_str().unwrap().to_string();
         app_config.ca_signer_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
-        let certs = load_certificates(certs_file.to_str().unwrap().to_string()).unwrap();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
         let device = Device::new(certs).unwrap();
 
         let mut processor = CertReissuanceProcessor::new(

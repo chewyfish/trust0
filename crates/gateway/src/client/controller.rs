@@ -267,10 +267,10 @@ impl ControlPlaneServerVisitor {
     ///
     /// A newly constructed [`ControlPlaneServerVisitor`] object.
     ///
-    pub fn new(app_config: Arc<AppConfig>, service_mgr: Arc<Mutex<dyn ServiceMgr>>) -> Self {
+    pub fn new(app_config: &Arc<AppConfig>, service_mgr: &Arc<Mutex<dyn ServiceMgr>>) -> Self {
         Self {
-            app_config,
-            service_mgr,
+            app_config: app_config.clone(),
+            service_mgr: service_mgr.clone(),
         }
     }
 }
@@ -280,8 +280,7 @@ impl server_std::ServerVisitor for ControlPlaneServerVisitor {
         &mut self,
         tls_conn: TlsServerConnection,
     ) -> Result<conn_std::Connection, AppError> {
-        let mut conn_visitor =
-            ClientConnVisitor::new(self.app_config.clone(), self.service_mgr.clone());
+        let mut conn_visitor = ClientConnVisitor::new(&self.app_config, &self.service_mgr);
 
         let session_addrs = &(
             format!("{:?}", &tls_conn.sock.peer_addr()),
@@ -294,7 +293,7 @@ impl server_std::ServerVisitor for ControlPlaneServerVisitor {
             Box::new(conn_visitor),
             tls_conn,
             session_addrs,
-            alpn_protocol,
+            &alpn_protocol,
         )?;
 
         Ok(connection)
@@ -383,7 +382,7 @@ pub mod tests {
 
     pub fn create_device() -> Result<Device, AppError> {
         let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let certs = load_certificates(certs_file.to_str().unwrap().to_string())?;
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
         Device::new(certs)
     }
 

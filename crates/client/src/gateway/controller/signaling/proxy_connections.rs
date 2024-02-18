@@ -46,11 +46,11 @@ impl ProxyConnectionsProcessor {
     ///
     pub fn new(
         service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
-        message_outbox: Arc<Mutex<VecDeque<Vec<u8>>>>,
+        message_outbox: &Arc<Mutex<VecDeque<Vec<u8>>>>,
     ) -> Self {
         Self {
             service_mgr: service_mgr.clone(),
-            message_outbox,
+            message_outbox: message_outbox.clone(),
             missing_connection_binds: HashMap::new(),
             missing_signal_probes: 0,
         }
@@ -94,17 +94,17 @@ impl ProxyConnectionsProcessor {
         &mut self,
         service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
         proxy_keys: &HashMap<u64, (String, Vec<(String, ConnectionAddrs)>)>,
-        signal_event: SignalEvent,
+        signal_event: &SignalEvent,
     ) -> Result<(), AppError> {
         let mut proxy_context_map = HashMap::new();
         let mut missing_conn_binds = HashMap::new();
         let mut shutdown_conn_binds = Vec::new();
 
         // Set up client/gateway connection address sets
-        let client_conn_addrs: HashSet<ConnectionAddrs> = match signal_event.data {
+        let client_conn_addrs: HashSet<ConnectionAddrs> = match &signal_event.data {
             None => HashSet::new(),
             Some(data) => HashSet::from_iter(
-                ProxyConnectionEvent::from_serde_value(&data)?
+                ProxyConnectionEvent::from_serde_value(data)?
                     .iter()
                     .flat_map(|proxy_conn| proxy_conn.binds.clone())
                     .map(|proxy_addrs| {
@@ -212,7 +212,7 @@ impl ProxyConnectionsProcessor {
             proxy_connections.push(
                 ProxyConnectionEvent::new(
                     service_name.as_str(),
-                    service_proxy_keys
+                    &service_proxy_keys
                         .iter()
                         .map(|k| vec![k.1 .0.to_string(), k.1 .1.to_string()])
                         .collect::<Vec<Vec<String>>>(),
@@ -250,7 +250,7 @@ impl SignalingEventHandler for ProxyConnectionsProcessor {
 
             for signal_event in signal_events {
                 if let Err(err) =
-                    self.process_inbound_event(&service_mgr, &proxy_keys, signal_event)
+                    self.process_inbound_event(&service_mgr, &proxy_keys, &signal_event)
                 {
                     error(&target!(), &format!("{:?}", &err));
                 }
@@ -305,7 +305,7 @@ pub mod tests {
     fn proxyconnproc_new() {
         let service_mgr: Arc<Mutex<dyn ServiceMgr>> = Arc::new(Mutex::new(MockSvcMgr::new()));
         let processor =
-            ProxyConnectionsProcessor::new(&service_mgr, Arc::new(Mutex::new(VecDeque::new())));
+            ProxyConnectionsProcessor::new(&service_mgr, &Arc::new(Mutex::new(VecDeque::new())));
 
         assert!(processor.missing_connection_binds.is_empty());
         assert_eq!(processor.missing_signal_probes, 0);

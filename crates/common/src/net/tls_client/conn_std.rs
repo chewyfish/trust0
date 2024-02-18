@@ -75,7 +75,7 @@ impl Connection {
         session_addrs: &control::tls::message::ConnectionAddrs,
     ) -> Result<Self, AppError> {
         let event_channel = ConnectionEvent::create_channel();
-        visitor.on_connected(event_channel.0.clone())?;
+        visitor.on_connected(&event_channel.0)?;
 
         let tcp_stream = stream_utils::clone_std_tcp_stream(&tls_conn.sock)?;
 
@@ -441,7 +441,7 @@ pub trait ConnectionVisitor: Send {
     ///
     fn on_connected(
         &mut self,
-        _event_channel_sender: Sender<ConnectionEvent>,
+        _event_channel_sender: &Sender<ConnectionEvent>,
     ) -> Result<(), AppError> {
         Ok(())
     }
@@ -517,7 +517,7 @@ pub mod tests {
     mock! {
         pub ConnVisit {}
         impl ConnectionVisitor for ConnVisit {
-            fn on_connected(&mut self, _event_channel_sender: Sender<ConnectionEvent>) -> Result<(), AppError>;
+            fn on_connected(&mut self, _event_channel_sender: &Sender<ConnectionEvent>) -> Result<(), AppError>;
             fn on_connection_read(&mut self, _data: &[u8]) -> Result<(), AppError>;
             fn on_polling_cycle(&mut self) -> Result<(), AppError>;
             fn on_shutdown(&mut self) -> Result<(), AppError>;
@@ -1388,7 +1388,7 @@ pub mod tests {
             err_response: String::new(),
         };
 
-        if let Err(err) = conn_visitor.on_connected(mpsc::channel().0) {
+        if let Err(err) = conn_visitor.on_connected(&mpsc::channel().0) {
             panic!("Unexpected 'on_connected' result: err={:?}", &err);
         }
         if let Err(err) = conn_visitor.on_connection_read(&[0x10]) {

@@ -565,11 +565,11 @@ pub mod tests {
 
     pub fn create_tls_server_config() -> Result<rustls::ServerConfig, anyhow::Error> {
         let rootca_cert_file: PathBuf = CERTFILE_ROOTCA_PATHPARTS.iter().collect();
-        let rootca_cert = load_certificates(rootca_cert_file.to_str().unwrap().to_string())?;
+        let rootca_cert = load_certificates(rootca_cert_file.to_str().as_ref().unwrap())?;
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
-        let gateway_cert = load_certificates(gateway_cert_file.to_str().unwrap().to_string())?;
+        let gateway_cert = load_certificates(gateway_cert_file.to_str().as_ref().unwrap())?;
         let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
-        let gateway_key = load_private_key(gateway_key_file.to_str().unwrap().to_string())?;
+        let gateway_key = load_private_key(gateway_key_file.to_str().as_ref().unwrap())?;
         let cipher_suites: Vec<rustls::SupportedCipherSuite> =
             rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
         let alpn_protocols = vec![alpn::Protocol::ControlPlane.to_string().into_bytes()];
@@ -641,11 +641,9 @@ pub mod tests {
     // ====
     #[test]
     fn server_new() {
-        let server = Server::new(
-            Arc::new(Mutex::new(MockServerVisit::new())),
-            "127.0.0.1",
-            1234,
-        );
+        let server_visitor: Arc<Mutex<dyn ServerVisitor>> =
+            Arc::new(Mutex::new(MockServerVisit::new()));
+        let server = Server::new(server_visitor, "127.0.0.1", 1234);
 
         assert!(server.tcp_listener.is_none());
         assert_eq!(server.listen_addr, "127.0.0.1:1234");
@@ -793,7 +791,7 @@ pub mod tests {
                     Box::new(conn_visitor),
                     tls_conn,
                     &("addr1".to_string(), "addr2".to_string()),
-                    alpn::Protocol::ControlPlane,
+                    &alpn::Protocol::ControlPlane,
                 )?;
                 *self.conn_created.lock().unwrap() = true;
                 Ok(conn)

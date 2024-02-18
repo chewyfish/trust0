@@ -27,10 +27,10 @@ impl ProxyConnectionEvent {
     ///
     /// A newly constructed [`ProxyConnectionEvent`] object.
     ///
-    pub fn new(service_name: &str, binds: Vec<Vec<String>>) -> Self {
+    pub fn new(service_name: &str, binds: &[Vec<String>]) -> Self {
         Self {
             service_name: service_name.to_string(),
-            binds,
+            binds: binds.to_vec(),
         }
     }
 
@@ -103,7 +103,7 @@ mod tests {
     fn proxyconnevt_new() {
         let proxy_conn = ProxyConnectionEvent::new(
             "svc1",
-            vec![
+            &vec![
                 vec!["b0".to_string(), "b1".to_string()],
                 vec!["b2".to_string(), "b3".to_string()],
             ],
@@ -139,7 +139,7 @@ mod tests {
                 assert_eq!(proxy_conns.len(), 1);
                 let proxy_conn = ProxyConnectionEvent::new(
                     "svc1",
-                    vec![
+                    &vec![
                         vec!["b0".to_string(), "b1".to_string()],
                         vec!["b2".to_string(), "b3".to_string()],
                     ],
@@ -159,7 +159,7 @@ mod tests {
                 assert_eq!(proxy_conns.len(), 1);
                 let proxy_conn = ProxyConnectionEvent::new(
                     "svc1",
-                    vec![
+                    &vec![
                         vec!["b0".to_string(), "b1".to_string()],
                         vec!["b2".to_string(), "b3".to_string()],
                     ],
@@ -174,7 +174,7 @@ mod tests {
     fn proxyconnevt_try_into_value() {
         let proxy_conn = ProxyConnectionEvent::new(
             "svc1",
-            vec![
+            &vec![
                 vec!["b0".to_string(), "b1".to_string()],
                 vec!["b2".to_string(), "b3".to_string()],
             ],

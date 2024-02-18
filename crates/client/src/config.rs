@@ -123,8 +123,8 @@ impl AppConfig {
         let config_args = Self::parse_config();
 
         // Create TLS client configuration
-        let auth_certs = load_certificates(config_args.auth_cert_file.clone())?;
-        let ca_root_certs = load_certificates(config_args.ca_root_cert_file.clone())?;
+        let auth_certs = load_certificates(&config_args.auth_cert_file)?;
+        let ca_root_certs = load_certificates(&config_args.ca_root_cert_file)?;
 
         let mut ca_root_store = RootCertStore::empty();
 
@@ -137,7 +137,7 @@ impl AppConfig {
             })?;
         }
 
-        let auth_key = load_private_key(config_args.auth_key_file.clone()).unwrap();
+        let auth_key = load_private_key(&config_args.auth_key_file).unwrap();
 
         let cipher_suites: Vec<SupportedCipherSuite> = config_args
             .cipher_suite
@@ -294,13 +294,13 @@ pub mod tests {
         shell_output_writer: Option<ShellOutputWriter>,
     ) -> Result<AppConfig, AppError> {
         let rootca_cert_file: PathBuf = CERTFILE_ROOT_CA_PATHPARTS.iter().collect();
-        let rootca_cert = load_certificates(rootca_cert_file.to_str().unwrap().to_string())?;
+        let rootca_cert = load_certificates(rootca_cert_file.to_str().as_ref().unwrap())?;
         let client_pki_files: (PathBuf, PathBuf) = (
             CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect(),
             KEYFILE_CLIENT_UID100_PATHPARTS.iter().collect(),
         );
-        let client_cert = load_certificates(client_pki_files.0.to_str().unwrap().to_string())?;
-        let client_key = load_private_key(client_pki_files.1.to_str().unwrap().to_string())?;
+        let client_cert = load_certificates(client_pki_files.0.to_str().as_ref().unwrap())?;
+        let client_key = load_private_key(client_pki_files.1.to_str().as_ref().unwrap())?;
         let cipher_suites: Vec<SupportedCipherSuite> =
             rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
 
@@ -475,8 +475,8 @@ pub mod tests {
         let ca_root_cert_file_str = ca_root_cert_file.to_str().unwrap();
         let client_cert_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let client_cert_file_str = client_cert_file.to_str().unwrap();
-        let ca_root_cert = load_certificates(ca_root_cert_file_str.to_string()).unwrap();
-        let client_cert = load_certificates(client_cert_file_str.to_string()).unwrap();
+        let ca_root_cert = load_certificates(ca_root_cert_file_str).unwrap();
+        let client_cert = load_certificates(client_cert_file_str).unwrap();
 
         let no_cert_verification = NoCertificateVerification {};
         match no_cert_verification.verify_server_cert(

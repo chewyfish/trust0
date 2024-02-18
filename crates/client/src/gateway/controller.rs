@@ -37,20 +37,20 @@ impl ControlPlane {
     /// A [`Result`] containing a newly constructed [`ControlPlane`] object.
     ///
     pub fn new(
-        app_config: Arc<AppConfig>,
+        app_config: &Arc<AppConfig>,
         service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
     ) -> Result<Self, AppError> {
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
         let management_controller = Arc::new(Mutex::new(management::ManagementController::new(
-            app_config.clone(),
+            app_config,
             service_mgr,
-            message_outbox.clone(),
+            &message_outbox,
         )));
         let signaling_controller = Arc::new(Mutex::new(signaling::SignalingController::new(
-            &app_config,
+            app_config,
             service_mgr,
-            message_outbox.clone(),
+            &message_outbox,
         )));
         Self::spawn_signaling_event_loop(&signaling_controller)?;
 
@@ -112,7 +112,7 @@ impl ControlPlane {
 impl MessageProcessor for ControlPlane {
     fn on_connected(
         &mut self,
-        event_channel_sender: mpsc::Sender<conn_std::ConnectionEvent>,
+        event_channel_sender: &mpsc::Sender<conn_std::ConnectionEvent>,
     ) -> Result<(), AppError> {
         self.event_channel_sender = Some(event_channel_sender.clone());
 
@@ -121,7 +121,7 @@ impl MessageProcessor for ControlPlane {
                 .lock()
                 .unwrap()
                 .deref_mut()
-                .on_connected(event_channel_sender.clone())?;
+                .on_connected(event_channel_sender)?;
         }
 
         Ok(())
@@ -176,7 +176,7 @@ pub trait MessageProcessor {
     ///
     fn on_connected(
         &mut self,
-        event_channel_sender: mpsc::Sender<conn_std::ConnectionEvent>,
+        event_channel_sender: &mpsc::Sender<conn_std::ConnectionEvent>,
     ) -> Result<(), AppError>;
 
     /// Process potential control plane outbound message(s). Will generate and send message PDUs to gateway if necessary.
@@ -211,7 +211,7 @@ pub trait ChannelProcessor {
     ///
     fn on_connected(
         &mut self,
-        event_channel_sender: mpsc::Sender<conn_std::ConnectionEvent>,
+        event_channel_sender: &mpsc::Sender<conn_std::ConnectionEvent>,
     ) -> Result<(), AppError>;
 
     /// Process (potential) control plane channel outbound messages.
@@ -251,7 +251,7 @@ pub mod tests {
     mock! {
         pub GwMsgProcessor {}
         impl MessageProcessor for GwMsgProcessor {
-            fn on_connected(&mut self, event_channel_sender: mpsc::Sender<conn_std::ConnectionEvent>) -> Result<(), AppError>;
+            fn on_connected(&mut self, event_channel_sender: &mpsc::Sender<conn_std::ConnectionEvent>) -> Result<(), AppError>;
             fn process_outbound_messages(&mut self) -> Result<(), AppError>;
             fn process_inbound_messages(&mut self, message_bytes: &[u8]) -> Result<(), AppError>;
         }
@@ -262,7 +262,7 @@ pub mod tests {
         impl ChannelProcessor for ChannelProc {
             fn on_connected(
                 &mut self,
-                event_channel_sender: mpsc::Sender<conn_std::ConnectionEvent>,
+                event_channel_sender: &mpsc::Sender<conn_std::ConnectionEvent>,
             ) -> Result<(), AppError>;
             fn process_outbound_messages(&mut self) -> Result<(), AppError>;
             fn process_inbound_message(&mut self, message: MessageFrame) -> Result<(), AppError>;
@@ -278,7 +278,7 @@ pub mod tests {
             Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
 
         let result = ControlPlane::new(
-            Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Arc::new(config::tests::create_app_config(None).unwrap()),
             &service_mgr,
         );
 
@@ -372,7 +372,7 @@ pub mod tests {
             channel_processors,
         };
 
-        if let Err(err) = control_plane.on_connected(mpsc::channel().0) {
+        if let Err(err) = control_plane.on_connected(&mpsc::channel().0) {
             panic!("Unexpected result: err={:?}", &err);
         }
 

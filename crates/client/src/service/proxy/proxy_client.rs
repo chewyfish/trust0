@@ -91,11 +91,11 @@ pub mod tests {
 
     pub fn create_tls_client_config() -> anyhow::Result<rustls::ClientConfig, anyhow::Error> {
         let rootca_cert_file: PathBuf = CERTFILE_ROOT_CA_PATHPARTS.iter().collect();
-        let rootca_cert = load_certificates(rootca_cert_file.to_str().unwrap().to_string())?;
+        let rootca_cert = load_certificates(rootca_cert_file.to_str().as_ref().unwrap())?;
         let client_cert_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let client_cert = load_certificates(client_cert_file.to_str().unwrap().to_string())?;
+        let client_cert = load_certificates(client_cert_file.to_str().as_ref().unwrap())?;
         let client_key_file: PathBuf = KEYFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let client_key = load_private_key(client_key_file.to_str().unwrap().to_string())?;
+        let client_key = load_private_key(client_key_file.to_str().as_ref().unwrap())?;
 
         let mut ca_root_store = rustls::RootCertStore::empty();
 

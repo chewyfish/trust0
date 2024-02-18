@@ -448,9 +448,9 @@ impl AppConfig {
         )?;
 
         // Create TLS server configuration builder
-        let auth_certs = load_certificates(config_args.auth_cert_file.clone()).unwrap();
-        let certs = load_certificates(config_args.cert_file.clone()).unwrap();
-        let key = load_private_key(config_args.key_file.clone()).unwrap();
+        let auth_certs = load_certificates(&config_args.auth_cert_file).unwrap();
+        let certs = load_certificates(&config_args.cert_file).unwrap();
+        let key = load_private_key(&config_args.key_file).unwrap();
 
         let crl_reloader_loading = Arc::new(Mutex::new(false));
         let crl_list = match &config_args.crl_file {
@@ -676,9 +676,9 @@ pub mod tests {
         access_repo: Arc<Mutex<dyn AccessRepository>>,
     ) -> Result<AppConfig, AppError> {
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
-        let gateway_cert = load_certificates(gateway_cert_file.to_str().unwrap().to_string())?;
+        let gateway_cert = load_certificates(gateway_cert_file.to_str().as_ref().unwrap())?;
         let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
-        let gateway_key = load_private_key(gateway_key_file.to_str().unwrap().to_string())?;
+        let gateway_key = load_private_key(gateway_key_file.to_str().as_ref().unwrap())?;
         let auth_root_certs = rustls::RootCertStore::empty();
         let cipher_suites: Vec<rustls::SupportedCipherSuite> =
             rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
@@ -968,13 +968,13 @@ pub mod tests {
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_cert_file_str = gateway_cert_file.to_str().unwrap();
         let mut auth_root_certs = rustls::RootCertStore::empty();
-        for auth_root_cert in load_certificates(gateway_cert_file_str.to_string()).unwrap() {
+        for auth_root_cert in load_certificates(gateway_cert_file_str).unwrap() {
             auth_root_certs.add(auth_root_cert).unwrap();
         }
 
         let config_builder = TlsServerConfigBuilder {
-            certs: load_certificates(gateway_cert_file_str.to_string()).unwrap(),
-            key: load_private_key(gateway_key_file_str.to_string()).unwrap(),
+            certs: load_certificates(gateway_cert_file_str).unwrap(),
+            key: load_private_key(gateway_key_file_str).unwrap(),
             cipher_suites: rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec(),
             auth_root_certs,
             crl_list: None,

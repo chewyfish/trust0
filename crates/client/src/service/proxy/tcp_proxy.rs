@@ -28,7 +28,7 @@ pub struct TcpClientProxy {
 impl TcpClientProxy {
     /// TcpClientProxy constructor
     pub fn new(
-        app_config: Arc<AppConfig>,
+        app_config: &Arc<AppConfig>,
         server_visitor: Arc<Mutex<TcpClientProxyServerVisitor>>,
         proxy_port: u16,
     ) -> Self {
@@ -70,24 +70,24 @@ impl TcpClientProxyServerVisitor {
     #![allow(clippy::too_many_arguments)]
     /// TcpClientProxyServerVisitor constructor
     pub fn new(
-        app_config: Arc<AppConfig>,
-        service: Service,
+        app_config: &Arc<AppConfig>,
+        service: &Service,
         client_proxy_port: u16,
         gateway_proxy_host: &str,
         gateway_proxy_port: u16,
-        proxy_tasks_sender: Sender<ProxyExecutorEvent>,
-        proxy_events_sender: Sender<ProxyEvent>,
-        services_by_proxy_key: Arc<Mutex<HashMap<String, u64>>>,
+        proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
+        proxy_events_sender: &Sender<ProxyEvent>,
+        services_by_proxy_key: &Arc<Mutex<HashMap<String, u64>>>,
     ) -> Result<Self, AppError> {
         Ok(Self {
-            app_config,
-            service,
+            app_config: app_config.clone(),
+            service: service.clone(),
             client_proxy_port,
             gateway_proxy_host: gateway_proxy_host.to_string(),
             gateway_proxy_port,
-            proxy_tasks_sender,
-            proxy_events_sender,
-            services_by_proxy_key,
+            proxy_tasks_sender: proxy_tasks_sender.clone(),
+            proxy_events_sender: proxy_events_sender.clone(),
+            services_by_proxy_key: services_by_proxy_key.clone(),
             proxy_addrs_by_proxy_key: HashMap::new(),
             shutdown_requested: false,
         })
@@ -116,7 +116,7 @@ impl server_std::ServerVisitor for TcpClientProxyServerVisitor {
         let mut tls_client = client_std::Client::new(
             Box::new(ClientVisitor::new()),
             tls_client_config,
-            self.gateway_proxy_host.clone(),
+            &self.gateway_proxy_host,
             self.gateway_proxy_port,
             true,
         );
@@ -140,8 +140,8 @@ impl server_std::ServerVisitor for TcpClientProxyServerVisitor {
         let tcp_stream = connection.get_tcp_stream_as_ref();
         let proxy_key = ProxyEvent::key_value(
             &ProxyType::TcpAndTcp,
-            tcp_stream.peer_addr().ok(),
-            tcp_stream.local_addr().ok(),
+            &tcp_stream.peer_addr().ok(),
+            &tcp_stream.local_addr().ok(),
         );
         let client_stream = tcp_stream.try_clone().map_err(|err| {
             AppError::GenWithMsgAndErr(
@@ -329,14 +329,14 @@ pub mod tests {
             shutdown_requested: false,
         }));
 
-        let _ = TcpClientProxy::new(app_config, server_visitor, 3000);
+        let _ = TcpClientProxy::new(&app_config, server_visitor, 3000);
     }
 
     #[test]
     fn tcpsvrproxyvisit_new() {
         let server_visitor = TcpClientProxyServerVisitor::new(
-            Arc::new(config::tests::create_app_config(None).unwrap()),
-            Service {
+            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Service {
                 service_id: 200,
                 name: "svc200".to_string(),
                 transport: Transport::TCP,
@@ -346,9 +346,9 @@ pub mod tests {
             3000,
             "gwhost1",
             2000,
-            sync::mpsc::channel().0,
-            sync::mpsc::channel().0,
-            Arc::new(Mutex::new(HashMap::new())),
+            &sync::mpsc::channel().0,
+            &sync::mpsc::channel().0,
+            &Arc::new(Mutex::new(HashMap::new())),
         );
 
         assert!(server_visitor.is_ok());
@@ -434,8 +434,8 @@ pub mod tests {
 
         let expected_proxy_key = ProxyEvent::key_value(
             &ProxyType::TcpAndTcp,
-            connected_tcp_stream.client_stream.0.peer_addr().ok(),
-            connected_tcp_stream.client_stream.0.local_addr().ok(),
+            &connected_tcp_stream.client_stream.0.peer_addr().ok(),
+            &connected_tcp_stream.client_stream.0.local_addr().ok(),
         );
 
         match proxy_tasks_receiver.try_recv() {

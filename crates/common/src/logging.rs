@@ -99,7 +99,7 @@ impl Logger {
     /// * `level_filter` - Specifies the log level threshold for what should be logged
     /// * `visitor` - Visitor pattern object for the logging events
     ///
-    pub fn configure(&mut self, level_filter: LogLevel, visitor: Option<Box<LogVisitor>>) {
+    pub fn configure(&mut self, level_filter: &LogLevel, visitor: Option<Box<LogVisitor>>) {
         let level_filter = match level_filter {
             LogLevel::DEBUG => LevelFilter::Debug,
             LogLevel::INFO => LevelFilter::Info,
@@ -196,7 +196,7 @@ mod tests {
             handle: None,
             visitor: None,
         };
-        logger.configure(LogLevel::DEBUG, None);
+        logger.configure(&LogLevel::DEBUG, None);
         Mutex::new(logger)
     });
 

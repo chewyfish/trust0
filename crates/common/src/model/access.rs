@@ -38,10 +38,10 @@ impl ServiceAccess {
     ///
     /// A newly constructed [`ServiceAccess`] object.
     ///
-    pub fn new(service_id: u64, entity_type: EntityType, entity_id: u64) -> Self {
+    pub fn new(service_id: u64, entity_type: &EntityType, entity_id: u64) -> Self {
         Self {
             service_id,
-            entity_type,
+            entity_type: entity_type.clone(),
             entity_id,
         }
     }
@@ -54,7 +54,7 @@ pub mod tests {
 
     #[test]
     fn serviceaccess_new_when_entity_is_role() {
-        let access = ServiceAccess::new(200, EntityType::Role, 300);
+        let access = ServiceAccess::new(200, &EntityType::Role, 300);
         assert_eq!(access.service_id, 200);
         assert_eq!(access.entity_type, EntityType::Role);
         assert_eq!(access.entity_id, 300);
@@ -62,7 +62,7 @@ pub mod tests {
 
     #[test]
     fn serviceaccess_new_when_entity_is_user() {
-        let access = ServiceAccess::new(200, EntityType::User, 400);
+        let access = ServiceAccess::new(200, &EntityType::User, 400);
         assert_eq!(access.service_id, 200);
         assert_eq!(access.entity_type, EntityType::User);
         assert_eq!(access.entity_id, 400);

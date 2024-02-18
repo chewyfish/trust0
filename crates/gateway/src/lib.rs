@@ -52,16 +52,16 @@ pub mod api {
             let (proxy_events_sender, proxy_events_receiver) = sync::mpsc::channel();
 
             let service_mgr = Arc::new(Mutex::new(service::manager::GatewayServiceMgr::new(
-                app_config.clone(),
-                proxy_tasks_sender,
-                proxy_events_sender,
+                &app_config,
+                &proxy_tasks_sender,
+                &proxy_events_sender,
             )));
 
             let service_mgr_copy = service_mgr.clone();
             let proxy_events_processor_handle = thread::spawn(move || {
                 service::manager::GatewayServiceMgr::poll_proxy_events(
                     service_mgr_copy,
-                    proxy_events_receiver,
+                    &proxy_events_receiver,
                 )
             });
 
@@ -73,7 +73,7 @@ pub mod api {
                 _proxy_events_processor_handle: proxy_events_processor_handle,
                 gateway: None,
                 gateway_visitor: Arc::new(Mutex::new(gateway::ServerVisitor::new(
-                    app_config,
+                    &app_config,
                     service_mgr,
                 ))),
             }
@@ -92,7 +92,7 @@ pub mod api {
         /// Component start: start trust gateway
         fn start(&mut self) -> Result<(), AppError> {
             let trust_gateway =
-                gateway::Gateway::new(self.app_config.clone(), self.gateway_visitor.clone());
+                gateway::Gateway::new(&self.app_config, self.gateway_visitor.clone());
             self.gateway = Some(trust_gateway);
             self.gateway.as_mut().unwrap().bind_listener()?;
             self.gateway.as_mut().unwrap().poll_new_connections()?;

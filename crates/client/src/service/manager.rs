@@ -91,19 +91,19 @@ pub struct ClientServiceMgr {
 impl ClientServiceMgr {
     /// ServiceMgr constructor
     pub fn new(
-        app_config: Arc<AppConfig>,
-        proxy_tasks_sender: Sender<ProxyExecutorEvent>,
-        proxy_events_sender: Sender<ProxyEvent>,
+        app_config: &Arc<AppConfig>,
+        proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
+        proxy_events_sender: &Sender<ProxyEvent>,
     ) -> Self {
         Self {
-            app_config,
+            app_config: app_config.clone(),
             service_proxies: HashMap::new(),
             service_proxy_visitors: HashMap::new(),
             service_proxy_threads: HashMap::new(),
             service_addrs: HashMap::new(),
             services_by_proxy_key: Arc::new(Mutex::new(HashMap::new())),
-            proxy_events_sender,
-            proxy_tasks_sender,
+            proxy_events_sender: proxy_events_sender.clone(),
+            proxy_tasks_sender: proxy_tasks_sender.clone(),
             testing_mode: false,
         }
     }
@@ -207,18 +207,18 @@ impl ServiceMgr for ClientServiceMgr {
             // Starts up TCP service proxy
             Transport::TCP => {
                 let tcp_proxy_visitor = Arc::new(Mutex::new(TcpClientProxyServerVisitor::new(
-                    self.app_config.clone(),
-                    service.clone(),
+                    &self.app_config,
+                    service,
                     proxy_addrs.get_client_port(),
                     proxy_addrs.get_gateway_host(),
                     proxy_addrs.get_gateway_port(),
-                    self.proxy_tasks_sender.clone(),
-                    self.proxy_events_sender.clone(),
-                    self.services_by_proxy_key.clone(),
+                    &self.proxy_tasks_sender,
+                    &self.proxy_events_sender,
+                    &self.services_by_proxy_key,
                 )?));
 
                 service_proxy = Arc::new(Mutex::new(TcpClientProxy::new(
-                    self.app_config.clone(),
+                    &self.app_config,
                     tcp_proxy_visitor.clone(),
                     proxy_addrs.get_client_port(),
                 )));
@@ -240,19 +240,19 @@ impl ServiceMgr for ClientServiceMgr {
                     mpsc::channel();
 
                 let udp_proxy_visitor = Arc::new(Mutex::new(UdpClientProxyServerVisitor::new(
-                    self.app_config.clone(),
-                    service.clone(),
+                    &self.app_config,
+                    service,
                     proxy_addrs.get_client_port(),
                     proxy_addrs.get_gateway_host(),
                     proxy_addrs.get_gateway_port(),
-                    server_socket_channel_sender,
-                    self.proxy_tasks_sender.clone(),
-                    self.proxy_events_sender.clone(),
-                    self.services_by_proxy_key.clone(),
+                    &server_socket_channel_sender,
+                    &self.proxy_tasks_sender,
+                    &self.proxy_events_sender,
+                    &self.services_by_proxy_key,
                 )?));
 
                 service_proxy = Arc::new(Mutex::new(UdpClientProxy::new(
-                    self.app_config.clone(),
+                    &self.app_config,
                     server_socket_channel_receiver,
                     udp_proxy_visitor.clone(),
                     proxy_addrs.get_client_port(),
@@ -381,7 +381,8 @@ pub mod tests {
     fn clisvcmgr_new() {
         let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
 
-        let service_mgr = ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+        let service_mgr =
+            ClientServiceMgr::new(&app_config, &mpsc::channel().0, &mpsc::channel().0);
 
         assert!(service_mgr.service_proxies.is_empty());
         assert!(service_mgr.service_proxy_visitors.is_empty());
@@ -405,7 +406,7 @@ pub mod tests {
             .never();
 
         let mut service_mgr =
-            ClientServiceMgr::new(app_config, mpsc::channel().0, events_channel.0.clone());
+            ClientServiceMgr::new(&app_config, &mpsc::channel().0, &events_channel.0);
         service_mgr.testing_mode = true;
         service_mgr
             .services_by_proxy_key
@@ -447,7 +448,7 @@ pub mod tests {
             .return_once(|_| true);
 
         let mut service_mgr =
-            ClientServiceMgr::new(app_config, mpsc::channel().0, events_channel.0.clone());
+            ClientServiceMgr::new(&app_config, &mpsc::channel().0, &events_channel.0);
         service_mgr.testing_mode = true;
         service_mgr
             .services_by_proxy_key
@@ -473,7 +474,8 @@ pub mod tests {
     #[test]
     fn clisvcmgr_get_proxy_service_for_proxy_key() {
         let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
-        let service_mgr = ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+        let service_mgr =
+            ClientServiceMgr::new(&app_config, &mpsc::channel().0, &mpsc::channel().0);
         service_mgr
             .services_by_proxy_key
             .lock()
@@ -490,7 +492,7 @@ pub mod tests {
     fn clisvcmgr_get_proxy_addrs_for_service() {
         let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
         let mut service_mgr =
-            ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+            ClientServiceMgr::new(&app_config, &mpsc::channel().0, &mpsc::channel().0);
         service_mgr
             .service_addrs
             .insert(200, ProxyAddrs(1234, "host1".to_string(), 5678));
@@ -508,7 +510,7 @@ pub mod tests {
     fn clisvcmgr_get_service_proxies() {
         let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
         let mut service_mgr =
-            ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+            ClientServiceMgr::new(&app_config, &mpsc::channel().0, &mpsc::channel().0);
         service_mgr
             .service_proxy_visitors
             .insert(200, Arc::new(Mutex::new(MockCliSvcProxyVisitor::new())));
@@ -522,7 +524,7 @@ pub mod tests {
     fn clisvcmgr_get_proxy_visitor_for_service_when_found() {
         let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
         let mut service_mgr =
-            ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+            ClientServiceMgr::new(&app_config, &mpsc::channel().0, &mpsc::channel().0);
         service_mgr
             .service_proxy_visitors
             .insert(200, Arc::new(Mutex::new(MockCliSvcProxyVisitor::new())));
@@ -536,7 +538,7 @@ pub mod tests {
     fn clisvcmgr_get_proxy_visitor_for_service_when_not_found() {
         let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
         let mut service_mgr =
-            ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+            ClientServiceMgr::new(&app_config, &mpsc::channel().0, &mpsc::channel().0);
         service_mgr
             .service_proxy_visitors
             .insert(200, Arc::new(Mutex::new(MockCliSvcProxyVisitor::new())));
@@ -551,7 +553,7 @@ pub mod tests {
         let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
         let proxy_tasks_channel = mpsc::channel();
         let service_mgr =
-            ClientServiceMgr::new(app_config, proxy_tasks_channel.0, mpsc::channel().0);
+            ClientServiceMgr::new(&app_config, &proxy_tasks_channel.0, &mpsc::channel().0);
 
         let proxy_tasks_sender = service_mgr.clone_proxy_tasks_sender();
         proxy_tasks_sender
@@ -588,7 +590,7 @@ pub mod tests {
         let proxy_addrs = ProxyAddrs(3000, "gwhost1".to_string(), 8000);
 
         let mut service_mgr =
-            ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+            ClientServiceMgr::new(&app_config, &mpsc::channel().0, &mpsc::channel().0);
         service_mgr.testing_mode = true;
         service_mgr
             .service_addrs
@@ -628,7 +630,7 @@ pub mod tests {
         let proxy_addrs = ProxyAddrs(3000, "gwhost1".to_string(), 8000);
 
         let mut service_mgr =
-            ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+            ClientServiceMgr::new(&app_config, &mpsc::channel().0, &mpsc::channel().0);
         service_mgr.testing_mode = true;
 
         let orig_svc_addrs_len = service_mgr.service_addrs.len();
@@ -665,7 +667,7 @@ pub mod tests {
         let proxy_addrs = ProxyAddrs(3000, "gwhost1".to_string(), 8000);
 
         let mut service_mgr =
-            ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+            ClientServiceMgr::new(&app_config, &mpsc::channel().0, &mpsc::channel().0);
         service_mgr.testing_mode = true;
 
         let orig_svc_addrs_len = service_mgr.service_addrs.len();
@@ -713,7 +715,7 @@ pub mod tests {
             .return_once(|_| Ok(()));
 
         let mut service_mgr =
-            ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+            ClientServiceMgr::new(&app_config, &mpsc::channel().0, &mpsc::channel().0);
         service_mgr.testing_mode = true;
         service_mgr
             .service_proxy_visitors
@@ -741,7 +743,7 @@ pub mod tests {
         proxy201_visitor.expect_shutdown_connection().never();
 
         let mut service_mgr =
-            ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+            ClientServiceMgr::new(&app_config, &mpsc::channel().0, &mpsc::channel().0);
 
         service_mgr
             .service_proxy_visitors
@@ -771,7 +773,7 @@ pub mod tests {
         proxy201_visitor.expect_shutdown_connection().never();
 
         let mut service_mgr =
-            ClientServiceMgr::new(app_config, mpsc::channel().0, mpsc::channel().0);
+            ClientServiceMgr::new(&app_config, &mpsc::channel().0, &mpsc::channel().0);
 
         service_mgr
             .service_proxy_visitors

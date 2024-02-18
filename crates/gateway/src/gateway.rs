@@ -38,7 +38,7 @@ impl Gateway {
     ///
     /// A newly constructed [`Gateway`] object.
     ///
-    pub fn new(app_config: Arc<AppConfig>, visitor: Arc<Mutex<ServerVisitor>>) -> Self {
+    pub fn new(app_config: &Arc<AppConfig>, visitor: Arc<Mutex<ServerVisitor>>) -> Self {
         Self {
             tls_server: server_std::Server::new(
                 visitor,
@@ -98,11 +98,11 @@ impl ServerVisitor {
     ///
     /// A newly constructed [`ServerVisitor`] object.
     ///
-    pub fn new(app_config: Arc<AppConfig>, service_mgr: Arc<Mutex<dyn ServiceMgr>>) -> Self {
+    pub fn new(app_config: &Arc<AppConfig>, service_mgr: Arc<Mutex<dyn ServiceMgr>>) -> Self {
         Self {
             app_config: app_config.clone(),
             service_mgr: service_mgr.clone(),
-            control_plane_visitor: ControlPlaneServerVisitor::new(app_config, service_mgr),
+            control_plane_visitor: ControlPlaneServerVisitor::new(app_config, &service_mgr),
             shutdown_requested: false,
             #[cfg(test)]
             testing_data: HashMap::new(),
@@ -234,7 +234,7 @@ pub mod tests {
     mock! {
         pub ConnVisit {}
         impl conn_std::ConnectionVisitor for ConnVisit {
-            fn on_connected(&mut self, _event_channel_sender: mpsc::Sender<conn_std::ConnectionEvent>) -> Result<(), AppError>;
+            fn on_connected(&mut self, _event_channel_sender: &mpsc::Sender<conn_std::ConnectionEvent>) -> Result<(), AppError>;
             fn on_connection_read(&mut self, _data: &[u8]) -> Result<(), AppError>;
             fn on_polling_cycle(&mut self) -> Result<(), AppError>;
             fn on_shutdown(&mut self) -> Result<(), AppError>;
@@ -256,19 +256,17 @@ pub mod tests {
             )
             .unwrap(),
         );
-        let service_mgr = Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<dyn ServiceMgr>> =
+            Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
         let server_visitor = Arc::new(Mutex::new(super::ServerVisitor {
             app_config: app_config.clone(),
             service_mgr: service_mgr.clone(),
-            control_plane_visitor: ControlPlaneServerVisitor::new(
-                app_config.clone(),
-                service_mgr.clone(),
-            ),
+            control_plane_visitor: ControlPlaneServerVisitor::new(&app_config, &service_mgr),
             shutdown_requested: false,
             testing_data: HashMap::new(),
         }));
 
-        let _ = Gateway::new(app_config, server_visitor);
+        let _ = Gateway::new(&app_config, server_visitor);
     }
 
     #[test]
@@ -282,9 +280,10 @@ pub mod tests {
             )
             .unwrap(),
         );
-        let service_mgr = Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<dyn ServiceMgr>> =
+            Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
 
-        let _ = super::ServerVisitor::new(app_config.clone(), service_mgr.clone());
+        let _ = super::ServerVisitor::new(&app_config, service_mgr);
     }
 
     #[test]
@@ -305,9 +304,9 @@ pub mod tests {
             .with(predicate::eq(100))
             .times(1)
             .return_once(|_| Some(Arc::new(Mutex::new(MockGwSvcProxyVisitor::new()))));
-        let service_mgr = Arc::new(Mutex::new(service_mgr));
+        let service_mgr: Arc<Mutex<dyn ServiceMgr>> = Arc::new(Mutex::new(service_mgr));
 
-        let server_visitor = super::ServerVisitor::new(app_config, service_mgr);
+        let server_visitor = super::ServerVisitor::new(&app_config, service_mgr);
 
         if let Err(err) = server_visitor.get_service_proxy(100) {
             panic!("Unexpected result: err={:?}", &err);
@@ -332,9 +331,9 @@ pub mod tests {
             .with(predicate::eq(100))
             .times(1)
             .return_once(|_| None);
-        let service_mgr = Arc::new(Mutex::new(service_mgr));
+        let service_mgr: Arc<Mutex<dyn ServiceMgr>> = Arc::new(Mutex::new(service_mgr));
 
-        let server_visitor = super::ServerVisitor::new(app_config, service_mgr);
+        let server_visitor = super::ServerVisitor::new(&app_config, service_mgr);
 
         if let Ok(_) = server_visitor.get_service_proxy(100) {
             panic!("Unexpected existent result");
@@ -352,9 +351,10 @@ pub mod tests {
             )
             .unwrap(),
         );
-        let service_mgr = Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<dyn ServiceMgr>> =
+            Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
 
-        let mut server_visitor = super::ServerVisitor::new(app_config, service_mgr);
+        let mut server_visitor = super::ServerVisitor::new(&app_config, service_mgr);
 
         server_visitor.set_shutdown_requested(true);
         assert_eq!(server_visitor.shutdown_requested, true);
@@ -374,9 +374,10 @@ pub mod tests {
             )
             .unwrap(),
         );
-        let service_mgr = Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<dyn ServiceMgr>> =
+            Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
 
-        let mut server_visitor = super::ServerVisitor::new(app_config, service_mgr);
+        let mut server_visitor = super::ServerVisitor::new(&app_config, service_mgr);
         server_visitor.shutdown_requested = true;
 
         assert!(server_visitor.get_shutdown_requested());
@@ -393,10 +394,11 @@ pub mod tests {
             )
             .unwrap(),
         );
-        let service_mgr = Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<dyn ServiceMgr>> =
+            Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
         let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
 
-        let mut server_visitor = crate::gateway::ServerVisitor::new(app_config, service_mgr);
+        let mut server_visitor = crate::gateway::ServerVisitor::new(&app_config, service_mgr);
 
         let alpn_protocol = alpn::PROTOCOL_CONTROL_PLANE.as_bytes().to_vec();
         server_visitor
@@ -449,9 +451,9 @@ pub mod tests {
             .with(predicate::eq(200))
             .times(1)
             .return_once(|_| Some(Arc::new(Mutex::new(proxy_visitor))));
-        let service_mgr = Arc::new(Mutex::new(service_mgr));
+        let service_mgr: Arc<Mutex<dyn ServiceMgr>> = Arc::new(Mutex::new(service_mgr));
 
-        let mut server_visitor = crate::gateway::ServerVisitor::new(app_config, service_mgr);
+        let mut server_visitor = crate::gateway::ServerVisitor::new(&app_config, service_mgr);
 
         let alpn_protocol = Protocol::create_service_protocol(200).into_bytes();
         server_visitor
@@ -484,10 +486,11 @@ pub mod tests {
             )
             .unwrap(),
         );
-        let service_mgr = Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<dyn ServiceMgr>> =
+            Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
         let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
 
-        let mut server_visitor = crate::gateway::ServerVisitor::new(app_config, service_mgr);
+        let mut server_visitor = crate::gateway::ServerVisitor::new(&app_config, service_mgr);
 
         let server_msg_result = server_visitor.on_server_msg_provider(
             &ServerConnection::new(Arc::new(

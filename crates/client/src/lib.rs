@@ -51,9 +51,9 @@ pub mod api {
             let (proxy_events_sender, proxy_events_receiver) = sync::mpsc::channel();
 
             let service_mgr = Arc::new(Mutex::new(service::manager::ClientServiceMgr::new(
-                app_config.clone(),
-                proxy_tasks_sender,
-                proxy_events_sender,
+                &app_config,
+                &proxy_tasks_sender,
+                &proxy_events_sender,
             )));
 
             let service_mgr_copy = service_mgr.clone();
@@ -71,7 +71,7 @@ pub mod api {
                 service_mgr: service_mgr.clone(),
                 _proxy_executor_handle: proxy_executor_handle,
                 _proxy_events_processor_handle: proxy_events_processor_handle,
-                client: client::Client::new(app_config, service_mgr),
+                client: client::Client::new(&app_config, service_mgr),
             }
         }
 

@@ -12,9 +12,9 @@ fn process_runner() -> Result<(), AppError> {
 
     LOG.lock().unwrap().configure(
         if app_config.verbose_logging {
-            LogLevel::DEBUG
+            &LogLevel::DEBUG
         } else {
-            LogLevel::ERROR
+            &LogLevel::ERROR
         },
         Some(Box::new(|_, _| {
             let _ = write_shell_prompt(false);
