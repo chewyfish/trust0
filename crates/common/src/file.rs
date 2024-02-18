@@ -535,8 +535,10 @@ mod reload_tests {
             reloading: reloading.clone(),
         };
 
-        <ReloadFileImpl as ReloadableFile>::spawn_reloader(file, Some(Duration::from_millis(1000)));
+        <ReloadFileImpl as ReloadableFile>::spawn_reloader(file, Some(Duration::from_millis(50)));
         *reloading.lock().unwrap() = false;
+
+        thread::sleep(Duration::from_millis(60));
     }
 
     #[test]
@@ -552,8 +554,10 @@ mod reload_tests {
             reloading: reloading.clone(),
         };
 
-        <ReloadFileImpl as ReloadableFile>::spawn_reloader(file, Some(Duration::from_millis(1000)));
+        <ReloadFileImpl as ReloadableFile>::spawn_reloader(file, Some(Duration::from_millis(50)));
         *reloading.lock().unwrap() = false;
+
+        thread::sleep(Duration::from_millis(60));
     }
 
     #[test]

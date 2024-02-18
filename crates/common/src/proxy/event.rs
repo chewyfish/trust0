@@ -62,6 +62,25 @@ mod tests {
     }
 
     #[test]
+    fn proxyevt_debug() {
+        assert_eq!(
+            format!("{:?}", ProxyEvent::Closed("msg1".to_string())),
+            "Closed(\"msg1\")".to_string()
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                ProxyEvent::Message(
+                    "msg1".to_string(),
+                    "127.0.0.1:1234".parse().unwrap(),
+                    vec![0x10]
+                )
+            ),
+            "Message(\"msg1\", 127.0.0.1:1234, [16])".to_string()
+        );
+    }
+
+    #[test]
     fn proxyevt_key_value_when_addr1_and_noaddr2() {
         let key = ProxyEvent::key_value(
             &ProxyType::TcpAndTcp,

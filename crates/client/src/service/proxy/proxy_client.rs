@@ -7,6 +7,11 @@ pub struct ClientVisitor {}
 
 impl ClientVisitor {
     /// ClientVisitor constructor
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`ClientVisitor`] object.
+    ///
     pub fn new() -> Self {
         Self {}
     }
@@ -48,6 +53,11 @@ pub struct ServerConnVisitor {}
 
 impl ServerConnVisitor {
     /// ServerConnVisitor constructor
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing a newly constructed [`ServerConnVisitor`] object.
+    ///
     pub fn new() -> Result<Self, AppError> {
         Ok(Self {})
     }
@@ -66,6 +76,7 @@ pub mod tests {
     use pki_types::ServerName;
     use rustls::crypto::CryptoProvider;
     use rustls::StreamOwned;
+    use serde_json::json;
     use std::path::PathBuf;
     use std::sync::Arc;
     use trust0_common::crypto::file::{load_certificates, load_private_key};
@@ -133,7 +144,7 @@ pub mod tests {
     }
 
     #[test]
-    fn clivisit_create_server_conn() {
+    fn clivisit_create_server_conn_when_valid_and_has_binds() {
         let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
         let mut client_visitor = super::ClientVisitor::new();
         let session_addrs = ("addr1".to_string(), "addr2".to_string());
@@ -161,6 +172,53 @@ pub mod tests {
         let connection = result.unwrap();
 
         assert_eq!(connection.get_session_addrs(), &session_addrs);
+    }
+
+    #[test]
+    fn clivisit_create_server_conn_when_valid_and_invalid_msg_data() {
+        let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
+        let mut client_visitor = super::ClientVisitor::new();
+
+        let result = client_visitor.create_server_conn(
+            StreamOwned::new(
+                rustls::ClientConnection::new(
+                    Arc::new(create_tls_client_config().unwrap()),
+                    ServerName::try_from("127.0.0.1".to_string()).unwrap(),
+                )
+                .unwrap(),
+                stream_utils::clone_std_tcp_stream(&connected_tcp_stream.client_stream.0).unwrap(),
+            ),
+            Some(tls::message::SessionMessage::new(
+                &tls::message::DataType::Trust0Connection,
+                &Some(json!([123])),
+            )),
+        );
+
+        if result.is_ok() {
+            panic!("Unexpected successful result");
+        }
+    }
+
+    #[test]
+    fn clivisit_create_server_conn_when_no_given_server_msg() {
+        let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
+        let mut client_visitor = super::ClientVisitor::new();
+
+        let result = client_visitor.create_server_conn(
+            StreamOwned::new(
+                rustls::ClientConnection::new(
+                    Arc::new(create_tls_client_config().unwrap()),
+                    ServerName::try_from("127.0.0.1".to_string()).unwrap(),
+                )
+                .unwrap(),
+                stream_utils::clone_std_tcp_stream(&connected_tcp_stream.client_stream.0).unwrap(),
+            ),
+            None,
+        );
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
     }
 
     #[test]

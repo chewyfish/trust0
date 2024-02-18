@@ -159,7 +159,7 @@ impl AppInstallDir {
 }
 
 /// Application file types
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum AppInstallFile {
     /// CA root certificate file
     CARootCertificate,
@@ -502,6 +502,14 @@ pub mod tests {
     }
 
     #[test]
+    #[should_panic]
+    fn appinstalldir_parent_dir_when_home_envvar_not_set() {
+        env::remove_var("HOME");
+
+        let _ = AppInstallDir::home_dir();
+    }
+
+    #[test]
     fn appinstalldir_verify_app_dirs_when_xdg_is_defined() {
         let expected_data_home_path;
         let expected_config_home_path;
@@ -638,6 +646,94 @@ pub mod tests {
         );
         assert_eq!(pki_home_path, expected_data_home_path.clone().join("pki"));
         assert_eq!(transient_home_path, expected_cache_home_path.clone());
+    }
+
+    #[test]
+    fn appinstallfile_clone() {
+        assert_eq!(
+            AppInstallFile::CARootCertificate.clone(),
+            AppInstallFile::CARootCertificate
+        );
+        assert_eq!(
+            AppInstallFile::ClientConfig.clone(),
+            AppInstallFile::ClientConfig
+        );
+        assert_eq!(
+            AppInstallFile::ClientBinary.clone(),
+            AppInstallFile::ClientBinary
+        );
+        assert_eq!(
+            AppInstallFile::ClientCertificate.clone(),
+            AppInstallFile::ClientCertificate
+        );
+        assert_eq!(AppInstallFile::ClientKey.clone(), AppInstallFile::ClientKey);
+        assert_eq!(
+            AppInstallFile::GatewayConfig.clone(),
+            AppInstallFile::GatewayConfig
+        );
+        assert_eq!(
+            AppInstallFile::GatewayBinary.clone(),
+            AppInstallFile::GatewayBinary
+        );
+        assert_eq!(
+            AppInstallFile::GatewayCertificate.clone(),
+            AppInstallFile::GatewayCertificate
+        );
+        assert_eq!(
+            AppInstallFile::GatewayKey.clone(),
+            AppInstallFile::GatewayKey
+        );
+        assert_eq!(
+            AppInstallFile::Custom(AppInstallDir::Pki, "test.txt".into(), 100).clone(),
+            AppInstallFile::Custom(AppInstallDir::Pki, "test.txt".into(), 100)
+        );
+    }
+
+    #[test]
+    fn appinstallfile_debug() {
+        assert_eq!(
+            format!("{:?}", AppInstallFile::CARootCertificate),
+            "CARootCertificate".to_string()
+        );
+        assert_eq!(
+            format!("{:?}", AppInstallFile::ClientConfig),
+            "ClientConfig".to_string()
+        );
+        assert_eq!(
+            format!("{:?}", AppInstallFile::ClientBinary),
+            "ClientBinary".to_string()
+        );
+        assert_eq!(
+            format!("{:?}", AppInstallFile::ClientCertificate),
+            "ClientCertificate".to_string()
+        );
+        assert_eq!(
+            format!("{:?}", AppInstallFile::ClientKey),
+            "ClientKey".to_string()
+        );
+        assert_eq!(
+            format!("{:?}", AppInstallFile::GatewayConfig),
+            "GatewayConfig".to_string()
+        );
+        assert_eq!(
+            format!("{:?}", AppInstallFile::GatewayBinary),
+            "GatewayBinary".to_string()
+        );
+        assert_eq!(
+            format!("{:?}", AppInstallFile::GatewayCertificate),
+            "GatewayCertificate".to_string()
+        );
+        assert_eq!(
+            format!("{:?}", AppInstallFile::GatewayKey),
+            "GatewayKey".to_string()
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                AppInstallFile::Custom(AppInstallDir::Pki, "test.txt".into(), 100)
+            ),
+            "Custom(Pki, \"test.txt\", 100)".to_string()
+        );
     }
 
     #[test]

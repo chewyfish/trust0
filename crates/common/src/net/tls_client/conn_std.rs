@@ -19,7 +19,7 @@ pub const READ_BLOCK_SIZE: usize = 1024;
 pub type TlsClientConnection = StreamOwned<rustls::ClientConnection, TcpStream>;
 
 /// Connection event message channel
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum ConnectionEvent {
     /// Request to close connection
     Closing,

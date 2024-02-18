@@ -283,7 +283,7 @@ impl ConnectedUdpSocket {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use mockall::mock;
+    use mockall::{mock, predicate};
 
     // mocks
     // =====
@@ -315,5 +315,297 @@ pub mod tests {
             fn write_all(&mut self, buf: &[u8]) -> io::Result<()>;
         }
         impl StreamReaderWriter for StreamReadWrite {}
+    }
+
+    // tests
+    // =====
+
+    #[test]
+    fn streamutl_read_tcp_stream_when_read_full_buf_once_then_would_block_error() {
+        let mut stream_reader = MockStreamReadWrite::new();
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|buf| {
+                buf.copy_from_slice([0x01u8; TCP_READ_BLOCK_SIZE].as_slice());
+                Ok(TCP_READ_BLOCK_SIZE)
+            });
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|_| Err(io::ErrorKind::WouldBlock.into()));
+        let mut stream_reader: Arc<Mutex<Box<dyn StreamReaderWriter>>> =
+            Arc::new(Mutex::new(Box::new(stream_reader)));
+
+        match read_tcp_stream(&mut stream_reader) {
+            Ok(data) => assert_eq!(data, [0x01u8; 1024].to_vec()),
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
+    }
+
+    #[test]
+    fn streamutl_read_tcp_stream_when_read_non_full_buf() {
+        let mut stream_reader = MockStreamReadWrite::new();
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|buf| {
+                buf[0] = 0x01u8;
+                Ok(1)
+            });
+        let mut stream_reader: Arc<Mutex<Box<dyn StreamReaderWriter>>> =
+            Arc::new(Mutex::new(Box::new(stream_reader)));
+
+        match read_tcp_stream(&mut stream_reader) {
+            Ok(data) => assert_eq!(data, vec![0x01u8]),
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
+    }
+
+    #[test]
+    fn read_tcp_stream_when_would_block_error() {
+        let mut stream_reader = MockStreamReadWrite::new();
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|_| Err(io::ErrorKind::WouldBlock.into()));
+        let mut stream_reader: Arc<Mutex<Box<dyn StreamReaderWriter>>> =
+            Arc::new(Mutex::new(Box::new(stream_reader)));
+
+        match read_tcp_stream(&mut stream_reader) {
+            Ok(data) => assert!(data.is_empty()),
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
+    }
+
+    #[test]
+    fn streamutl_read_tcp_stream_when_eof_error() {
+        let mut stream_reader = MockStreamReadWrite::new();
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|_| Err(io::ErrorKind::UnexpectedEof.into()));
+        let mut stream_reader: Arc<Mutex<Box<dyn StreamReaderWriter>>> =
+            Arc::new(Mutex::new(Box::new(stream_reader)));
+
+        match read_tcp_stream(&mut stream_reader) {
+            Ok(data) => panic!("Unexpected successful result: data={:?}", &data),
+            Err(err) => match err {
+                AppError::StreamEOF => {}
+                _ => panic!("Unexpected result: err={:?}", &err),
+            },
+        }
+    }
+
+    #[test]
+    fn read_tcp_stream_when_pipe_error() {
+        let mut stream_reader = MockStreamReadWrite::new();
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|_| Err(io::ErrorKind::BrokenPipe.into()));
+        let mut stream_reader: Arc<Mutex<Box<dyn StreamReaderWriter>>> =
+            Arc::new(Mutex::new(Box::new(stream_reader)));
+
+        match read_tcp_stream(&mut stream_reader) {
+            Ok(data) => panic!("Unexpected successful result: data={:?}", &data),
+            Err(err) => match err {
+                AppError::StreamEOF => {}
+                _ => panic!("Unexpected result: err={:?}", &err),
+            },
+        }
+    }
+
+    #[test]
+    fn streamutl_read_tcp_stream_when_connected_error() {
+        let mut stream_reader = MockStreamReadWrite::new();
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|_| Err(io::ErrorKind::NotConnected.into()));
+        let mut stream_reader: Arc<Mutex<Box<dyn StreamReaderWriter>>> =
+            Arc::new(Mutex::new(Box::new(stream_reader)));
+
+        match read_tcp_stream(&mut stream_reader) {
+            Ok(data) => panic!("Unexpected successful result: data={:?}", &data),
+            Err(err) => match err {
+                AppError::StreamEOF => {}
+                _ => panic!("Unexpected result: err={:?}", &err),
+            },
+        }
+    }
+
+    #[test]
+    fn read_tcp_stream_when_other_error() {
+        let mut stream_reader = MockStreamReadWrite::new();
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|_| Err(io::ErrorKind::Other.into()));
+        let mut stream_reader: Arc<Mutex<Box<dyn StreamReaderWriter>>> =
+            Arc::new(Mutex::new(Box::new(stream_reader)));
+
+        if let Ok(data) = read_tcp_stream(&mut stream_reader) {
+            panic!("Unexpected successful result: data={:?}", &data);
+        }
+    }
+
+    #[test]
+    fn streamutl_write_tcp_stream_when_successful() {
+        let data = vec![0x01u8];
+        let mut stream_writer = MockStreamReadWrite::new();
+        stream_writer
+            .expect_write_all()
+            .with(predicate::eq(data.clone()))
+            .times(1)
+            .return_once(|_| Ok(()));
+        let mut stream_writer: Arc<Mutex<Box<dyn StreamReaderWriter>>> =
+            Arc::new(Mutex::new(Box::new(stream_writer)));
+
+        if let Err(err) = write_tcp_stream(&mut stream_writer, data.as_slice()) {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn streamutl_write_tcp_stream_when_would_block_error() {
+        let data = vec![0x01u8];
+        let mut stream_writer = MockStreamReadWrite::new();
+        stream_writer
+            .expect_write_all()
+            .with(predicate::eq(data.clone()))
+            .times(1)
+            .return_once(|_| Err(io::ErrorKind::WouldBlock.into()));
+        let mut stream_writer: Arc<Mutex<Box<dyn StreamReaderWriter>>> =
+            Arc::new(Mutex::new(Box::new(stream_writer)));
+
+        if let Err(err) = write_tcp_stream(&mut stream_writer, data.as_slice()) {
+            match err {
+                AppError::WouldBlock => {}
+                _ => panic!("Unexpected result: err={:?}", &err),
+            }
+        } else {
+            panic!("Unexpected successful result");
+        }
+    }
+
+    #[test]
+    fn streamutl_write_tcp_stream_when_eof_error() {
+        let data = vec![0x01u8];
+        let mut stream_writer = MockStreamReadWrite::new();
+        stream_writer
+            .expect_write_all()
+            .with(predicate::eq(data.clone()))
+            .times(1)
+            .return_once(|_| Err(io::ErrorKind::UnexpectedEof.into()));
+        let mut stream_writer: Arc<Mutex<Box<dyn StreamReaderWriter>>> =
+            Arc::new(Mutex::new(Box::new(stream_writer)));
+
+        if let Err(err) = write_tcp_stream(&mut stream_writer, data.as_slice()) {
+            match err {
+                AppError::StreamEOF => {}
+                _ => panic!("Unexpected result: err={:?}", &err),
+            }
+        } else {
+            panic!("Unexpected successful result");
+        }
+    }
+
+    #[test]
+    fn streamutl_write_tcp_stream_when_pipe_error() {
+        let data = vec![0x01u8];
+        let mut stream_writer = MockStreamReadWrite::new();
+        stream_writer
+            .expect_write_all()
+            .with(predicate::eq(data.clone()))
+            .times(1)
+            .return_once(|_| Err(io::ErrorKind::BrokenPipe.into()));
+        let mut stream_writer: Arc<Mutex<Box<dyn StreamReaderWriter>>> =
+            Arc::new(Mutex::new(Box::new(stream_writer)));
+
+        if let Err(err) = write_tcp_stream(&mut stream_writer, data.as_slice()) {
+            match err {
+                AppError::StreamEOF => {}
+                _ => panic!("Unexpected result: err={:?}", &err),
+            }
+        } else {
+            panic!("Unexpected successful result");
+        }
+    }
+
+    #[test]
+    fn streamutl_write_tcp_stream_when_connected_error() {
+        let data = vec![0x01u8];
+        let mut stream_writer = MockStreamReadWrite::new();
+        stream_writer
+            .expect_write_all()
+            .with(predicate::eq(data.clone()))
+            .times(1)
+            .return_once(|_| Err(io::ErrorKind::NotConnected.into()));
+        let mut stream_writer: Arc<Mutex<Box<dyn StreamReaderWriter>>> =
+            Arc::new(Mutex::new(Box::new(stream_writer)));
+
+        if let Err(err) = write_tcp_stream(&mut stream_writer, data.as_slice()) {
+            match err {
+                AppError::StreamEOF => {}
+                _ => panic!("Unexpected result: err={:?}", &err),
+            }
+        } else {
+            panic!("Unexpected successful result");
+        }
+    }
+
+    #[test]
+    fn streamutl_write_tcp_stream_when_other_error() {
+        let data = vec![0x01u8];
+        let mut stream_writer = MockStreamReadWrite::new();
+        stream_writer
+            .expect_write_all()
+            .with(predicate::eq(data.clone()))
+            .times(1)
+            .return_once(|_| Err(io::ErrorKind::Other.into()));
+        let mut stream_writer: Arc<Mutex<Box<dyn StreamReaderWriter>>> =
+            Arc::new(Mutex::new(Box::new(stream_writer)));
+
+        if write_tcp_stream(&mut stream_writer, data.as_slice()).is_ok() {
+            panic!("Unexpected successful result");
+        }
+    }
+
+    #[test]
+    fn streamutl_read_mio_udp_socket_when_would_block() {
+        let connected_udp_socket = ConnectedUdpSocket::new().unwrap();
+        let udp_socket = connected_udp_socket.client_socket.0;
+        udp_socket.set_nonblocking(true).unwrap();
+        let udp_socket = mio::net::UdpSocket::from_std(udp_socket);
+
+        if let Err(err) = read_mio_udp_socket(&udp_socket) {
+            match err {
+                AppError::WouldBlock => {}
+                _ => panic!("Unexpected result: err={:?}", &err),
+            }
+        } else {
+            panic!("Unexpected successful result");
+        }
+    }
+
+    #[test]
+    fn streamutl_write_mio_udp_socket_when_would_block() {
+        let connected_udp_socket = ConnectedUdpSocket::new().unwrap();
+        let udp_socket = connected_udp_socket.client_socket.0;
+        udp_socket.set_nonblocking(true).unwrap();
+        let udp_socket = mio::net::UdpSocket::from_std(udp_socket);
+
+        if let Err(err) = write_mio_udp_socket(&udp_socket, vec![0x01u8].as_slice()) {
+            panic!("Unexpected result: err={:?}", &err);
+        }
     }
 }

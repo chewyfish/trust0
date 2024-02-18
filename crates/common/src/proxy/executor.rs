@@ -298,3 +298,38 @@ impl Default for ProxyExecutor {
         Self::new()
     }
 }
+
+/// Unit tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn proxyexec_new() {
+        let executor = ProxyExecutor::default();
+
+        assert!(executor.proxy_streams.is_empty());
+
+        executor
+            .clone_proxy_tasks_sender()
+            .send(ProxyExecutorEvent::Close("key1".to_string()))
+            .unwrap();
+
+        let received_task = executor.proxy_tasks_receiver.try_recv();
+        match received_task {
+            Ok(event) => match event {
+                ProxyExecutorEvent::Close(key) => assert_eq!(key, "key1".to_string()),
+                ProxyExecutorEvent::OpenChannelAndTcpProxy(_, _) => {
+                    panic!("Unexpected channel&tcp proxy event")
+                }
+                ProxyExecutorEvent::OpenTcpAndTcpProxy(_, _) => {
+                    panic!("Unexpected tcp&tcp proxy event")
+                }
+                ProxyExecutorEvent::OpenTcpAndUdpProxy(_, _) => {
+                    panic!("Unexpected tcp&udp proxy event")
+                }
+            },
+            Err(err) => panic!("Unexpected channel receive result: err={:?}", &err),
+        }
+    }
+}

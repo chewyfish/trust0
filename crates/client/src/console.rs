@@ -15,6 +15,15 @@ pub const LINE_ENDING: &'static str = "\r\n";
 pub const LINE_ENDING: &str = "\n";
 
 /// Used by logger after lines are displayed
+///
+/// # Arguments
+///
+/// * `include_welcome` - If true, will display the application title prior to the prompt
+///
+/// # Returns
+///
+/// A [`Result`] indicating success/failure of the write operation.
+///
 pub fn write_shell_prompt(include_welcome: bool) -> Result<(), AppError> {
     let mut writer = ShellOutputWriter::new(None);
     writer.write_shell_prompt(include_welcome)
@@ -27,6 +36,15 @@ pub struct ShellOutputWriter {
 
 impl ShellOutputWriter {
     /// ShellOutputWriter constructor. If writer object is not given, will use STDOUT.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - A [`Write`] object used to send shell output
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`ShellOutputWriter`] object.
+    ///
     pub fn new(writer: Option<Box<dyn Write + Send>>) -> Self {
         Self { writer }
     }
@@ -85,6 +103,11 @@ pub struct ShellInputReader {
 
 impl ShellInputReader {
     /// ThreadedStdin constructor
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`ShellInputReader`] object.
+    ///
     pub fn new() -> Self {
         let (send, recv) = mpsc::channel();
 
@@ -96,11 +119,23 @@ impl ShellInputReader {
     }
 
     /// Return copy of TTY echo disable state (to be able to control whether keyed input is shown on the terminal - next line only)
+    ///
+    /// # Returns
+    ///
+    /// A mutex around a boolean to control the TTY echoing.
+    ///
     pub fn clone_disable_tty_echo(&self) -> Arc<Mutex<bool>> {
         self.disable_tty_echo.clone()
     }
 
     /// Blocking read for next input line, which will be sent to channel for processing
+    ///
+    /// # Arguments
+    ///
+    /// * `reader` - A [`BufRead`] to use in reading shell input
+    /// * `is_password_input` - If true, don't echo input to console
+    /// * `channel_sender` - Line read results sent to this channel
+    ///
     fn process_next_line(
         mut reader: impl BufRead,
         is_password_input: bool,
@@ -166,6 +201,11 @@ impl InputTextStreamConnector for ShellInputReader {
 
 pub trait InputTextStreamConnector {
     /// Clone message channel sender
+    ///
+    /// # Returns
+    ///
+    /// The channel sender used to queue lines read from console.
+    ///
     fn clone_channel_sender(&self) -> Sender<io::Result<String>>;
 
     /// Spawn a thread to perform (blocking) STDIN reads (queue resulting lines)
@@ -174,6 +214,7 @@ pub trait InputTextStreamConnector {
     /// Non-blocking call to retrieve next queued input line
     ///
     /// Returns `Ok(None)` if no lines queued
+    ///
     fn next_line(&mut self) -> Result<Option<String>, AppError>;
 }
 
@@ -182,8 +223,8 @@ pub trait InputTextStreamConnector {
 pub mod tests {
 
     use super::*;
-    use mockall::mock;
-    use std::io::Cursor;
+    use mockall::{mock, predicate};
+    use std::io::{Cursor, Read};
     use trust0_common::testutils::ChannelWriter;
 
     // mocks
@@ -194,6 +235,27 @@ pub mod tests {
         impl InputTextStreamConnector for InpTxtStreamConnector {
             fn clone_channel_sender(&self) -> Sender<io::Result<String>>;
             fn next_line(&mut self) -> Result<Option<String>, AppError>;
+        }
+    }
+
+    mock! {
+        pub Writer {}
+        impl Write for Writer {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize>;
+            fn write_all(&mut self, mut buf: &[u8]) -> io::Result<()>;
+            fn flush(&mut self) -> io::Result<()>;
+        }
+    }
+
+    mock! {
+        pub Reader {}
+        impl Read for Reader {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize>;
+        }
+        impl BufRead for Reader {
+            fn read_line(&mut self, buf: &mut String) -> io::Result<usize>;
+            fn fill_buf(&mut self) -> io::Result<&'static [u8]>;
+            fn consume(&mut self, amt: usize);
         }
     }
 
@@ -235,6 +297,72 @@ pub mod tests {
         }
 
         assert_eq!(output_data, expected_output);
+    }
+
+    #[test]
+    fn shellout_write_shell_prompt_with_welcome_where_1st_write_fails() {
+        let mut shell_writer = MockWriter::new();
+        shell_writer
+            .expect_write_all()
+            .with(predicate::always())
+            .times(1)
+            .returning(|_| Err(io::Error::from(io::ErrorKind::UnexpectedEof)));
+        shell_writer.expect_flush().never();
+
+        let mut shell_output = ShellOutputWriter {
+            writer: Some(Box::new(shell_writer)),
+        };
+
+        if shell_output.write_shell_prompt(true).is_ok() {
+            panic!("Unexpected successful result");
+        }
+    }
+
+    #[test]
+    fn shellout_write_shell_prompt_with_welcome_where_2nd_write_fails() {
+        let mut shell_writer = MockWriter::new();
+        shell_writer
+            .expect_write_all()
+            .with(predicate::always())
+            .times(2)
+            .returning(|data| {
+                if data != SHELL_PROMPT.as_bytes() {
+                    Ok(())
+                } else {
+                    Err(io::Error::from(io::ErrorKind::UnexpectedEof))
+                }
+            });
+        shell_writer.expect_flush().never();
+
+        let mut shell_output = ShellOutputWriter {
+            writer: Some(Box::new(shell_writer)),
+        };
+
+        if shell_output.write_shell_prompt(true).is_ok() {
+            panic!("Unexpected successful result");
+        }
+    }
+
+    #[test]
+    fn shellout_write_shell_prompt_with_welcome_where_flush_fails() {
+        let mut shell_writer = MockWriter::new();
+        shell_writer
+            .expect_write_all()
+            .with(predicate::always())
+            .times(2)
+            .returning(|_| Ok(()));
+        shell_writer
+            .expect_flush()
+            .times(1)
+            .returning(|| Err(io::Error::from(io::ErrorKind::UnexpectedEof)));
+
+        let mut shell_output = ShellOutputWriter {
+            writer: Some(Box::new(shell_writer)),
+        };
+
+        if shell_output.write_shell_prompt(true).is_ok() {
+            panic!("Unexpected successful result");
+        }
     }
 
     #[test]
@@ -358,6 +486,29 @@ pub mod tests {
     }
 
     #[test]
+    fn shellinp_process_next_line_when_eof_read_error() {
+        let mut reader = MockReader::new();
+        reader
+            .expect_read_line()
+            .with(predicate::always())
+            .times(1)
+            .returning(|_| Err(io::Error::from(io::ErrorKind::UnexpectedEof)));
+
+        let lines_channel = mpsc::channel();
+
+        ShellInputReader::process_next_line(reader, false, &lines_channel.0);
+
+        let recvd_result = lines_channel.1.try_recv();
+        match recvd_result {
+            Ok(line_result) => panic!("Unexpected lines result received: line={:?}", &line_result),
+            Err(err) => match err {
+                TryRecvError::Disconnected => panic!("Unexpected disconnected line recvd result"),
+                TryRecvError::Empty => {}
+            },
+        }
+    }
+
+    #[test]
     fn shellinp_next_line_when_no_lines() {
         let mut threaded_stdin = ShellInputReader::new();
 
@@ -402,5 +553,38 @@ pub mod tests {
         }
 
         assert_eq!(recvd_lines.len(), 2);
+    }
+
+    #[test]
+    fn shellinp_next_line_when_io_error_line() {
+        let mut threaded_stdin = ShellInputReader::new();
+
+        let line_channel_sender = threaded_stdin.clone_channel_sender();
+
+        line_channel_sender
+            .send(Err(io::Error::from(io::ErrorKind::UnexpectedEof)))
+            .unwrap();
+
+        match threaded_stdin.next_line() {
+            Ok(line) => panic!("Unexpected successful received line: line={:?}", &line),
+            Err(_) => {}
+        }
+    }
+
+    #[test]
+    fn inptextconn_trait_defaults() {
+        struct InputConnector {}
+        impl InputTextStreamConnector for InputConnector {
+            fn clone_channel_sender(&self) -> Sender<io::Result<String>> {
+                mpsc::channel().0
+            }
+            fn next_line(&mut self) -> Result<Option<String>, AppError> {
+                Ok(None)
+            }
+        }
+
+        let input_connect = InputConnector {};
+
+        input_connect.spawn_line_reader();
     }
 }

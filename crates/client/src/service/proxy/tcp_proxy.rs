@@ -21,12 +21,25 @@ use trust0_common::proxy::proxy_base::ProxyType;
 
 /// Client service proxy (TCP service client <-> TCP trust0 client)
 pub struct TcpClientProxy {
+    /// TCP server for accepting client connections
     tcp_server: server_std::Server,
+    /// Visitor pattern for TCP server class
     _server_visitor: Arc<Mutex<TcpClientProxyServerVisitor>>,
 }
 
 impl TcpClientProxy {
     /// TcpClientProxy constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `app_config` - Application configuration object
+    /// * `server_visitor` - Visitor pattern for TCP server class
+    /// * `proxy_port` - Server listening port
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`TcpClientProxy`] object.
+    ///
     pub fn new(
         app_config: &Arc<AppConfig>,
         server_visitor: Arc<Mutex<TcpClientProxyServerVisitor>>,
@@ -54,21 +67,47 @@ unsafe impl Send for TcpClientProxy {}
 
 /// tcp_server::server_std::Server strategy visitor pattern implementation
 pub struct TcpClientProxyServerVisitor {
+    /// Application configuration object
     app_config: Arc<AppConfig>,
+    /// Service model object corresponding to proxy
     service: Service,
+    /// Client proxy server listening port
     client_proxy_port: u16,
+    /// Gateway proxy host
     gateway_proxy_host: String,
+    /// Gateway proxy port
     gateway_proxy_port: u16,
+    /// Channel sender for executor events
     proxy_tasks_sender: Sender<ProxyExecutorEvent>,
+    /// Channel sender for proxy-related events
     proxy_events_sender: Sender<ProxyEvent>,
+    /// Map of services by proxy key (shared across service proxies)
     services_by_proxy_key: Arc<Mutex<HashMap<String, u64>>>,
+    /// Map of proxy addresses by proxy key
     proxy_addrs_by_proxy_key: HashMap<ProxyKey, ConnectionAddrs>,
+    /// State to control proxy shutdown
     shutdown_requested: bool,
 }
 
 impl TcpClientProxyServerVisitor {
     #![allow(clippy::too_many_arguments)]
     /// TcpClientProxyServerVisitor constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `app_config` - Application configuration object
+    /// * `service` - Service model object corresponding to proxy
+    /// * `client_proxy_port` - Client proxy server listening port
+    /// * `gateway_proxy_host` - Gateway proxy host
+    /// * `gateway_proxy_port` - Gateway proxy port
+    /// * `proxy_tasks_sender` - Channel sender for executor events
+    /// * `proxy_events_sender` - Channel sender for proxy-related events
+    /// * `services_by_proxy_key` - Map of services by proxy key (shared across service proxies)
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing a newly constructed [`TcpClientProxyServerVisitor`] object.
+    ///
     pub fn new(
         app_config: &Arc<AppConfig>,
         service: &Service,
@@ -283,6 +322,11 @@ pub struct ClientConnVisitor {}
 
 impl ClientConnVisitor {
     /// ClientConnVisitor constructor
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containin a newly constructed [`ClientConnVisitor`] object.
+    ///
     pub fn new() -> Result<Self, AppError> {
         Ok(Self {})
     }
@@ -695,6 +739,43 @@ pub mod tests {
     }
 
     #[test]
+    fn tcpsvrproxyvisit_shutdown_connection_when_sending_fails() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let services_by_proxy_key =
+            Arc::new(Mutex::new(HashMap::from([("key1".to_string(), 200)])));
+
+        let mut server_visitor = TcpClientProxyServerVisitor {
+            app_config: app_config.clone(),
+            service: Service::default(),
+            client_proxy_port: 3000,
+            gateway_proxy_host: "gwhost1".to_string(),
+            gateway_proxy_port: 2000,
+            proxy_tasks_sender: sync::mpsc::channel().0,
+            proxy_events_sender: sync::mpsc::channel().0,
+            services_by_proxy_key: services_by_proxy_key.clone(),
+            proxy_addrs_by_proxy_key: HashMap::from([(
+                "key1".to_string(),
+                ("addr1".to_string(), "addr2".to_string()),
+            )]),
+            shutdown_requested: false,
+        };
+
+        let proxy_tasks_sender = sync::mpsc::channel().0;
+
+        if server_visitor
+            .shutdown_connection(&proxy_tasks_sender, "key1")
+            .is_ok()
+        {
+            panic!("Unexpected successful result");
+        }
+
+        assert_eq!(services_by_proxy_key.lock().unwrap().len(), 1);
+        assert!(services_by_proxy_key.lock().unwrap().contains_key("key1"));
+        assert_eq!(server_visitor.proxy_addrs_by_proxy_key.len(), 1);
+        assert!(server_visitor.proxy_addrs_by_proxy_key.contains_key("key1"));
+    }
+
+    #[test]
     fn tcpsvrproxyvisit_remove_proxy_for_key_when_not_exists() {
         let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
         let services_by_proxy_key = Arc::new(Mutex::new(HashMap::from([
@@ -776,6 +857,47 @@ pub mod tests {
         assert_eq!(services_by_proxy_key.lock().unwrap().len(), 1);
         assert!(!server_visitor.proxy_addrs_by_proxy_key.contains_key("key2"));
         assert_eq!(server_visitor.proxy_addrs_by_proxy_key.len(), 1);
+    }
+
+    #[test]
+    fn tcpsvrproxyvisit_get_proxy_keys() {
+        let server_visitor = TcpClientProxyServerVisitor {
+            app_config: Arc::new(config::tests::create_app_config(None).unwrap()),
+            service: Service::default(),
+            client_proxy_port: 3000,
+            gateway_proxy_host: "gwhost1".to_string(),
+            gateway_proxy_port: 2000,
+            proxy_tasks_sender: sync::mpsc::channel().0,
+            proxy_events_sender: sync::mpsc::channel().0,
+            services_by_proxy_key: Arc::new(Mutex::new(HashMap::new())),
+            proxy_addrs_by_proxy_key: HashMap::from([
+                (
+                    "key2".to_string(),
+                    ("addr3".to_string(), "addr4".to_string()),
+                ),
+                (
+                    "key3".to_string(),
+                    ("addr5".to_string(), "addr6".to_string()),
+                ),
+            ]),
+            shutdown_requested: false,
+        };
+
+        let expected_proxy_keys = vec![
+            (
+                "key2".to_string(),
+                ("addr3".to_string(), "addr4".to_string()),
+            ),
+            (
+                "key3".to_string(),
+                ("addr5".to_string(), "addr6".to_string()),
+            ),
+        ];
+
+        let mut proxy_keys = server_visitor.get_proxy_keys();
+        proxy_keys.sort();
+
+        assert_eq!(proxy_keys, expected_proxy_keys);
     }
 
     #[test]
