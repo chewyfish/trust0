@@ -79,7 +79,7 @@ pub mod api {
         pub fn get_shutdown_function(&self) -> impl Fn() {
             let service_mgr = self.service_mgr.clone();
             move || {
-                if let Err(err) = service_mgr.lock().unwrap().shutdown() {
+                if let Err(err) = service_mgr.lock().unwrap().shutdown(None) {
                     error(&target!(), &format!("{:?}", err));
                 }
             }
@@ -96,7 +96,7 @@ pub mod api {
 
         /// Component stop: stop trust client
         fn stop(&mut self) -> Result<(), AppError> {
-            self.service_mgr.lock().unwrap().shutdown()
+            self.service_mgr.lock().unwrap().shutdown(None)
         }
     }
 }

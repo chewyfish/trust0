@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde_json::Value;
 use std::borrow::Borrow;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 use std::rc::Rc;
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
@@ -57,6 +57,8 @@ pub struct ManagementController {
     authn_context: Rc<Mutex<Option<AuthnContext>>>,
     /// Records whether user has passed secondary authentication
     authenticated: Rc<Mutex<bool>>,
+    /// Service ID map, but service name
+    service_ids: HashMap<String, u64>,
 }
 
 impl ManagementController {
@@ -88,6 +90,7 @@ impl ManagementController {
             tty_echo_disabler,
             authn_context: Rc::new(Mutex::new(None)),
             authenticated: Rc::new(Mutex::new(false)),
+            service_ids: HashMap::new(),
         }
     }
 
@@ -237,12 +240,15 @@ impl ManagementController {
     /// A [`Result`] indicating success/failure of the processing operation.
     ///
     fn process_inbound_message_start(
-        &self,
+        &mut self,
         gateway_response: &mut management::response::Response,
     ) -> Result<(), AppError> {
         let proxy_container =
             management::response::Proxy::from_serde_value(gateway_response.data.as_ref().unwrap())?;
         let proxy = proxy_container.first().unwrap();
+
+        self.service_ids
+            .insert(proxy.service.name.clone(), proxy.service.id);
 
         let _ = self.service_mgr.lock().unwrap().startup(
             &proxy.service.clone().into(),
@@ -256,6 +262,26 @@ impl ManagementController {
         Ok(())
     }
 
+    /// Process 'stop' response. Shuts down corresponding service proxy.
+    ///
+    /// # Arguments
+    ///
+    /// * `service_name` - Service name
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of the processing operation.
+    ///
+    fn process_inbound_message_stop(&self, service_name: &String) -> Result<(), AppError> {
+        match self.service_ids.get(service_name) {
+            Some(service_id) => self.service_mgr.lock().unwrap().shutdown(Some(*service_id)),
+            None => Err(AppError::General(format!(
+                "Unknown service name, can't stopped proxy: name={}",
+                service_name
+            ))),
+        }
+    }
+
     /// Process 'quit' response. Shuts down service proxies.
     ///
     /// # Arguments
@@ -266,7 +292,7 @@ impl ManagementController {
     /// A [`Result`] indicating success/failure of the processing operation.
     ///
     fn process_inbound_message_quit(&self) -> Result<(), AppError> {
-        self.service_mgr.lock().unwrap().shutdown()
+        self.service_mgr.lock().unwrap().shutdown(None)
     }
 
     /// Process inbound gateway authentication message (as is appropriate for the current authentication state)
@@ -598,6 +624,9 @@ impl ChannelProcessor for ManagementController {
                 } => {
                     self.process_inbound_message_start(&mut gateway_response)?;
                 }
+                management::request::Request::Stop { service_name } => {
+                    self.process_inbound_message_stop(service_name)?;
+                }
                 management::request::Request::Quit => {
                     self.process_inbound_message_quit()?;
                 }
@@ -700,6 +729,7 @@ pub mod tests {
         assert!(!*controller.tty_echo_disabler.lock().unwrap());
         assert!(controller.authn_context.lock().unwrap().is_none());
         assert!(!*controller.authenticated.lock().unwrap());
+        assert!(controller.service_ids.is_empty());
     }
 
     #[test]
@@ -1147,6 +1177,91 @@ pub mod tests {
         let expected_data = format!("{{\n  \"code\": 200,\n  \"message\": null,\n  \"request\": {{\n    \"Start\": {{\n      \"service_name\": \"svc200\",\n      \"local_port\": 8501\n    }}\n  }},\n  \"data\": [\n    {{\n      \"client_port\": 8501,\n      \"gateway_host\": \"gwhost1\",\n      \"gateway_port\": 1234,\n      \"service\": {{\n        \"address\": \"svchost1:9999\",\n        \"id\": 200,\n        \"name\": \"svc200\",\n        \"transport\": \"TCP\"\n      }}\n    }}\n  ]\n}}\n{}", console::SHELL_PROMPT);
         let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
         assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
+
+        assert!(controller.service_ids.contains_key("svc200"));
+        assert_eq!(*controller.service_ids.get("svc200").unwrap(), 200u64);
+    }
+
+    #[test]
+    fn mgtcontrol_process_inbound_message_when_valid_stop_response() {
+        let output_channel = mpsc::channel();
+        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+            channel_sender: output_channel.0,
+        })));
+        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
+        let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
+
+        let mut service_mgr = manager::tests::MockSvcMgr::new();
+        service_mgr
+            .expect_shutdown()
+            .with(predicate::eq(Some(200)))
+            .times(1)
+            .return_once(|_| Ok(()));
+        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> = Arc::new(Mutex::new(service_mgr));
+
+        let mut controller =
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
+        controller.service_ids.insert("svc200".to_string(), 200);
+
+        let result = controller.process_inbound_message(MessageFrame::new(
+            ControlChannel::Management,
+            control::pdu::CODE_OK,
+            &None,
+            &Some(
+                serde_json::to_value(management::request::Request::Stop {
+                    service_name: "svc200".to_string(),
+                })
+                .unwrap(),
+            ),
+            &None,
+        ));
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        assert!(message_outbox.lock().unwrap().is_empty());
+
+        let expected_data = format!("{{\n  \"code\": 200,\n  \"message\": null,\n  \"request\": {{\n    \"Stop\": {{\n      \"service_name\": \"svc200\"\n    }}\n  }},\n  \"data\": null\n}}\n{}", console::SHELL_PROMPT);
+        let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
+        assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
+    }
+
+    #[test]
+    fn mgtcontrol_process_inbound_message_when_stop_response_and_unknown_service_name() {
+        let output_channel = mpsc::channel();
+        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+            channel_sender: output_channel.0,
+        })));
+        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
+        let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
+
+        let mut service_mgr = manager::tests::MockSvcMgr::new();
+        service_mgr
+            .expect_shutdown()
+            .with(predicate::always())
+            .never();
+        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> = Arc::new(Mutex::new(service_mgr));
+
+        let mut controller =
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
+
+        let result = controller.process_inbound_message(MessageFrame::new(
+            ControlChannel::Management,
+            control::pdu::CODE_OK,
+            &None,
+            &Some(
+                serde_json::to_value(management::request::Request::Stop {
+                    service_name: "svc200".to_string(),
+                })
+                .unwrap(),
+            ),
+            &None,
+        ));
+
+        if result.is_ok() {
+            panic!("Unexpected successful result");
+        }
     }
 
     #[test]
@@ -1162,7 +1277,7 @@ pub mod tests {
         service_mgr
             .expect_shutdown()
             .times(1)
-            .return_once(|| Ok(()));
+            .return_once(|_| Ok(()));
         let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> = Arc::new(Mutex::new(service_mgr));
 
         let mut controller =
