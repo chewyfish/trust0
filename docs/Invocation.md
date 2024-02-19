@@ -82,16 +82,6 @@ Options:
           
           [env: ALPN_PROTOCOL=]
 
-      --session-resumption
-          Support session resumption
-          
-          [env: SESSION_RESUMPTION=]
-
-      --tickets
-          Support tickets
-          
-          [env: TICKETS=]
-
       --gateway-service-host <GATEWAY_SERVICE_HOST>
           Hostname/ip of this gateway given to clients, used in service proxy connections (if not supplied, clients will determine that on their own)
           
@@ -261,21 +251,6 @@ Options:
           Limit outgoing messages to <MAX_FRAG_SIZE> bytes
           
           [env: MAX_FRAG_SIZE=]
-
-      --session-resumption
-          Support session resumption
-          
-          [env: SESSION_RESUMPTION=false]
-
-      --no-tickets
-          Disable session ticket support
-          
-          [env: NO_TICKETS=false]
-
-      --no-sni
-          Disable server name indication support
-          
-          [env: NO_SNI=false]
 
       --insecure
           Disable certificate verification

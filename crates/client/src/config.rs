@@ -68,18 +68,6 @@ pub struct AppConfigArgs {
     #[arg(required = false, long = "max-frag-size", env)]
     pub max_frag_size: Option<usize>,
 
-    /// Support session resumption
-    #[arg(required = false, long = "session-resumption", env)]
-    pub session_resumption: bool,
-
-    /// Disable session ticket support
-    #[arg(required = false, long = "no-tickets", env)]
-    pub no_tickets: bool,
-
-    /// Disable server name indication support
-    #[arg(required = false, long = "no-sni", env)]
-    pub no_sni: bool,
-
     /// Disable certificate verification
     #[arg(required = false, long = "insecure", env)]
     pub insecure: bool,
@@ -158,17 +146,6 @@ impl AppConfig {
 
         tls_client_config.enable_early_data = true;
         tls_client_config.key_log = Arc::new(rustls::KeyLogFile::new());
-
-        if config_args.no_tickets {
-            tls_client_config.resumption = tls_client_config
-                .resumption
-                .tls12_resumption(rustls::client::Tls12Resumption::SessionIdOnly);
-        }
-
-        if config_args.no_sni {
-            tls_client_config.enable_sni = false;
-        }
-
         tls_client_config.alpn_protocols = Vec::new();
         tls_client_config.max_fragment_size = config_args.max_frag_size;
 
@@ -350,9 +327,6 @@ pub mod tests {
         env::remove_var("PROTOCOL_VERSION");
         env::remove_var("CIPHER_SUITE");
         env::remove_var("MAX_FRAG_SIZE");
-        env::remove_var("SESSION_RESUMPTION");
-        env::remove_var("NO_TICKETS");
-        env::remove_var("NO_SNI");
         env::remove_var("INSECURE");
         env::remove_var("VERBOSE")
     }
@@ -382,9 +356,6 @@ pub mod tests {
             env::set_var("PROTOCOL_VERSION", "1.3");
             env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
             env::set_var("MAX_FRAG_SIZE", "1024");
-            env::set_var("SESSION_RESUMPTION", "true");
-            env::set_var("NO_TICKETS", "true");
-            env::set_var("NO_SNI", "true");
             env::set_var("INSECURE", "true");
             env::set_var("VERBOSE", "true");
 
@@ -403,7 +374,7 @@ pub mod tests {
             .tls_client_config
             .client_auth_cert_resolver
             .has_certs());
-        assert!(!config.tls_client_config.enable_sni);
+        assert!(config.tls_client_config.enable_sni);
         let expected_alpn_protocols: Vec<Vec<u8>> = vec![];
         assert_eq!(
             config.tls_client_config.alpn_protocols,
@@ -437,9 +408,6 @@ pub mod tests {
             env::set_var("CA_ROOT_CERT_FILE", ca_root_cert_file_str);
             env::set_var("PROTOCOL_VERSION", "1.3");
             env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
-            env::set_var("SESSION_RESUMPTION", "true");
-            env::set_var("NO_TICKETS", "true");
-            env::set_var("NO_SNI", "true");
             env::set_var("INSECURE", "true");
             env::set_var("VERBOSE", "true");
 
@@ -458,7 +426,7 @@ pub mod tests {
             .tls_client_config
             .client_auth_cert_resolver
             .has_certs());
-        assert!(!config.tls_client_config.enable_sni);
+        assert!(config.tls_client_config.enable_sni);
         let expected_alpn_protocols: Vec<Vec<u8>> = vec![];
         assert_eq!(
             config.tls_client_config.alpn_protocols,

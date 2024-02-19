@@ -30,7 +30,7 @@ This is early alpha, use with care.
 * Consider gateway-to-gateway service proxy routing (reasons of proximity, security, ...)
 * Consider gateway load-balancing, via client redirect (reasons of load, rollout deployment, ...)
 * Accommodate integration to well-known identity provider (IdP) systems/protocols for user authentication and 2FA purposes
-* Supply more repository DB providers: RDBMS - MySql, Postgres, ...; NoSql - MongoDB, Cassandra, Redis, ...
+* Supply more repository DB provider implementations
 * Create (K8S, Docker, ...) container resource files
 
 ### Change History
