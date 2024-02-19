@@ -13,9 +13,9 @@ fn process_runner() -> Result<(), AppError> {
 
     LOG.lock().unwrap().configure(
         if app_config.verbose_logging {
-            LogLevel::DEBUG
+            &LogLevel::DEBUG
         } else {
-            LogLevel::INFO
+            &LogLevel::INFO
         },
         None,
     );

@@ -350,13 +350,13 @@ impl Service {
         id: u64,
         name: &str,
         transport: &model::service::Transport,
-        address: Option<String>,
+        address: &Option<String>,
     ) -> Self {
         Self {
             id,
             name: name.to_string(),
             transport: transport.clone(),
-            address,
+            address: address.clone(),
         }
     }
 
@@ -415,7 +415,7 @@ impl From<&model::service::Service> for Service {
             service.service_id,
             &service.name,
             &service.transport,
-            address,
+            &address,
         )
     }
 }
@@ -479,12 +479,12 @@ impl LoginData {
     /// A newly constructed [`LoginData`] object.
     ///
     pub fn new(
-        authn_type: authenticator::AuthnType,
-        message: Option<authenticator::AuthnMessage>,
+        authn_type: &authenticator::AuthnType,
+        message: &Option<authenticator::AuthnMessage>,
     ) -> Self {
         Self {
-            authn_type,
-            message,
+            authn_type: authn_type.clone(),
+            message: message.clone(),
         }
     }
 
@@ -568,10 +568,10 @@ impl Connection {
     ///
     /// A newly constructed [`Connection`] object.
     ///
-    pub fn new(service_name: &str, binds: Vec<Vec<String>>) -> Self {
+    pub fn new(service_name: &str, binds: &[Vec<String>]) -> Self {
         Self {
             service_name: service_name.to_string(),
-            binds,
+            binds: binds.to_vec(),
         }
     }
 
@@ -801,7 +801,7 @@ mod tests {
             200,
             "svc1",
             &model::service::Transport::TCP,
-            Some("host:9000".to_string()),
+            &Some("host:9000".to_string()),
         );
         let proxy = Proxy::new(&svc, &Some("gwhost1".to_string()), 8400, &Some(8501));
 
@@ -832,7 +832,7 @@ mod tests {
                     200,
                     "svc1",
                     &model::service::Transport::TCP,
-                    Some("host:9000".to_string()),
+                    &Some("host:9000".to_string()),
                 );
                 let proxy = Proxy::new(&svc, &Some("gwhost1".to_string()), 8400, &Some(8501));
                 assert_eq!(proxies, vec![proxy]);
@@ -852,7 +852,7 @@ mod tests {
                     200,
                     "svc1",
                     &model::service::Transport::TCP,
-                    Some("host:9000".to_string()),
+                    &Some("host:9000".to_string()),
                 );
                 let proxy = Proxy::new(&svc, &Some("gwhost1".to_string()), 8400, &Some(8501));
                 assert_eq!(proxies, vec![proxy]);
@@ -867,7 +867,7 @@ mod tests {
             200,
             "svc1",
             &model::service::Transport::TCP,
-            Some("host:9000".to_string()),
+            &Some("host:9000".to_string()),
         );
         let proxy = Proxy::new(&svc, &Some("gwhost1".to_string()), 8400, &Some(8501));
 
@@ -889,7 +889,7 @@ mod tests {
             200,
             "svc1",
             &model::service::Transport::TCP,
-            Some("host:9000".to_string()),
+            &Some("host:9000".to_string()),
         );
 
         assert_eq!(svc.id, 200);
@@ -921,7 +921,7 @@ mod tests {
                     200,
                     "svc1",
                     &model::service::Transport::TCP,
-                    Some("host:9000".to_string()),
+                    &Some("host:9000".to_string()),
                 );
                 assert_eq!(services, vec![service]);
             }
@@ -941,7 +941,7 @@ mod tests {
                     200,
                     "svc1",
                     &model::service::Transport::TCP,
-                    Some("host:9000".to_string()),
+                    &Some("host:9000".to_string()),
                 );
                 assert_eq!(services, vec![service]);
             }
@@ -955,7 +955,7 @@ mod tests {
             200,
             "svc1",
             &model::service::Transport::TCP,
-            Some("host:9000".to_string()),
+            &Some("host:9000".to_string()),
         );
 
         let result: Result<Value, AppError> = svc.try_into();
@@ -973,8 +973,8 @@ mod tests {
     #[test]
     fn logindata_new() {
         let login_data = LoginData::new(
-            authenticator::AuthnType::ScramSha256,
-            Some(authenticator::AuthnMessage::Payload("data1".to_string())),
+            &authenticator::AuthnType::ScramSha256,
+            &Some(authenticator::AuthnMessage::Payload("data1".to_string())),
         );
 
         assert_eq!(login_data.authn_type, authenticator::AuthnType::ScramSha256);
@@ -1004,8 +1004,8 @@ mod tests {
             Ok(login_data_list) => {
                 assert_eq!(login_data_list.len(), 1);
                 let login_data = LoginData::new(
-                    authenticator::AuthnType::ScramSha256,
-                    Some(authenticator::AuthnMessage::Payload("data1".to_string())),
+                    &authenticator::AuthnType::ScramSha256,
+                    &Some(authenticator::AuthnMessage::Payload("data1".to_string())),
                 );
                 assert_eq!(login_data_list, vec![login_data]);
             }
@@ -1021,8 +1021,8 @@ mod tests {
             Ok(login_data_list) => {
                 assert_eq!(login_data_list.len(), 1);
                 let login_data = LoginData::new(
-                    authenticator::AuthnType::ScramSha256,
-                    Some(authenticator::AuthnMessage::Payload("data1".to_string())),
+                    &authenticator::AuthnType::ScramSha256,
+                    &Some(authenticator::AuthnMessage::Payload("data1".to_string())),
                 );
                 assert_eq!(login_data_list, vec![login_data]);
             }
@@ -1033,8 +1033,8 @@ mod tests {
     #[test]
     fn logindata_try_into_value() {
         let login_data = LoginData::new(
-            authenticator::AuthnType::ScramSha256,
-            Some(authenticator::AuthnMessage::Payload("data1".to_string())),
+            &authenticator::AuthnType::ScramSha256,
+            &Some(authenticator::AuthnMessage::Payload("data1".to_string())),
         );
 
         let result: Result<Value, AppError> = login_data.try_into();
@@ -1053,7 +1053,7 @@ mod tests {
     fn connection_new() {
         let conn = Connection::new(
             "svc1",
-            vec![
+            &vec![
                 vec!["b0".to_string(), "b1".to_string()],
                 vec!["b2".to_string(), "b3".to_string()],
             ],
@@ -1084,7 +1084,7 @@ mod tests {
                 assert_eq!(conns.len(), 1);
                 let conn = Connection::new(
                     "svc1",
-                    vec![
+                    &vec![
                         vec!["b0".to_string(), "b1".to_string()],
                         vec!["b2".to_string(), "b3".to_string()],
                     ],
@@ -1104,7 +1104,7 @@ mod tests {
                 assert_eq!(conns.len(), 1);
                 let conn = Connection::new(
                     "svc1",
-                    vec![
+                    &vec![
                         vec!["b0".to_string(), "b1".to_string()],
                         vec!["b2".to_string(), "b3".to_string()],
                     ],
@@ -1119,7 +1119,7 @@ mod tests {
     fn connection_try_into_value() {
         let conn = Connection::new(
             "svc1",
-            vec![
+            &vec![
                 vec!["b0".to_string(), "b1".to_string()],
                 vec!["b2".to_string(), "b3".to_string()],
             ],

@@ -162,19 +162,17 @@ impl Server {
     pub fn send_message(
         server_socket: &UdpSocket,
         socket_addr: &SocketAddr,
-        data: &Vec<u8>,
+        data: &[u8],
     ) -> Result<usize, AppError> {
-        server_socket
-            .send_to(data.as_slice(), socket_addr)
-            .map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    format!(
-                        "Error while sending message on UDP socket: dest={:?}",
-                        socket_addr
-                    ),
-                    Box::new(err),
-                )
-            })
+        server_socket.send_to(data, socket_addr).map_err(|err| {
+            AppError::GenWithMsgAndErr(
+                format!(
+                    "Error while sending message on UDP socket: dest={:?}",
+                    socket_addr
+                ),
+                Box::new(err),
+            )
+        })
     }
 
     /// Shutdown for poller and listener
@@ -410,11 +408,9 @@ pub mod tests {
 
     #[test]
     fn server_new() {
-        let server = Server::new(
-            Arc::new(Mutex::new(MockServerVisit::new())),
-            "127.0.0.1",
-            1234,
-        );
+        let server_visitor: Arc<Mutex<dyn ServerVisitor>> =
+            Arc::new(Mutex::new(MockServerVisit::new()));
+        let server = Server::new(server_visitor, "127.0.0.1", 1234);
 
         if let Err(err) = &server {
             panic!("Unexpected result: err={:?}", &err);
@@ -531,7 +527,7 @@ pub mod tests {
         let server_socket = UdpSocket::bind(server_addr.clone()).unwrap();
         let client_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
 
-        if let Ok(bytes_len) = Server::send_message(&server_socket, &client_addr, &vec![0x10]) {
+        if let Ok(bytes_len) = Server::send_message(&server_socket, &client_addr, &[0x10u8]) {
             panic!("Unexpected successful result: len={:?}", bytes_len);
         }
     }
@@ -543,7 +539,7 @@ pub mod tests {
         if let Err(err) = Server::send_message(
             &connected_socket.as_ref().unwrap().server_socket.0,
             &connected_socket.as_ref().unwrap().client_socket.1,
-            &vec![0x10],
+            &[0x10u8],
         ) {
             panic!("Unexpected result: err={:?}", &err);
         }

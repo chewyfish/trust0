@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde_json::Value;
 use std::borrow::Borrow;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 use std::rc::Rc;
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
@@ -57,6 +57,8 @@ pub struct ManagementController {
     authn_context: Rc<Mutex<Option<AuthnContext>>>,
     /// Records whether user has passed secondary authentication
     authenticated: Rc<Mutex<bool>>,
+    /// Service ID map, but service name
+    service_ids: HashMap<String, u64>,
 }
 
 impl ManagementController {
@@ -73,21 +75,22 @@ impl ManagementController {
     /// A newly constructed [`ManagementController`] object.
     ///
     pub fn new(
-        app_config: Arc<AppConfig>,
+        app_config: &Arc<AppConfig>,
         service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
-        message_outbox: Arc<Mutex<VecDeque<Vec<u8>>>>,
+        message_outbox: &Arc<Mutex<VecDeque<Vec<u8>>>>,
     ) -> Self {
         let (stdin_connector, tty_echo_disabler) = Self::create_console_input_reader();
         Self {
             service_mgr: service_mgr.clone(),
             event_channel_sender: None,
-            message_outbox,
+            message_outbox: message_outbox.clone(),
             management_processor: management::request::RequestProcessor::new(),
             stdin_connector,
             console_shell_output: app_config.console_shell_output.clone(),
             tty_echo_disabler,
             authn_context: Rc::new(Mutex::new(None)),
             authenticated: Rc::new(Mutex::new(false)),
+            service_ids: HashMap::new(),
         }
     }
 
@@ -129,7 +132,7 @@ impl ManagementController {
         let result: Result<management::request::Request, AppError>;
 
         if self.authn_context.lock().unwrap().is_some() {
-            self.process_authn_message(Some(AuthnMessage::Payload(command_line.to_string())))?;
+            self.process_authn_message(&Some(AuthnMessage::Payload(command_line.to_string())))?;
             result = Ok(management::request::Request::Ignore);
         } else {
             let processed_request = self.management_processor.parse(command_line);
@@ -215,11 +218,11 @@ impl ManagementController {
                 authn_type: login_data.authn_type.clone(),
                 username: None,
             });
-            self.process_authn_message(login_data.message.clone())?;
+            self.process_authn_message(&login_data.message)?;
 
             gateway_response.request = management::request::Request::Ignore;
         } else {
-            self.process_authn_message(login_data.message.clone())?;
+            self.process_authn_message(&login_data.message)?;
             gateway_response.request = management::request::Request::Ignore;
         }
 
@@ -237,12 +240,15 @@ impl ManagementController {
     /// A [`Result`] indicating success/failure of the processing operation.
     ///
     fn process_inbound_message_start(
-        &self,
+        &mut self,
         gateway_response: &mut management::response::Response,
     ) -> Result<(), AppError> {
         let proxy_container =
             management::response::Proxy::from_serde_value(gateway_response.data.as_ref().unwrap())?;
         let proxy = proxy_container.first().unwrap();
+
+        self.service_ids
+            .insert(proxy.service.name.clone(), proxy.service.id);
 
         let _ = self.service_mgr.lock().unwrap().startup(
             &proxy.service.clone().into(),
@@ -256,6 +262,26 @@ impl ManagementController {
         Ok(())
     }
 
+    /// Process 'stop' response. Shuts down corresponding service proxy.
+    ///
+    /// # Arguments
+    ///
+    /// * `service_name` - Service name
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure of the processing operation.
+    ///
+    fn process_inbound_message_stop(&self, service_name: &String) -> Result<(), AppError> {
+        match self.service_ids.get(service_name) {
+            Some(service_id) => self.service_mgr.lock().unwrap().shutdown(Some(*service_id)),
+            None => Err(AppError::General(format!(
+                "Unknown service name, can't stopped proxy: name={}",
+                service_name
+            ))),
+        }
+    }
+
     /// Process 'quit' response. Shuts down service proxies.
     ///
     /// # Arguments
@@ -266,7 +292,7 @@ impl ManagementController {
     /// A [`Result`] indicating success/failure of the processing operation.
     ///
     fn process_inbound_message_quit(&self) -> Result<(), AppError> {
-        self.service_mgr.lock().unwrap().shutdown()
+        self.service_mgr.lock().unwrap().shutdown(None)
     }
 
     /// Process inbound gateway authentication message (as is appropriate for the current authentication state)
@@ -279,7 +305,7 @@ impl ManagementController {
     ///
     /// A [`Result`] indicating success/failure of the processing operation
     ///
-    fn process_authn_message(&self, authn_msg: Option<AuthnMessage>) -> Result<(), AppError> {
+    fn process_authn_message(&self, authn_msg: &Option<AuthnMessage>) -> Result<(), AppError> {
         // Process authentication message
         let mut authn_context = self.authn_context.lock().unwrap();
         let authn_type = authn_context.as_ref().unwrap().authn_type.clone();
@@ -387,7 +413,7 @@ impl ManagementController {
     fn process_authn_message_for_scramsha256(
         &self,
         authn_context: &mut MutexGuard<Option<AuthnContext>>,
-        authn_msg: Option<AuthnMessage>,
+        authn_msg: &Option<AuthnMessage>,
     ) -> Result<(String, Option<AuthnMessage>, bool), AppError> {
         let mut console_output_text = String::new();
         let mut response_authn_msg = None;
@@ -429,7 +455,7 @@ impl ManagementController {
         }
         // Steps 4,...: Exchange authentication flow messages
         else {
-            match &authn_msg {
+            match authn_msg {
                 Some(AuthnMessage::Payload(_)) => {}
                 Some(AuthnMessage::Error(msg)) => {
                     console_output_text = format!(
@@ -448,7 +474,7 @@ impl ManagementController {
                 .authenticator
                 .as_mut()
                 .unwrap()
-                .exchange_messages(authn_msg)?;
+                .exchange_messages(authn_msg.clone())?;
             if response_authn_msg.is_none() {
                 if authn_context
                     .as_ref()
@@ -492,7 +518,7 @@ impl ManagementController {
     fn process_authn_message_for_insecure(
         &self,
         _: &mut MutexGuard<Option<AuthnContext>>,
-        _: Option<AuthnMessage>,
+        _: &Option<AuthnMessage>,
     ) -> Result<(String, Option<AuthnMessage>, bool), AppError> {
         *self.authenticated.lock().unwrap() = true;
         Ok((
@@ -508,9 +534,9 @@ unsafe impl Send for ManagementController {}
 impl ChannelProcessor for ManagementController {
     fn on_connected(
         &mut self,
-        event_channel_sender: mpsc::Sender<conn_std::ConnectionEvent>,
+        event_channel_sender: &mpsc::Sender<conn_std::ConnectionEvent>,
     ) -> Result<(), AppError> {
-        self.event_channel_sender = Some(event_channel_sender);
+        self.event_channel_sender = Some(event_channel_sender.clone());
 
         self.console_shell_output
             .lock()
@@ -597,6 +623,9 @@ impl ChannelProcessor for ManagementController {
                     local_port: _,
                 } => {
                     self.process_inbound_message_start(&mut gateway_response)?;
+                }
+                management::request::Request::Stop { service_name } => {
+                    self.process_inbound_message_stop(service_name)?;
                 }
                 management::request::Request::Quit => {
                     self.process_inbound_message_quit()?;
@@ -691,15 +720,16 @@ pub mod tests {
         let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
             Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
         let controller = ManagementController::new(
-            Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Arc::new(config::tests::create_app_config(None).unwrap()),
             &service_mgr,
-            Arc::new(Mutex::new(VecDeque::new())),
+            &Arc::new(Mutex::new(VecDeque::new())),
         );
 
         assert!(controller.event_channel_sender.is_none());
         assert!(!*controller.tty_echo_disabler.lock().unwrap());
         assert!(controller.authn_context.lock().unwrap().is_none());
         assert!(!*controller.authenticated.lock().unwrap());
+        assert!(controller.service_ids.is_empty());
     }
 
     #[test]
@@ -712,12 +742,12 @@ pub mod tests {
         let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
             Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
         let mut controller = ManagementController::new(
-            Arc::new(app_config),
+            &Arc::new(app_config),
             &service_mgr,
-            Arc::new(Mutex::new(VecDeque::new())),
+            &Arc::new(Mutex::new(VecDeque::new())),
         );
 
-        if let Err(err) = controller.on_connected(mpsc::channel().0) {
+        if let Err(err) = controller.on_connected(&mpsc::channel().0) {
             panic!("Unexpected result: err={:?}", &err);
         }
 
@@ -742,9 +772,9 @@ pub mod tests {
         let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
             Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
         let mut controller = ManagementController::new(
-            Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Arc::new(config::tests::create_app_config(None).unwrap()),
             &service_mgr,
-            Arc::new(Mutex::new(VecDeque::new())),
+            &Arc::new(Mutex::new(VecDeque::new())),
         );
 
         let result = controller.validate_request("INVALID");
@@ -764,9 +794,9 @@ pub mod tests {
         let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
             Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
         let mut controller = ManagementController::new(
-            Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Arc::new(config::tests::create_app_config(None).unwrap()),
             &service_mgr,
-            Arc::new(Mutex::new(VecDeque::new())),
+            &Arc::new(Mutex::new(VecDeque::new())),
         );
 
         let result = controller.validate_request("ping");
@@ -797,7 +827,7 @@ pub mod tests {
         stdin_connector.expect_next_line().return_once(|| Ok(None));
 
         let mut controller =
-            ManagementController::new(Arc::new(app_config), &service_mgr, message_outbox.clone());
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
         controller.stdin_connector = Box::new(stdin_connector);
 
         if let Err(err) = controller.process_outbound_messages() {
@@ -827,7 +857,7 @@ pub mod tests {
             .return_once(|| Ok(Some(String::new())));
 
         let mut controller =
-            ManagementController::new(Arc::new(app_config), &service_mgr, message_outbox.clone());
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
         controller.stdin_connector = Box::new(stdin_connector);
 
         if let Err(err) = controller.process_outbound_messages() {
@@ -858,7 +888,7 @@ pub mod tests {
             .return_once(|| Ok(Some("invalid1".to_string())));
 
         let mut controller =
-            ManagementController::new(Arc::new(app_config), &service_mgr, message_outbox.clone());
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
         controller.stdin_connector = Box::new(stdin_connector);
 
         if let Err(err) = controller.process_outbound_messages() {
@@ -889,7 +919,7 @@ pub mod tests {
             .return_once(|| Ok(Some("ping".to_string())));
 
         let mut controller =
-            ManagementController::new(Arc::new(app_config), &service_mgr, message_outbox.clone());
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
         controller.stdin_connector = Box::new(stdin_connector);
 
         if let Err(err) = controller.process_outbound_messages() {
@@ -932,7 +962,7 @@ pub mod tests {
             .return_once(|| Ok(Some("user1".to_string())));
 
         let mut controller =
-            ManagementController::new(Arc::new(app_config), &service_mgr, message_outbox.clone());
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
         controller.stdin_connector = Box::new(stdin_connector);
         *controller.authn_context.lock().unwrap() = Some(AuthnContext {
             authenticator: None,
@@ -988,7 +1018,7 @@ pub mod tests {
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
         let mut controller =
-            ManagementController::new(Arc::new(app_config), &service_mgr, message_outbox.clone());
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
 
         let response_data_str = r#"[{"authnType":"scramSha256","message":null}]"#;
         let response_data_json = serde_json::from_str(&response_data_str).unwrap();
@@ -1043,14 +1073,14 @@ pub mod tests {
         let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> = Arc::new(Mutex::new(service_mgr));
 
         let mut controller =
-            ManagementController::new(Arc::new(app_config), &service_mgr, message_outbox.clone());
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
 
         let response_data = management::response::Proxy::new(
             &management::response::Service::new(
                 200,
                 "svc200",
                 &model::service::Transport::TCP,
-                None,
+                &None,
             ),
             &None,
             1234,
@@ -1097,7 +1127,7 @@ pub mod tests {
             200,
             "svc200",
             &model::service::Transport::TCP,
-            Some("svchost1:9999".to_string()),
+            &Some("svchost1:9999".to_string()),
         );
         let proxy_addrs = manager::ProxyAddrs(8501, "gwhost1".to_string(), 1234);
         let proxy_addrs_copy = proxy_addrs.clone();
@@ -1114,7 +1144,7 @@ pub mod tests {
         let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> = Arc::new(Mutex::new(service_mgr));
 
         let mut controller =
-            ManagementController::new(Arc::new(app_config), &service_mgr, message_outbox.clone());
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
 
         let response_data = management::response::Proxy::new(
             &response_service,
@@ -1147,6 +1177,91 @@ pub mod tests {
         let expected_data = format!("{{\n  \"code\": 200,\n  \"message\": null,\n  \"request\": {{\n    \"Start\": {{\n      \"service_name\": \"svc200\",\n      \"local_port\": 8501\n    }}\n  }},\n  \"data\": [\n    {{\n      \"client_port\": 8501,\n      \"gateway_host\": \"gwhost1\",\n      \"gateway_port\": 1234,\n      \"service\": {{\n        \"address\": \"svchost1:9999\",\n        \"id\": 200,\n        \"name\": \"svc200\",\n        \"transport\": \"TCP\"\n      }}\n    }}\n  ]\n}}\n{}", console::SHELL_PROMPT);
         let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
         assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
+
+        assert!(controller.service_ids.contains_key("svc200"));
+        assert_eq!(*controller.service_ids.get("svc200").unwrap(), 200u64);
+    }
+
+    #[test]
+    fn mgtcontrol_process_inbound_message_when_valid_stop_response() {
+        let output_channel = mpsc::channel();
+        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+            channel_sender: output_channel.0,
+        })));
+        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
+        let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
+
+        let mut service_mgr = manager::tests::MockSvcMgr::new();
+        service_mgr
+            .expect_shutdown()
+            .with(predicate::eq(Some(200)))
+            .times(1)
+            .return_once(|_| Ok(()));
+        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> = Arc::new(Mutex::new(service_mgr));
+
+        let mut controller =
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
+        controller.service_ids.insert("svc200".to_string(), 200);
+
+        let result = controller.process_inbound_message(MessageFrame::new(
+            ControlChannel::Management,
+            control::pdu::CODE_OK,
+            &None,
+            &Some(
+                serde_json::to_value(management::request::Request::Stop {
+                    service_name: "svc200".to_string(),
+                })
+                .unwrap(),
+            ),
+            &None,
+        ));
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        assert!(message_outbox.lock().unwrap().is_empty());
+
+        let expected_data = format!("{{\n  \"code\": 200,\n  \"message\": null,\n  \"request\": {{\n    \"Stop\": {{\n      \"service_name\": \"svc200\"\n    }}\n  }},\n  \"data\": null\n}}\n{}", console::SHELL_PROMPT);
+        let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
+        assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
+    }
+
+    #[test]
+    fn mgtcontrol_process_inbound_message_when_stop_response_and_unknown_service_name() {
+        let output_channel = mpsc::channel();
+        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+            channel_sender: output_channel.0,
+        })));
+        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
+        let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
+
+        let mut service_mgr = manager::tests::MockSvcMgr::new();
+        service_mgr
+            .expect_shutdown()
+            .with(predicate::always())
+            .never();
+        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> = Arc::new(Mutex::new(service_mgr));
+
+        let mut controller =
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
+
+        let result = controller.process_inbound_message(MessageFrame::new(
+            ControlChannel::Management,
+            control::pdu::CODE_OK,
+            &None,
+            &Some(
+                serde_json::to_value(management::request::Request::Stop {
+                    service_name: "svc200".to_string(),
+                })
+                .unwrap(),
+            ),
+            &None,
+        ));
+
+        if result.is_ok() {
+            panic!("Unexpected successful result");
+        }
     }
 
     #[test]
@@ -1162,11 +1277,11 @@ pub mod tests {
         service_mgr
             .expect_shutdown()
             .times(1)
-            .return_once(|| Ok(()));
+            .return_once(|_| Ok(()));
         let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> = Arc::new(Mutex::new(service_mgr));
 
         let mut controller =
-            ManagementController::new(Arc::new(app_config), &service_mgr, message_outbox.clone());
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
 
         let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
@@ -1199,14 +1314,14 @@ pub mod tests {
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
         let controller =
-            ManagementController::new(Arc::new(app_config), &service_mgr, message_outbox.clone());
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
         *controller.authn_context.lock().unwrap() = Some(AuthnContext {
             authenticator: None,
             authn_type: AuthnType::ScramSha256,
             username: Some("user1".to_string()),
         });
 
-        match controller.process_authn_message(Some(AuthnMessage::Authenticated)) {
+        match controller.process_authn_message(&Some(AuthnMessage::Authenticated)) {
             Err(err) => panic!("Unexpected process message result: err={:?}", &err),
             Ok(()) => {}
         }
@@ -1237,7 +1352,7 @@ pub mod tests {
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
         let controller =
-            ManagementController::new(Arc::new(app_config), &service_mgr, message_outbox.clone());
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
 
         *controller.authn_context.lock().unwrap() = Some(AuthnContext {
             authenticator: None,
@@ -1246,7 +1361,7 @@ pub mod tests {
         });
 
         match controller
-            .process_authn_message(Some(AuthnMessage::Unauthenticated("msg1".to_string())))
+            .process_authn_message(&Some(AuthnMessage::Unauthenticated("msg1".to_string())))
         {
             Err(err) => panic!("Unexpected process message result: err={:?}", &err),
             Ok(()) => {}
@@ -1278,7 +1393,7 @@ pub mod tests {
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
         let controller =
-            ManagementController::new(Arc::new(app_config), &service_mgr, message_outbox.clone());
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
 
         *controller.authn_context.lock().unwrap() = Some(AuthnContext {
             authenticator: None,
@@ -1286,7 +1401,7 @@ pub mod tests {
             username: Some("user1".to_string()),
         });
 
-        match controller.process_authn_message(Some(AuthnMessage::Payload("pass1".to_string()))) {
+        match controller.process_authn_message(&Some(AuthnMessage::Payload("pass1".to_string()))) {
             Err(err) => panic!("Unexpected process message result: err={:?}", &err),
             Ok(()) => {}
         }
@@ -1343,7 +1458,7 @@ pub mod tests {
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
         let mut controller =
-            ManagementController::new(Arc::new(app_config), &service_mgr, message_outbox.clone());
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
 
         *controller.authn_context.lock().unwrap() = Some(AuthnContext {
             authenticator: None,
@@ -1352,7 +1467,7 @@ pub mod tests {
         });
 
         // Perform step 3: In - None, Out - client first msg
-        match controller.process_authn_message(Some(AuthnMessage::Payload("pass1".to_string()))) {
+        match controller.process_authn_message(&Some(AuthnMessage::Payload("pass1".to_string()))) {
             Err(err) => panic!("Unexpected process message result: step=3, err={:?}", &err),
             Ok(()) => {}
         }
@@ -1564,7 +1679,7 @@ pub mod tests {
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
         let mut controller =
-            ManagementController::new(Arc::new(app_config), &service_mgr, message_outbox.clone());
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
 
         let response: MessageFrame = serde_json::from_str(&format!(
             r#"{{"channel":"Management","code":200,"message":null,"context":"Login","data":{}}}"#,
@@ -1604,7 +1719,7 @@ pub mod tests {
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
         let mut controller =
-            ManagementController::new(Arc::new(app_config), &service_mgr, message_outbox.clone());
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
 
         let response: MessageFrame = serde_json::from_str(
             r#"{"channel":"Management","code":200,"message":null,"context":"Proxies","data":[]}"#,
@@ -1647,7 +1762,7 @@ pub mod tests {
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
         let mut controller =
-            ManagementController::new(Arc::new(app_config), &service_mgr, message_outbox.clone());
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
 
         let response_data_str = "[
                 {
@@ -1704,7 +1819,7 @@ pub mod tests {
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
         let mut controller =
-            ManagementController::new(Arc::new(app_config), &service_mgr, message_outbox.clone());
+            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
 
         let response_str = "{\"channel\":\"Management\",\"code\":500,\"message\":\"System error encountered\",\"context\":\"Ping\",\"data\":null}";
         let response: MessageFrame = serde_json::from_str(&response_str).unwrap();

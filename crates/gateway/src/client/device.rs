@@ -212,7 +212,7 @@ mod tests {
     #[test]
     fn device_new_fn_when_valid_client_cert() -> Result<(), AppError> {
         let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let certs = load_certificates(certs_file.to_str().unwrap().to_string())?;
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
 
         let device_result = Device::new(certs);
 
@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn device_new_fn_when_invalid_client_cert() -> Result<(), AppError> {
         let certs_file: PathBuf = CERTFILE_NON_CLIENT_PATHPARTS.iter().collect();
-        let certs = load_certificates(certs_file.to_str().unwrap().to_string())?;
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
 
         let device_result = Device::new(certs);
 
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn device_accessors() -> Result<(), AppError> {
         let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
-        let certs = load_certificates(certs_file.to_str().unwrap().to_string())?;
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
 
         let device = Device::new(certs)?;
 

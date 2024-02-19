@@ -145,12 +145,12 @@ impl ProxyExecutor {
 
                     match ChannelAndTcpStreamProxy::new(
                         &proxy_key,
-                        proxy_context.0,
+                        &proxy_context.0,
                         proxy_context.1,
-                        proxy_context.2,
+                        &proxy_context.2,
                         proxy_context.3,
-                        proxy_context.4,
-                        proxy_context.5,
+                        &proxy_context.4,
+                        &proxy_context.5,
                     ) {
                         Ok(proxy_stream) => {
                             let proxy_stream = Arc::new(Mutex::new(proxy_stream));
@@ -190,9 +190,9 @@ impl ProxyExecutor {
                         &proxy_key,
                         proxy_context.0,
                         proxy_context.1,
-                        proxy_context.2,
-                        proxy_context.3,
-                        proxy_context.4,
+                        &proxy_context.2,
+                        &proxy_context.3,
+                        &proxy_context.4,
                     ) {
                         Ok(proxy_stream) => {
                             let proxy_stream = Arc::new(Mutex::new(proxy_stream));
@@ -232,8 +232,8 @@ impl ProxyExecutor {
                         &proxy_key,
                         proxy_context.0,
                         proxy_context.1,
-                        proxy_context.2,
-                        proxy_context.3,
+                        &proxy_context.2,
+                        &proxy_context.3,
                     ) {
                         Ok(proxy_stream) => {
                             let proxy_stream = Arc::new(Mutex::new(proxy_stream));
@@ -296,5 +296,40 @@ impl ProxyExecutor {
 impl Default for ProxyExecutor {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Unit tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn proxyexec_new() {
+        let executor = ProxyExecutor::default();
+
+        assert!(executor.proxy_streams.is_empty());
+
+        executor
+            .clone_proxy_tasks_sender()
+            .send(ProxyExecutorEvent::Close("key1".to_string()))
+            .unwrap();
+
+        let received_task = executor.proxy_tasks_receiver.try_recv();
+        match received_task {
+            Ok(event) => match event {
+                ProxyExecutorEvent::Close(key) => assert_eq!(key, "key1".to_string()),
+                ProxyExecutorEvent::OpenChannelAndTcpProxy(_, _) => {
+                    panic!("Unexpected channel&tcp proxy event")
+                }
+                ProxyExecutorEvent::OpenTcpAndTcpProxy(_, _) => {
+                    panic!("Unexpected tcp&tcp proxy event")
+                }
+                ProxyExecutorEvent::OpenTcpAndUdpProxy(_, _) => {
+                    panic!("Unexpected tcp&udp proxy event")
+                }
+            },
+            Err(err) => panic!("Unexpected channel receive result: err={:?}", &err),
+        }
     }
 }

@@ -564,7 +564,7 @@ mod tests {
             Some("uname10"),
             Some("pass10"),
             "name10",
-            Status::Active,
+            &Status::Active,
             &vec![],
         ));
 
@@ -622,7 +622,7 @@ mod tests {
             Some("uname1"),
             Some("pass1"),
             "name1",
-            Status::Active,
+            &Status::Active,
             &vec![],
         ));
 
@@ -712,7 +712,7 @@ mod tests {
             Some("uname1"),
             Some("pass1"),
             "name1",
-            Status::Active,
+            &Status::Active,
             &vec![10],
         ));
 
@@ -804,7 +804,7 @@ mod tests {
                 Some("uname10"),
                 Some("pass10"),
                 "name10",
-                Status::Active,
+                &Status::Active,
                 &vec![50],
             ),
         );
@@ -865,7 +865,7 @@ mod tests {
                 Some("uname1"),
                 Some("pass1"),
                 "name1",
-                Status::Active,
+                &Status::Active,
                 &vec![50],
             ),
         );
@@ -935,7 +935,7 @@ mod tests {
                 Some("uname1"),
                 Some("pass1"),
                 "name1",
-                Status::Active,
+                &Status::Active,
                 &vec![10],
             ),
         );

@@ -232,14 +232,6 @@ pub struct AppConfigArgs {
     #[arg(required=false, long="alpn-protocol", env, value_parser=trust0_common::crypto::tls::parse_alpn_protocol, value_delimiter=',')]
     pub alpn_protocol: Option<Vec<Vec<u8>>>,
 
-    /// Support session resumption
-    #[arg(required = false, long = "session-resumption", env)]
-    pub session_resumption: bool,
-
-    /// Support tickets
-    #[arg(required = false, long = "tickets", env)]
-    pub tickets: bool,
-
     /// Hostname/ip of this gateway given to clients, used in service proxy connections (if not supplied, clients will determine that on their own)
     #[arg(required = true, long = "gateway-service-host", env)]
     pub gateway_service_host: Option<String>,
@@ -329,7 +321,6 @@ pub struct TlsServerConfigBuilder {
     pub cipher_suites: Vec<rustls::SupportedCipherSuite>,
     pub auth_root_certs: rustls::RootCertStore,
     pub crl_list: Option<Arc<Mutex<Vec<CertificateRevocationListDer<'static>>>>>,
-    pub session_resumption: bool,
     pub alpn_protocols: Vec<Vec<u8>>,
 }
 
@@ -367,11 +358,6 @@ impl TlsServerConfigBuilder {
         .expect("Bad certificates/private key");
 
         tls_server_config.key_log = Arc::new(rustls::KeyLogFile::new());
-
-        if self.session_resumption {
-            tls_server_config.session_storage = rustls::server::ServerSessionMemoryCache::new(256);
-        }
-
         tls_server_config.alpn_protocols = self.alpn_protocols.clone();
 
         Ok(tls_server_config)
@@ -448,9 +434,9 @@ impl AppConfig {
         )?;
 
         // Create TLS server configuration builder
-        let auth_certs = load_certificates(config_args.auth_cert_file.clone()).unwrap();
-        let certs = load_certificates(config_args.cert_file.clone()).unwrap();
-        let key = load_private_key(config_args.key_file.clone()).unwrap();
+        let auth_certs = load_certificates(&config_args.auth_cert_file).unwrap();
+        let certs = load_certificates(&config_args.cert_file).unwrap();
+        let key = load_private_key(&config_args.key_file).unwrap();
 
         let crl_reloader_loading = Arc::new(Mutex::new(false));
         let crl_list = match &config_args.crl_file {
@@ -471,7 +457,6 @@ impl AppConfig {
         let cipher_suites: Vec<rustls::SupportedCipherSuite> = config_args
             .cipher_suite
             .unwrap_or(rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec());
-        let session_resumption = config_args.session_resumption;
 
         let mut alpn_protocols = vec![alpn::Protocol::ControlPlane.to_string().into_bytes()];
         for service in repositories.1.as_ref().lock().unwrap().get_all()? {
@@ -485,7 +470,6 @@ impl AppConfig {
             cipher_suites,
             auth_root_certs,
             crl_list,
-            session_resumption,
             alpn_protocols,
         };
 
@@ -676,13 +660,12 @@ pub mod tests {
         access_repo: Arc<Mutex<dyn AccessRepository>>,
     ) -> Result<AppConfig, AppError> {
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
-        let gateway_cert = load_certificates(gateway_cert_file.to_str().unwrap().to_string())?;
+        let gateway_cert = load_certificates(gateway_cert_file.to_str().as_ref().unwrap())?;
         let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
-        let gateway_key = load_private_key(gateway_key_file.to_str().unwrap().to_string())?;
+        let gateway_key = load_private_key(gateway_key_file.to_str().as_ref().unwrap())?;
         let auth_root_certs = rustls::RootCertStore::empty();
         let cipher_suites: Vec<rustls::SupportedCipherSuite> =
             rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
-        let session_resumption = false;
         let alpn_protocols = vec![alpn::Protocol::ControlPlane.to_string().into_bytes()];
 
         let tls_server_config_builder = TlsServerConfigBuilder {
@@ -691,7 +674,6 @@ pub mod tests {
             cipher_suites,
             auth_root_certs,
             crl_list: None,
-            session_resumption,
             alpn_protocols,
         };
 
@@ -737,7 +719,6 @@ pub mod tests {
         env::remove_var("AUTH_KEY_FILE");
         env::remove_var("PROTOCOL_VERSION");
         env::remove_var("CIPHER_SUITE");
-        env::remove_var("SESSION_RESUMPTION");
         env::remove_var("ICKETS");
         env::remove_var("GATEWAY_SERVICE_HOST");
         env::remove_var("GATEWAY_SERVICE_PORTS");
@@ -832,7 +813,6 @@ pub mod tests {
             env::set_var("AUTH_KEY_FILE", gateway_key_file_str);
             env::set_var("PROTOCOL_VERSION", "1.3");
             env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
-            env::set_var("SESSION_RESUMPTION", "true");
             env::set_var("ICKETS", "true");
             env::set_var("GATEWAY_SERVICE_HOST", "gwhost1");
             env::set_var("GATEWAY_SERVICE_PORTS", "8000-8010");
@@ -911,7 +891,6 @@ pub mod tests {
             env::set_var("AUTH_KEY_FILE", gateway_key_file_str);
             env::set_var("PROTOCOL_VERSION", "1.3");
             env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
-            env::set_var("SESSION_RESUMPTION", "true");
             env::set_var("ICKETS", "true");
             env::set_var("GATEWAY_SERVICE_PORTS", "8000-8010");
             env::set_var("GATEWAY_SERVICE_REPLY_HOST", "gwhost2");
@@ -968,17 +947,16 @@ pub mod tests {
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_cert_file_str = gateway_cert_file.to_str().unwrap();
         let mut auth_root_certs = rustls::RootCertStore::empty();
-        for auth_root_cert in load_certificates(gateway_cert_file_str.to_string()).unwrap() {
+        for auth_root_cert in load_certificates(gateway_cert_file_str).unwrap() {
             auth_root_certs.add(auth_root_cert).unwrap();
         }
 
         let config_builder = TlsServerConfigBuilder {
-            certs: load_certificates(gateway_cert_file_str.to_string()).unwrap(),
-            key: load_private_key(gateway_key_file_str.to_string()).unwrap(),
+            certs: load_certificates(gateway_cert_file_str).unwrap(),
+            key: load_private_key(gateway_key_file_str).unwrap(),
             cipher_suites: rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec(),
             auth_root_certs,
             crl_list: None,
-            session_resumption: true,
             alpn_protocols: vec![alpn::Protocol::ControlPlane.to_string().into_bytes()],
         };
 

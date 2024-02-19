@@ -57,9 +57,9 @@ impl TcpAndTcpStreamProxy {
         proxy_key: &str,
         tcp_stream1: std::net::TcpStream,
         tcp_stream2: std::net::TcpStream,
-        stream1_reader_writer: Arc<Mutex<Box<dyn StreamReaderWriter>>>,
-        stream2_reader_writer: Arc<Mutex<Box<dyn StreamReaderWriter>>>,
-        proxy_channel_sender: sync::mpsc::Sender<ProxyEvent>,
+        stream1_reader_writer: &Arc<Mutex<Box<dyn StreamReaderWriter>>>,
+        stream2_reader_writer: &Arc<Mutex<Box<dyn StreamReaderWriter>>>,
+        proxy_channel_sender: &sync::mpsc::Sender<ProxyEvent>,
     ) -> Result<Self, AppError> {
         // Convert streams to non-blocking
         let tcp_stream1 = stream_utils::clone_std_tcp_stream(&tcp_stream1)?;
@@ -89,9 +89,9 @@ impl TcpAndTcpStreamProxy {
             proxy_key: proxy_key.to_string(),
             tcp_stream1,
             tcp_stream2,
-            stream1_reader_writer,
-            stream2_reader_writer,
-            proxy_channel_sender,
+            stream1_reader_writer: stream1_reader_writer.clone(),
+            stream2_reader_writer: stream2_reader_writer.clone(),
+            proxy_channel_sender: proxy_channel_sender.clone(),
             closing: Arc::new(Mutex::new(false)),
             closed: Arc::new(Mutex::new(false)),
         })
@@ -438,9 +438,9 @@ pub mod tests {
             proxy_key,
             client_tcp_stream,
             server_tcp_stream,
-            Arc::new(Mutex::new(client_reader_writer)),
-            Arc::new(Mutex::new(server_reader_writer)),
-            proxy_channel.0.clone(),
+            &Arc::new(Mutex::new(client_reader_writer)),
+            &Arc::new(Mutex::new(server_reader_writer)),
+            &proxy_channel.0,
         )?;
         Ok((
             proxy,

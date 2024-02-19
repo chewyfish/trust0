@@ -174,8 +174,8 @@ impl ManagementController {
             &management::request::Request::Login,
             &Some(
                 management::response::LoginData::new(
-                    self.app_config.mfa_scheme.clone(),
-                    response_authn_msg,
+                    &self.app_config.mfa_scheme,
+                    &response_authn_msg,
                 )
                 .try_into()?,
             ),
@@ -194,7 +194,7 @@ impl ManagementController {
     ///
     fn process_cmd_login_data(
         &self,
-        authn_msg: AuthnMessage,
+        authn_msg: &AuthnMessage,
     ) -> Result<management::response::Response, AppError> {
         let mut authn_context = self.authn_context.lock().unwrap();
 
@@ -219,8 +219,8 @@ impl ManagementController {
             },
             &Some(
                 management::response::LoginData::new(
-                    self.app_config.mfa_scheme.clone(),
-                    response_authn_msg,
+                    &self.app_config.mfa_scheme,
+                    &response_authn_msg,
                 )
                 .try_into()?,
             ),
@@ -248,12 +248,12 @@ impl ManagementController {
                     .cloned()
                     .collect();
 
-                let binds = proxy_addrs_list
+                let binds: Vec<Vec<String>> = proxy_addrs_list
                     .iter()
                     .map(|proxy_addrs| vec![proxy_addrs.0.clone(), proxy_addrs.1.clone()])
                     .collect();
 
-                management::response::Connection::new(&service_proxy.get_service().name, binds)
+                management::response::Connection::new(&service_proxy.get_service().name, &binds)
                     .try_into()
             })
             .collect::<Result<Vec<Value>, AppError>>()?;
@@ -385,12 +385,11 @@ impl ManagementController {
         }
 
         // Start up service proxy
-        let service_mgr_copy = self.service_mgr.clone();
         let (gateway_service_host, gateway_service_port) = self
             .service_mgr
             .lock()
             .unwrap()
-            .startup(service_mgr_copy, service)?;
+            .startup(self.service_mgr.clone(), service)?;
 
         // Return service proxy connection
         let service = Self::prepare_response_service(service, self.app_config.mask_addresses);
@@ -605,7 +604,7 @@ impl ChannelProcessor for ManagementController {
                 client_request = management::request::Request::LoginData {
                     message: authn_msg.clone(),
                 };
-                client_response = self.process_cmd_login_data(authn_msg);
+                client_response = self.process_cmd_login_data(&authn_msg);
             }
             Ok(management::request::Request::Ping) => {
                 client_request = management::request::Request::Ping;

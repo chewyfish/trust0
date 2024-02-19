@@ -25,8 +25,8 @@ impl ProxyEvent {
     ///
     pub fn key_value(
         proxy_type: &ProxyType,
-        socket_addr1: Option<SocketAddr>,
-        socket_addr2: Option<SocketAddr>,
+        socket_addr1: &Option<SocketAddr>,
+        socket_addr2: &Option<SocketAddr>,
     ) -> String {
         let client_addr = match socket_addr1 {
             Some(client_addr) => format!("{:?}", client_addr),
@@ -62,11 +62,30 @@ mod tests {
     }
 
     #[test]
+    fn proxyevt_debug() {
+        assert_eq!(
+            format!("{:?}", ProxyEvent::Closed("msg1".to_string())),
+            "Closed(\"msg1\")".to_string()
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                ProxyEvent::Message(
+                    "msg1".to_string(),
+                    "127.0.0.1:1234".parse().unwrap(),
+                    vec![0x10]
+                )
+            ),
+            "Message(\"msg1\", 127.0.0.1:1234, [16])".to_string()
+        );
+    }
+
+    #[test]
     fn proxyevt_key_value_when_addr1_and_noaddr2() {
         let key = ProxyEvent::key_value(
             &ProxyType::TcpAndTcp,
-            Some("127.0.0.1:1234".parse().unwrap()),
-            None,
+            &Some("127.0.0.1:1234".parse().unwrap()),
+            &None,
         );
         assert_eq!(key, "T&T:\"127.0.0.1:1234\",\"server_addr_NA\"".to_string());
     }
@@ -75,15 +94,15 @@ mod tests {
     fn proxyevt_key_value_when_noaddr1_and_addr2() {
         let key = ProxyEvent::key_value(
             &ProxyType::TcpAndTcp,
-            None,
-            Some("127.0.0.1:5678".parse().unwrap()),
+            &None,
+            &Some("127.0.0.1:5678".parse().unwrap()),
         );
         assert_eq!(key, "T&T:\"client_addr_NA\",\"127.0.0.1:5678\"".to_string());
     }
 
     #[test]
     fn proxyevt_key_value_when_noaddr1_and_noaddr2() {
-        let key = ProxyEvent::key_value(&ProxyType::TcpAndTcp, None, None);
+        let key = ProxyEvent::key_value(&ProxyType::TcpAndTcp, &None, &None);
         assert_eq!(key, "T&T:\"client_addr_NA\",\"server_addr_NA\"".to_string());
     }
 
@@ -91,8 +110,8 @@ mod tests {
     fn proxyevt_key_value_when_addr1_and_addr2() {
         let key = ProxyEvent::key_value(
             &ProxyType::TcpAndTcp,
-            Some("127.0.0.1:1234".parse().unwrap()),
-            Some("127.0.0.1:5678".parse().unwrap()),
+            &Some("127.0.0.1:1234".parse().unwrap()),
+            &Some("127.0.0.1:5678".parse().unwrap()),
         );
         assert_eq!(key, "T&T:\"127.0.0.1:1234\",\"127.0.0.1:5678\"".to_string());
     }

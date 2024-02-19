@@ -54,8 +54,8 @@ impl TcpAndUdpStreamProxy {
         proxy_key: &str,
         tcp_stream: std::net::TcpStream,
         udp_socket: std::net::UdpSocket,
-        tcp_stream_reader_writer: Arc<Mutex<Box<dyn StreamReaderWriter>>>,
-        proxy_channel_sender: sync::mpsc::Sender<ProxyEvent>,
+        tcp_stream_reader_writer: &Arc<Mutex<Box<dyn StreamReaderWriter>>>,
+        proxy_channel_sender: &sync::mpsc::Sender<ProxyEvent>,
     ) -> Result<Self, AppError> {
         // Convert streams to non-blocking
         let tcp_stream = stream_utils::clone_std_tcp_stream(&tcp_stream)?;
@@ -85,8 +85,8 @@ impl TcpAndUdpStreamProxy {
             proxy_key: proxy_key.to_string(),
             tcp_stream,
             udp_socket,
-            tcp_stream_reader_writer,
-            proxy_channel_sender,
+            tcp_stream_reader_writer: tcp_stream_reader_writer.clone(),
+            proxy_channel_sender: proxy_channel_sender.clone(),
             closing: Arc::new(Mutex::new(false)),
             closed: Arc::new(Mutex::new(false)),
         })
@@ -418,8 +418,8 @@ pub mod tests {
             proxy_key,
             client_tcp_stream,
             server_udp_socket,
-            Arc::new(Mutex::new(client_reader_writer)),
-            proxy_channel.0.clone(),
+            &Arc::new(Mutex::new(client_reader_writer)),
+            &proxy_channel.0,
         )?;
         Ok((
             proxy,

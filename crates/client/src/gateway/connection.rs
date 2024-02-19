@@ -21,13 +21,13 @@ pub struct ServerConnVisitor {
 impl ServerConnVisitor {
     /// ServerConnVisitor constructor
     pub fn new(
-        app_config: Arc<AppConfig>,
-        service_mgr: Arc<Mutex<dyn ServiceMgr>>,
+        app_config: &Arc<AppConfig>,
+        service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
     ) -> Result<Self, AppError> {
         Ok(Self {
             _app_config: app_config.clone(),
             event_channel_sender: None,
-            message_processor: Box::new(ControlPlane::new(app_config.clone(), &service_mgr)?),
+            message_processor: Box::new(ControlPlane::new(app_config, service_mgr)?),
         })
     }
 }
@@ -35,7 +35,7 @@ impl ServerConnVisitor {
 impl conn_std::ConnectionVisitor for ServerConnVisitor {
     fn on_connected(
         &mut self,
-        event_channel_sender: Sender<conn_std::ConnectionEvent>,
+        event_channel_sender: &Sender<conn_std::ConnectionEvent>,
     ) -> Result<(), AppError> {
         self.event_channel_sender = Some(event_channel_sender.clone());
         self.message_processor.on_connected(event_channel_sender)
@@ -76,7 +76,7 @@ pub mod tests {
     mock! {
         pub ConnVisit {}
         impl conn_std::ConnectionVisitor for ConnVisit {
-            fn on_connected(&mut self, _event_channel_sender: Sender<conn_std::ConnectionEvent>) -> Result<(), AppError>;
+            fn on_connected(&mut self, _event_channel_sender: &Sender<conn_std::ConnectionEvent>) -> Result<(), AppError>;
             fn on_connection_read(&mut self, _data: &[u8]) -> Result<(), AppError>;
             fn on_polling_cycle(&mut self) -> Result<(), AppError>;
             fn on_shutdown(&mut self) -> Result<(), AppError>;
@@ -89,9 +89,11 @@ pub mod tests {
 
     #[test]
     fn srvconnvis_new() {
+        let service_mgr: Arc<Mutex<dyn ServiceMgr>> =
+            Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
         match ServerConnVisitor::new(
-            Arc::new(config::tests::create_app_config(None).unwrap()),
-            Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new())),
+            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &service_mgr,
         ) {
             Ok(server_conn_visitor) => assert!(server_conn_visitor.event_channel_sender.is_none()),
             Err(err) => panic!("Unexpected result: err={:?}", &err),
@@ -115,7 +117,7 @@ pub mod tests {
             message_processor: Box::new(msg_processor),
         };
 
-        let result = server_conn_visitor.on_connected(mpsc::channel().0);
+        let result = server_conn_visitor.on_connected(&mpsc::channel().0);
 
         if let Err(err) = result {
             panic!("Unexpected result: err={:?}", &err);

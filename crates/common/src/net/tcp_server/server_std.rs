@@ -361,11 +361,9 @@ pub mod tests {
 
     #[test]
     fn server_new() {
-        let server = Server::new(
-            Arc::new(Mutex::new(MockServerVisit::new())),
-            "127.0.0.1",
-            1234,
-        );
+        let server_visitor: Arc<Mutex<dyn ServerVisitor>> =
+            Arc::new(Mutex::new(MockServerVisit::new()));
+        let server = Server::new(server_visitor, "127.0.0.1", 1234);
 
         assert!(server.tcp_listener.is_none());
         assert_eq!(server.listen_addr, "127.0.0.1:1234");

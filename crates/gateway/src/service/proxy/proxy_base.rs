@@ -167,11 +167,11 @@ pub mod tests {
         alpn_protocols: Vec<Vec<u8>>,
     ) -> Result<ServerConfig, anyhow::Error> {
         let rootca_cert_file: PathBuf = CERTFILE_ROOTCA_PATHPARTS.iter().collect();
-        let rootca_cert = load_certificates(rootca_cert_file.to_str().unwrap().to_string())?;
+        let rootca_cert = load_certificates(rootca_cert_file.to_str().as_ref().unwrap())?;
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
-        let gateway_cert = load_certificates(gateway_cert_file.to_str().unwrap().to_string())?;
+        let gateway_cert = load_certificates(gateway_cert_file.to_str().as_ref().unwrap())?;
         let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
-        let gateway_key = load_private_key(gateway_key_file.to_str().unwrap().to_string())?;
+        let gateway_key = load_private_key(gateway_key_file.to_str().as_ref().unwrap())?;
         let cipher_suites: Vec<rustls::SupportedCipherSuite> =
             rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
         let protocol_versions: Vec<&'static rustls::SupportedProtocolVersion> =

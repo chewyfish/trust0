@@ -32,7 +32,7 @@ pub struct UdpClientProxy {
 impl UdpClientProxy {
     /// UdpClientProxy constructor
     pub fn new(
-        app_config: Arc<AppConfig>,
+        app_config: &Arc<AppConfig>,
         server_socket_channel_receiver: Receiver<ProxyEvent>,
         server_visitor: Arc<Mutex<UdpClientProxyServerVisitor>>,
         proxy_port: u16,
@@ -59,11 +59,13 @@ impl UdpClientProxy {
                     &format!("Error receiving socket event: err={:?}", err),
                 ),
 
-                Ok(proxy_event) => {
-                    if let ProxyEvent::Message(proxy_key, socket_addr, data) = proxy_event {
-                        if let Err(err) =
-                            server_std::Server::send_message(&server_socket, &socket_addr, &data)
-                        {
+                Ok(proxy_event) => match proxy_event {
+                    ProxyEvent::Message(proxy_key, socket_addr, data) => {
+                        if let Err(err) = server_std::Server::send_message(
+                            &server_socket,
+                            &socket_addr,
+                            data.as_slice(),
+                        ) {
                             error(
                                 &target!(),
                                 &format!(
@@ -73,7 +75,9 @@ impl UdpClientProxy {
                             );
                         }
                     }
-                }
+
+                    ProxyEvent::Closed(_) => break,
+                },
             }
         });
     }
@@ -114,26 +118,26 @@ impl UdpClientProxyServerVisitor {
     #![allow(clippy::too_many_arguments)]
     /// UdpClientProxyServerVisitor constructor
     pub fn new(
-        app_config: Arc<AppConfig>,
-        service: Service,
+        app_config: &Arc<AppConfig>,
+        service: &Service,
         client_proxy_port: u16,
         gateway_proxy_host: &str,
         gateway_proxy_port: u16,
-        server_socket_channel_sender: Sender<ProxyEvent>,
-        proxy_tasks_sender: Sender<ProxyExecutorEvent>,
-        proxy_events_sender: Sender<ProxyEvent>,
-        services_by_proxy_key: Arc<Mutex<HashMap<String, u64>>>,
+        server_socket_channel_sender: &Sender<ProxyEvent>,
+        proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
+        proxy_events_sender: &Sender<ProxyEvent>,
+        services_by_proxy_key: &Arc<Mutex<HashMap<String, u64>>>,
     ) -> Result<Self, AppError> {
         Ok(Self {
-            app_config,
-            service,
+            app_config: app_config.clone(),
+            service: service.clone(),
             client_proxy_port,
             gateway_proxy_host: gateway_proxy_host.to_string(),
             gateway_proxy_port,
-            server_socket_channel_sender,
-            proxy_tasks_sender,
-            proxy_events_sender,
-            services_by_proxy_key,
+            server_socket_channel_sender: server_socket_channel_sender.clone(),
+            proxy_tasks_sender: proxy_tasks_sender.clone(),
+            proxy_events_sender: proxy_events_sender.clone(),
+            services_by_proxy_key: services_by_proxy_key.clone(),
             socket_channel_senders_by_proxy_key: HashMap::new(),
             proxy_addrs_by_proxy_key: HashMap::new(),
             shutdown_requested: false,
@@ -150,8 +154,8 @@ impl server_std::ServerVisitor for UdpClientProxyServerVisitor {
     ) -> Result<(), AppError> {
         let proxy_key = ProxyEvent::key_value(
             &ProxyType::ChannelAndTcp,
-            Some(*peer_addr),
-            Some(*local_addr),
+            &Some(*peer_addr),
+            &Some(*local_addr),
         );
 
         // New client socket, setup service proxy
@@ -170,7 +174,7 @@ impl server_std::ServerVisitor for UdpClientProxyServerVisitor {
             let mut tls_client = client_std::Client::new(
                 Box::new(ClientVisitor::new()),
                 tls_client_config,
-                self.gateway_proxy_host.clone(),
+                &self.gateway_proxy_host,
                 self.gateway_proxy_port,
                 true,
             );
@@ -279,7 +283,21 @@ impl ClientServiceProxyVisitor for UdpClientProxyServerVisitor {
     }
 
     fn set_shutdown_requested(&mut self) {
+        // Shutdown UDP server message poller
         self.shutdown_requested = true;
+
+        // Shutdown client-bound message poller
+        if let Err(err) = self.server_socket_channel_sender.send(ProxyEvent::Closed(
+            "Service proxy shutting down".to_string(),
+        )) {
+            error(
+                &target!(),
+                &format!(
+                    "Error sending proxy closed event to client-bound message poller: err={:?}",
+                    &err
+                ),
+            );
+        }
     }
 
     fn shutdown_connections(
@@ -378,14 +396,55 @@ pub mod tests {
             shutdown_requested: false,
         }));
 
-        let _ = UdpClientProxy::new(app_config, mpsc::channel().1, server_visitor, 3000);
+        let _ = UdpClientProxy::new(&app_config, mpsc::channel().1, server_visitor, 3000);
+    }
+
+    #[test]
+    fn udpcliproxy_spawn_client_bound_message_processor() {
+        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let connected_udp_stream = stream_utils::ConnectedUdpSocket::new().unwrap();
+        let server_socket_channel = mpsc::channel();
+        let server_visitor = Arc::new(Mutex::new(
+            UdpClientProxyServerVisitor::new(
+                &app_config,
+                &Service::default(),
+                3000,
+                "gwhost1",
+                2000,
+                &server_socket_channel.0,
+                &mpsc::channel().0,
+                &mpsc::channel().0,
+                &Arc::new(Mutex::new(HashMap::new())),
+            )
+            .unwrap(),
+        ));
+        let client_proxy = UdpClientProxy::new(
+            &app_config,
+            server_socket_channel.1,
+            server_visitor.clone(),
+            3000,
+        )
+        .unwrap();
+
+        client_proxy.spawn_client_bound_message_processor(connected_udp_stream.server_socket.0);
+
+        server_socket_channel
+            .0
+            .send(ProxyEvent::Message(
+                "key1".to_string(),
+                connected_udp_stream.client_socket.1,
+                "hi".as_bytes().to_vec(),
+            ))
+            .unwrap();
+
+        server_visitor.lock().unwrap().set_shutdown_requested();
     }
 
     #[test]
     fn udpsvrproxyvisit_new() {
         let server_visitor = UdpClientProxyServerVisitor::new(
-            Arc::new(config::tests::create_app_config(None).unwrap()),
-            Service {
+            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Service {
                 service_id: 200,
                 name: "svc200".to_string(),
                 transport: Transport::UDP,
@@ -395,10 +454,10 @@ pub mod tests {
             3000,
             "gwhost1",
             2000,
-            mpsc::channel().0,
-            mpsc::channel().0,
-            mpsc::channel().0,
-            Arc::new(Mutex::new(HashMap::new())),
+            &mpsc::channel().0,
+            &mpsc::channel().0,
+            &mpsc::channel().0,
+            &Arc::new(Mutex::new(HashMap::new())),
         );
 
         assert!(server_visitor.is_ok());
@@ -422,8 +481,8 @@ pub mod tests {
         };
         let expected_proxy_key = ProxyEvent::key_value(
             &ProxyType::ChannelAndTcp,
-            Some(connected_udp_peer_addr.clone()),
-            Some(connected_udp_local_addr.clone()),
+            &Some(connected_udp_peer_addr.clone()),
+            &Some(connected_udp_local_addr.clone()),
         );
         let expected_msg_data = "data1".as_bytes().to_vec();
 
@@ -438,15 +497,15 @@ pub mod tests {
         proxy_base::tests::spawn_tls_server_listener(tcp_listener, tls_server_config, 1).unwrap();
 
         let mut server_visitor = UdpClientProxyServerVisitor::new(
-            Arc::new(app_config),
-            service.clone(),
+            &Arc::new(app_config),
+            &service,
             3000,
             "localhost",
             gateway_proxy_port,
-            mpsc::channel().0,
-            proxy_tasks_sender,
-            proxy_events_sender,
-            services_by_proxy_key.clone(),
+            &mpsc::channel().0,
+            &proxy_tasks_sender,
+            &proxy_events_sender,
+            &services_by_proxy_key,
         )
         .unwrap();
 
@@ -554,8 +613,8 @@ pub mod tests {
         };
         let expected_proxy_key = ProxyEvent::key_value(
             &ProxyType::ChannelAndTcp,
-            Some(connected_udp_peer_addr.clone()),
-            Some(connected_udp_local_addr.clone()),
+            &Some(connected_udp_peer_addr.clone()),
+            &Some(connected_udp_local_addr.clone()),
         );
         let expected_msg_data = "data1".as_bytes().to_vec();
 
@@ -570,15 +629,15 @@ pub mod tests {
         proxy_base::tests::spawn_tls_server_listener(tcp_listener, tls_server_config, 1).unwrap();
 
         let mut server_visitor = UdpClientProxyServerVisitor::new(
-            Arc::new(app_config),
-            service.clone(),
+            &Arc::new(app_config),
+            &service,
             3000,
             "localhost",
             gateway_proxy_port,
-            mpsc::channel().0,
-            proxy_tasks_sender,
-            proxy_events_sender,
-            services_by_proxy_key.clone(),
+            &mpsc::channel().0,
+            &proxy_tasks_sender,
+            &proxy_events_sender,
+            &services_by_proxy_key,
         )
         .unwrap();
         server_visitor
@@ -664,17 +723,27 @@ pub mod tests {
         };
 
         let mut server_visitor = UdpClientProxyServerVisitor::new(
-            Arc::new(config::tests::create_app_config(None).unwrap()),
-            service.clone(),
+            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &service,
             3000,
             "gwhost1",
             2000,
-            mpsc::channel().0,
-            mpsc::channel().0,
-            mpsc::channel().0,
-            Arc::new(Mutex::new(HashMap::new())),
+            &mpsc::channel().0,
+            &mpsc::channel().0,
+            &mpsc::channel().0,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .unwrap();
+        server_visitor.proxy_addrs_by_proxy_key = HashMap::from([
+            (
+                "key2".to_string(),
+                ("addr3".to_string(), "addr4".to_string()),
+            ),
+            (
+                "key3".to_string(),
+                ("addr5".to_string(), "addr6".to_string()),
+            ),
+        ]);
 
         assert!(!server_visitor.shutdown_requested);
         server_visitor.set_shutdown_requested();
@@ -683,6 +752,22 @@ pub mod tests {
         assert_eq!(server_visitor.get_client_proxy_port(), 3000);
         assert_eq!(server_visitor.get_gateway_proxy_host(), "gwhost1");
         assert_eq!(server_visitor.get_gateway_proxy_port(), 2000);
+
+        let expected_proxy_keys = vec![
+            (
+                "key2".to_string(),
+                ("addr3".to_string(), "addr4".to_string()),
+            ),
+            (
+                "key3".to_string(),
+                ("addr5".to_string(), "addr6".to_string()),
+            ),
+        ];
+
+        let mut proxy_keys = server_visitor.get_proxy_keys();
+        proxy_keys.sort();
+
+        assert_eq!(proxy_keys, expected_proxy_keys);
     }
 
     #[test]
@@ -699,15 +784,15 @@ pub mod tests {
         };
 
         let mut server_visitor = UdpClientProxyServerVisitor::new(
-            Arc::new(config::tests::create_app_config(None).unwrap()),
-            service.clone(),
+            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &service,
             3000,
             "gwhost1",
             2000,
-            mpsc::channel().0,
-            proxy_tasks_sender.clone(),
-            mpsc::channel().0,
-            services_by_proxy_key.clone(),
+            &mpsc::channel().0,
+            &proxy_tasks_sender,
+            &mpsc::channel().0,
+            &services_by_proxy_key,
         )
         .unwrap();
 
@@ -757,15 +842,15 @@ pub mod tests {
         };
 
         let mut server_visitor = UdpClientProxyServerVisitor::new(
-            Arc::new(config::tests::create_app_config(None).unwrap()),
-            service.clone(),
+            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &service,
             3000,
             "gwhost1",
             2000,
-            mpsc::channel().0,
-            proxy_tasks_sender.clone(),
-            mpsc::channel().0,
-            services_by_proxy_key.clone(),
+            &mpsc::channel().0,
+            &proxy_tasks_sender,
+            &mpsc::channel().0,
+            &services_by_proxy_key,
         )
         .unwrap();
 
@@ -815,15 +900,15 @@ pub mod tests {
         };
 
         let mut server_visitor = UdpClientProxyServerVisitor::new(
-            Arc::new(config::tests::create_app_config(None).unwrap()),
-            service.clone(),
+            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &service,
             3000,
             "gwhost1",
             2000,
-            mpsc::channel().0,
-            proxy_tasks_sender.clone(),
-            mpsc::channel().0,
-            services_by_proxy_key.clone(),
+            &mpsc::channel().0,
+            &proxy_tasks_sender,
+            &mpsc::channel().0,
+            &services_by_proxy_key,
         )
         .unwrap();
 
@@ -876,15 +961,15 @@ pub mod tests {
         };
 
         let mut server_visitor = UdpClientProxyServerVisitor::new(
-            Arc::new(config::tests::create_app_config(None).unwrap()),
-            service.clone(),
+            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &service,
             3000,
             "gwhost1",
             2000,
-            mpsc::channel().0,
-            mpsc::channel().0,
-            mpsc::channel().0,
-            services_by_proxy_key.clone(),
+            &mpsc::channel().0,
+            &mpsc::channel().0,
+            &mpsc::channel().0,
+            &services_by_proxy_key,
         )
         .unwrap();
 
@@ -916,15 +1001,15 @@ pub mod tests {
         };
 
         let mut server_visitor = UdpClientProxyServerVisitor::new(
-            Arc::new(config::tests::create_app_config(None).unwrap()),
-            service.clone(),
+            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &service,
             3000,
             "gwhost1",
             2000,
-            mpsc::channel().0,
-            mpsc::channel().0,
-            mpsc::channel().0,
-            services_by_proxy_key.clone(),
+            &mpsc::channel().0,
+            &mpsc::channel().0,
+            &mpsc::channel().0,
+            &services_by_proxy_key,
         )
         .unwrap();
 

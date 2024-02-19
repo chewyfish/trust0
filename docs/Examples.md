@@ -83,6 +83,7 @@ To run this example, execute the `run-chat-tcp-example.sh` script. You will be a
 
 ```
 [example] $ ./run-chat-tcp-example.sh
+If example requires secondary authentication credentials, please use "user1", "pass1"
 Enter an available port for the trust0 gateway: 8400
 Enter an available port for the chat service: 8500
 Enter an available port for the chat proxy: 8501
@@ -111,6 +112,7 @@ To run this example, execute the `run-echo-udp-example.sh` script. You will be a
 
 ```
 [example] $ ./run-echo-udp-example.sh
+If example requires secondary authentication credentials, please use "user1", "pass1"
 Enter an available port for the trust0 gateway: 8400
 ...
 Enter an available port for the echo service: 8600
@@ -137,7 +139,8 @@ In the `example` directory, you can run an example, which shows certificate re-i
 To run this example, execute the `run-reissue-cert-example.sh` script. You will be asked for free ports to be used for the client, gateway and the echo service (script uses these ports to update the echo service DB record and also now knows how to run the gateway).
 
 ```
-[example] $ ./run-echo-udp-example.sh
+[example] $ ./run-reissue-cert-example.sh
+If example requires secondary authentication credentials, please use "user1", "pass1"
 Enter an available port for the trust0 gateway: 8400
 ...
 Enter an available port for the echo service: 8600
@@ -165,7 +168,8 @@ In the `example` directory, you can run an example, which shows certificate revo
 To run this example, execute the `run-revoke-cert-example.sh` script. You will be asked for free ports to be used for the client, gateway and the echo service (script uses these ports to update the echo service DB record and also now knows how to run the gateway).
 
 ```
-[example] $ ./run-echo-udp-example.sh
+[example] $ ./run-revoke-cert-example.sh
+If example requires secondary authentication credentials, please use "user1", "pass1"
 Enter an available port for the trust0 gateway: 8400
 ...
 Enter an available port for the echo service: 8600

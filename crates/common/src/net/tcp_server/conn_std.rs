@@ -58,7 +58,7 @@ impl Connection {
         tcp_stream: TcpStream,
     ) -> Result<Self, AppError> {
         let event_channel = mpsc::channel();
-        visitor.on_connected(event_channel.0.clone())?;
+        visitor.on_connected(&event_channel.0)?;
 
         let stream_reader = Box::new(stream_utils::clone_std_tcp_stream(&tcp_stream)?);
         let stream_writer = Box::new(stream_utils::clone_std_tcp_stream(&tcp_stream)?);
@@ -398,7 +398,7 @@ pub trait ConnectionVisitor: Send {
     ///
     fn on_connected(
         &mut self,
-        _event_channel_sender: Sender<ConnectionEvent>,
+        _event_channel_sender: &Sender<ConnectionEvent>,
     ) -> Result<(), AppError> {
         Ok(())
     }
@@ -459,7 +459,7 @@ pub mod tests {
     mock! {
         pub ConnVisit {}
         impl ConnectionVisitor for ConnVisit {
-            fn on_connected(&mut self, event_channel_sender: Sender<ConnectionEvent>) -> Result<(), AppError>;
+            fn on_connected(&mut self, event_channel_sender: &Sender<ConnectionEvent>) -> Result<(), AppError>;
             fn on_connection_read(&mut self, data: &[u8]) -> Result<(), AppError>;
             fn on_polling_cycle(&mut self) -> Result<(), AppError>;
             fn on_shutdown(&mut self) -> Result<(), AppError>;
@@ -1233,7 +1233,7 @@ pub mod tests {
             err_response: String::new(),
         };
 
-        if let Err(err) = conn_visitor.on_connected(mpsc::channel().0) {
+        if let Err(err) = conn_visitor.on_connected(&mpsc::channel().0) {
             panic!("Unexpected 'on_connected' result: err={:?}", &err);
         }
         if let Err(err) = conn_visitor.on_connection_read(&[0x10]) {

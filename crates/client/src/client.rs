@@ -23,7 +23,7 @@ pub struct Client {
 
 impl Client {
     /// Client constructor
-    pub fn new(app_config: Arc<AppConfig>, service_mgr: Arc<Mutex<dyn ServiceMgr>>) -> Self {
+    pub fn new(app_config: &Arc<AppConfig>, service_mgr: Arc<Mutex<dyn ServiceMgr>>) -> Self {
         let mut tls_client_config = app_config.tls_client_config.clone();
         tls_client_config.alpn_protocols =
             vec![alpn::Protocol::ControlPlane.to_string().into_bytes()];
@@ -31,9 +31,9 @@ impl Client {
         Self {
             _app_config: app_config.clone(),
             tls_client: client_std::Client::new(
-                Box::new(ClientVisitor::new(app_config.clone(), service_mgr)),
+                Box::new(ClientVisitor::new(app_config, &service_mgr)),
                 tls_client_config,
-                app_config.gateway_host.to_string(),
+                &app_config.gateway_host,
                 app_config.gateway_port,
                 false,
             ),
@@ -61,10 +61,10 @@ pub struct ClientVisitor {
 
 impl ClientVisitor {
     /// ClientVisitor constructor
-    pub fn new(app_config: Arc<AppConfig>, service_mgr: Arc<Mutex<dyn ServiceMgr>>) -> Self {
+    pub fn new(app_config: &Arc<AppConfig>, service_mgr: &Arc<Mutex<dyn ServiceMgr>>) -> Self {
         Self {
-            _app_config: app_config,
-            _service_mgr: service_mgr,
+            _app_config: app_config.clone(),
+            _service_mgr: service_mgr.clone(),
         }
     }
 }
@@ -84,8 +84,8 @@ fn create_server_conn_visitor(
     client_visitor: &ClientVisitor,
 ) -> Result<Box<dyn conn_std::ConnectionVisitor>, AppError> {
     Ok(Box::new(ServerConnVisitor::new(
-        client_visitor._app_config.clone(),
-        client_visitor._service_mgr.clone(),
+        &client_visitor._app_config,
+        &client_visitor._service_mgr,
     )?))
 }
 #[cfg(test)]
@@ -145,16 +145,19 @@ pub mod tests {
     #[test]
     fn client_new() {
         let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
-        let service_mgr = Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<dyn ServiceMgr>> =
+            Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
 
-        let _ = Client::new(app_config, service_mgr);
+        let _ = Client::new(&app_config, service_mgr);
     }
 
     #[test]
     fn clivisit_new() {
+        let service_mgr: Arc<Mutex<dyn ServiceMgr>> =
+            Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
         let _ = super::ClientVisitor::new(
-            Arc::new(config::tests::create_app_config(None).unwrap()),
-            Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new())),
+            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &service_mgr,
         );
     }
 
@@ -163,11 +166,10 @@ pub mod tests {
         let app_config = config::tests::create_app_config(None).unwrap();
         let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
         let session_addrs = ("addr1".to_string(), "addr2".to_string());
+        let service_mgr: Arc<Mutex<dyn ServiceMgr>> =
+            Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
 
-        let mut client_visitor = super::ClientVisitor::new(
-            Arc::new(app_config),
-            Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new())),
-        );
+        let mut client_visitor = super::ClientVisitor::new(&Arc::new(app_config), &service_mgr);
 
         let result = client_visitor.create_server_conn(
             StreamOwned::new(

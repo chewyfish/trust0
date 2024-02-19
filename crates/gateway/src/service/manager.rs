@@ -46,7 +46,7 @@ pub trait ServiceMgr: Send {
     fn add_control_plane(
         &mut self,
         user_id: u64,
-        control_plane: Arc<Mutex<dyn MessageProcessor>>,
+        control_plane: &Arc<Mutex<dyn MessageProcessor>>,
     ) -> Result<(), AppError>;
 
     /// Clone proxy tasks sender
@@ -96,9 +96,9 @@ pub struct GatewayServiceMgr {
 impl GatewayServiceMgr {
     /// ServiceMgr constructor
     pub fn new(
-        app_config: Arc<AppConfig>,
-        proxy_tasks_sender: Sender<ProxyExecutorEvent>,
-        proxy_events_sender: Sender<ProxyEvent>,
+        app_config: &Arc<AppConfig>,
+        proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
+        proxy_events_sender: &Sender<ProxyEvent>,
     ) -> Self {
         let mut next_service_port = DEFAULT_SERVICE_PORT_START;
         let mut last_service_port = DEFAULT_SERVICE_PORT_END;
@@ -115,7 +115,7 @@ impl GatewayServiceMgr {
         };
 
         Self {
-            app_config,
+            app_config: app_config.clone(),
             service_proxies: HashMap::new(),
             service_proxy_visitors: HashMap::new(),
             service_proxy_threads: HashMap::new(),
@@ -124,8 +124,8 @@ impl GatewayServiceMgr {
             shared_service_port,
             next_service_port,
             last_service_port,
-            proxy_events_sender,
-            proxy_tasks_sender,
+            proxy_events_sender: proxy_events_sender.clone(),
+            proxy_tasks_sender: proxy_tasks_sender.clone(),
             control_planes: HashMap::new(),
         }
     }
@@ -133,7 +133,7 @@ impl GatewayServiceMgr {
     /// Listen and process any proxy events (blocking)
     pub fn poll_proxy_events(
         service_mgr: Arc<Mutex<dyn ServiceMgr>>,
-        proxy_events_receiver: Receiver<ProxyEvent>,
+        proxy_events_receiver: &Receiver<ProxyEvent>,
     ) -> Result<(), AppError> {
         loop {
             // Get next request task
@@ -190,10 +190,10 @@ impl ServiceMgr for GatewayServiceMgr {
     fn add_control_plane(
         &mut self,
         user_id: u64,
-        control_plane: Arc<Mutex<dyn MessageProcessor>>,
+        control_plane: &Arc<Mutex<dyn MessageProcessor>>,
     ) -> Result<(), AppError> {
         if let Entry::Vacant(entry) = self.control_planes.entry(user_id) {
-            let _ = entry.insert(control_plane);
+            let _ = entry.insert(control_plane.clone());
             Ok(())
         } else {
             Err(AppError::General(format!(
@@ -242,18 +242,18 @@ impl ServiceMgr for GatewayServiceMgr {
             Transport::TCP => {
                 // Setup service proxy objects
                 let tcp_proxy_visitor = Arc::new(Mutex::new(TcpGatewayProxyServerVisitor::new(
-                    self.app_config.clone(),
-                    service_mgr.clone(),
-                    service.clone(),
-                    self.app_config.gateway_service_host.clone(),
+                    &self.app_config,
+                    &service_mgr,
+                    service,
+                    &self.app_config.gateway_service_host,
                     service_port,
-                    self.proxy_tasks_sender.clone(),
-                    self.proxy_events_sender.clone(),
-                    self.services_by_proxy_key.clone(),
+                    &self.proxy_tasks_sender,
+                    &self.proxy_events_sender,
+                    &self.services_by_proxy_key,
                 )?));
 
                 service_proxy = Arc::new(Mutex::new(TcpGatewayProxy::new(
-                    self.app_config.clone(),
+                    &self.app_config,
                     tcp_proxy_visitor.clone(),
                     service_port,
                 )));
@@ -273,18 +273,18 @@ impl ServiceMgr for GatewayServiceMgr {
             Transport::UDP => {
                 // Setup service proxy objects
                 let udp_proxy_visitor = Arc::new(Mutex::new(UdpGatewayProxyServerVisitor::new(
-                    self.app_config.clone(),
-                    service_mgr.clone(),
-                    service.clone(),
-                    self.app_config.gateway_service_host.clone(),
+                    &self.app_config,
+                    &service_mgr,
+                    service,
+                    &self.app_config.gateway_service_host,
                     service_port,
-                    self.proxy_tasks_sender.clone(),
-                    self.proxy_events_sender.clone(),
-                    self.services_by_proxy_key.clone(),
+                    &self.proxy_tasks_sender,
+                    &self.proxy_events_sender,
+                    &self.services_by_proxy_key,
                 )?));
 
                 service_proxy = Arc::new(Mutex::new(UdpGatewayProxy::new(
-                    self.app_config.clone(),
+                    &self.app_config,
                     udp_proxy_visitor.clone(),
                     service_port,
                 )));
@@ -430,7 +430,7 @@ pub mod tests {
             fn get_service_proxies(&self) -> Vec<Arc<Mutex<dyn GatewayServiceProxyVisitor>>>;
             fn get_service_proxy(&self, service_id: u64) -> Option<Arc<Mutex<dyn GatewayServiceProxyVisitor>>>;
             fn has_control_plane_for_user(&self, user_id: u64, assert_authenticated: bool) -> bool;
-            fn add_control_plane(&mut self, user_id: u64, control_plane: Arc<Mutex<dyn MessageProcessor>>) -> Result<(), AppError>;
+            fn add_control_plane(&mut self, user_id: u64, control_plane: &Arc<Mutex<dyn MessageProcessor>>) -> Result<(), AppError>;
             fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent>;
             fn startup(&mut self, service_mgr: Arc<Mutex<dyn ServiceMgr>>, service: &Service) -> Result<(Option<String>, u16), AppError>;
             fn has_proxy_for_user_and_service(&mut self, user_id: u64, service_id: u64) -> bool;
@@ -461,8 +461,11 @@ pub mod tests {
                 Some((GATEWAY_DISTINCT_PORT_START, GATEWAY_DISTINCT_PORT_END));
         }
 
-        let mut service_mgr =
-            GatewayServiceMgr::new(Arc::new(app_config), mpsc::channel().0, mpsc::channel().0);
+        let mut service_mgr = GatewayServiceMgr::new(
+            &Arc::new(app_config),
+            &mpsc::channel().0,
+            &mpsc::channel().0,
+        );
         if use_shared_port {
             service_mgr.shared_service_port = Some(GATEWAY_SHARED_PORT);
         }
@@ -570,9 +573,10 @@ pub mod tests {
         let mut service_mgr = create_gw_service_mgr(true);
         assert!(service_mgr.control_planes.is_empty());
 
-        if let Err(err) =
-            service_mgr.add_control_plane(100, Arc::new(Mutex::new(MockMsgProcessor::new())))
-        {
+        let control_plane: Arc<Mutex<dyn MessageProcessor>> =
+            Arc::new(Mutex::new(MockMsgProcessor::new()));
+
+        if let Err(err) = service_mgr.add_control_plane(100, &control_plane) {
             panic!("Unexpected result: err={:?}", &err);
         }
 

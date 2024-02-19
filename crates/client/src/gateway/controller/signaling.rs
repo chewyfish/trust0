@@ -52,7 +52,7 @@ impl SignalingController {
     pub fn new(
         app_config: &Arc<AppConfig>,
         service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
-        message_outbox: Arc<Mutex<VecDeque<Vec<u8>>>>,
+        message_outbox: &Arc<Mutex<VecDeque<Vec<u8>>>>,
     ) -> Self {
         let cert_reissue_processor = Rc::new(Mutex::new(CertReissuanceProcessor::new(
             &app_config.console_shell_output,
@@ -155,7 +155,7 @@ impl Drop for SignalingController {
 impl ChannelProcessor for SignalingController {
     fn on_connected(
         &mut self,
-        event_channel_sender: mpsc::Sender<conn_std::ConnectionEvent>,
+        event_channel_sender: &mpsc::Sender<conn_std::ConnectionEvent>,
     ) -> Result<(), AppError> {
         self.event_channel_sender = Some(event_channel_sender.clone());
 
@@ -253,7 +253,7 @@ pub mod tests {
         let _ = SignalingController::new(
             &app_config,
             &service_mgr,
-            Arc::new(Mutex::new(VecDeque::new())),
+            &Arc::new(Mutex::new(VecDeque::new())),
         );
     }
 

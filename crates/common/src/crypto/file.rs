@@ -17,7 +17,7 @@ use crate::error::AppError;
 /// A [`Result`] containing the same filepath, if it is a valid certificate file.
 ///
 pub fn verify_certificates(filepath: &str) -> Result<String, AppError> {
-    match load_certificates(filepath.to_string()) {
+    match load_certificates(filepath) {
         Ok(_) => Ok(filepath.to_string()),
         Err(err) => Err(err),
     }
@@ -33,8 +33,8 @@ pub fn verify_certificates(filepath: &str) -> Result<String, AppError> {
 ///
 /// A [`Result`] containing the certificates in the file, if it is a valid certificate file
 ///
-pub fn load_certificates(filepath: String) -> Result<Vec<CertificateDer<'static>>, AppError> {
-    match fs::File::open(filepath.clone()).map_err(|err| {
+pub fn load_certificates(filepath: &str) -> Result<Vec<CertificateDer<'static>>, AppError> {
+    match fs::File::open(filepath).map_err(|err| {
         AppError::GenWithMsgAndErr(
             format!("failed to open certificates file: file={}", &filepath),
             Box::new(err),
@@ -68,7 +68,7 @@ pub fn load_certificates(filepath: String) -> Result<Vec<CertificateDer<'static>
 /// A [`Result`] containing the same filepath, if it is a valid private key file.
 ///
 pub fn verify_private_key_file(filepath: &str) -> Result<String, AppError> {
-    match load_private_key(filepath.to_string()) {
+    match load_private_key(filepath) {
         Ok(_) => Ok(filepath.to_string()),
         Err(err) => Err(err),
     }
@@ -84,8 +84,8 @@ pub fn verify_private_key_file(filepath: &str) -> Result<String, AppError> {
 ///
 /// A [`Result`] containing the private keys in the file, if it is a valid private key file
 ///
-pub fn load_private_key(filepath: String) -> Result<PrivateKeyDer<'static>, AppError> {
-    match fs::File::open(filepath.clone()).map_err(|err| {
+pub fn load_private_key(filepath: &str) -> Result<PrivateKeyDer<'static>, AppError> {
+    match fs::File::open(filepath).map_err(|err| {
         AppError::IoWithMsg(
             format!("failed to open private key file: file={}", &filepath),
             err,
@@ -192,7 +192,7 @@ mod tests {
     fn file_load_certificates_when_valid_certfile() {
         let certs_file: PathBuf = CERTFILE_CLIENT0_PATHPARTS.iter().collect();
 
-        let result = load_certificates(certs_file.to_str().unwrap().to_string());
+        let result = load_certificates(certs_file.to_str().as_ref().unwrap());
 
         if let Err(err) = result {
             panic!("Unexpected result: err={:?}", &err);
@@ -212,7 +212,7 @@ mod tests {
     fn file_load_certificates_when_invalid_certfile() {
         let certs_file: PathBuf = INVALID_PKI_FILE.iter().collect();
 
-        let result = load_certificates(certs_file.to_str().unwrap().to_string());
+        let result = load_certificates(certs_file.to_str().as_ref().unwrap());
 
         if let Err(err) = result {
             panic!("Unexpected result: err={:?}", &err);
@@ -227,7 +227,7 @@ mod tests {
     fn file_load_certificates_when_invalid_filepath() {
         let certs_file: PathBuf = MISSING_FILE.iter().collect();
 
-        let result = load_certificates(certs_file.to_str().unwrap().to_string());
+        let result = load_certificates(certs_file.to_str().as_ref().unwrap());
 
         if let Ok(certs) = result {
             panic!("Unexpected successful result: certs={:?}", &certs);
@@ -277,7 +277,7 @@ mod tests {
     fn file_load_private_keys_when_valid_keyfile() {
         let key_file: PathBuf = KEYFILE_CLIENT0_PATHPARTS.iter().collect();
 
-        let result = load_private_key(key_file.to_str().unwrap().to_string());
+        let result = load_private_key(key_file.to_str().as_ref().unwrap());
 
         if let Err(err) = result {
             panic!("Unexpected result: err={:?}", &err);
@@ -293,7 +293,7 @@ mod tests {
     fn file_load_private_keys_when_invalid_keyfile() {
         let key_file: PathBuf = INVALID_PKI_FILE.iter().collect();
 
-        let result = load_private_key(key_file.to_str().unwrap().to_string());
+        let result = load_private_key(key_file.to_str().as_ref().unwrap());
 
         if let Ok(key) = result {
             panic!("Unexpected successful result: key={:?}", &key);
@@ -304,7 +304,7 @@ mod tests {
     fn file_load_private_keys_when_invalid_filepath() {
         let key_file: PathBuf = MISSING_FILE.iter().collect();
 
-        let result = load_private_key(key_file.to_str().unwrap().to_string());
+        let result = load_private_key(key_file.to_str().as_ref().unwrap());
 
         if let Ok(key) = result {
             panic!("Unexpected successful result: key={:?}", &key);

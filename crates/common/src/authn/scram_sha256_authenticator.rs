@@ -43,26 +43,26 @@ pub fn hash_password(username: &str, password: &str, base64_encode: bool) -> Vec
 /// Handle processing error
 fn process_error(
     response_sender: &Option<mpsc::Sender<AuthnMessage>>,
-    app_error: Option<AppError>,
-    scram_error: Option<scram::Error>,
+    app_error: &Option<AppError>,
+    scram_error: &Option<scram::Error>,
 ) -> Result<AuthnMessage, AppError> {
     let authn_msg = match app_error {
         Some(err) => AuthnMessage::Error(format!("{:?}", &err)),
         None => {
-            let error = scram_error.unwrap();
-            match &error {
+            let error = scram_error.as_ref().unwrap();
+            match error {
                 scram::Error::InvalidServer => {
-                    AuthnMessage::Unauthenticated(format!("{:?}", &error))
+                    AuthnMessage::Unauthenticated(format!("{:?}", error))
                 }
                 scram::Error::Authentication(_) => {
-                    AuthnMessage::Unauthenticated(format!("{:?}", &error))
+                    AuthnMessage::Unauthenticated(format!("{:?}", error))
                 }
                 scram::Error::InvalidUser(_) => {
-                    AuthnMessage::Unauthenticated(format!("{:?}", &error))
+                    AuthnMessage::Unauthenticated(format!("{:?}", error))
                 }
                 _ => AuthnMessage::Error(format!(
                     "SCRAM SHA256 authentication processing error: err={:?}",
-                    &error
+                    error
                 )),
             }
         }
@@ -216,14 +216,14 @@ impl AuthenticatorClient for ScramSha256AuthenticatorClient {
             Err(err) => {
                 return process_error(
                     &self.client_response_sender,
-                    Some(AppError::GenWithMsgAndErr(
+                    &Some(AppError::GenWithMsgAndErr(
                         format!(
                             "Error receiving SCRAM SHA256 server first message: user={}",
                             self.username
                         ),
                         Box::new(err),
                     )),
-                    None,
+                    &None,
                 )
             }
         };
@@ -236,7 +236,7 @@ impl AuthenticatorClient for ScramSha256AuthenticatorClient {
         let client_response_processor =
             match server_response_handler.handle_server_first(&server_first_msg) {
                 Ok(processor) => processor,
-                Err(err) => return process_error(&self.client_response_sender, None, Some(err)),
+                Err(err) => return process_error(&self.client_response_sender, &None, &Some(err)),
             };
 
         // Process (build/send) client final auth message
@@ -280,14 +280,14 @@ impl AuthenticatorClient for ScramSha256AuthenticatorClient {
             Err(err) => {
                 return process_error(
                     &None,
-                    Some(AppError::GenWithMsgAndErr(
+                    &Some(AppError::GenWithMsgAndErr(
                         format!(
                             "Error receiving SCRAM SHA256 server final message: user={}",
                             self.username
                         ),
                         Box::new(err),
                     )),
-                    None,
+                    &None,
                 )
             }
         };
@@ -302,7 +302,7 @@ impl AuthenticatorClient for ScramSha256AuthenticatorClient {
                 *self.authenticated.lock().unwrap() = true;
                 Ok(AuthnMessage::Authenticated)
             }
-            Err(err) => process_error(&None, None, Some(err)),
+            Err(err) => process_error(&None, &None, &Some(err)),
         }
     }
 
@@ -447,22 +447,22 @@ where
                 _ => {
                     return process_error(
                         &self.server_response_sender,
-                        Some(AppError::General(format!(
+                        &Some(AppError::General(format!(
                             "Unexpected SCRAM SHA256 client first message: msg={:?}",
                             &auth_msg
                         ))),
-                        None,
+                        &None,
                     )
                 }
             },
             Err(err) => {
                 return process_error(
                     &self.server_response_sender,
-                    Some(AppError::GenWithMsgAndErr(
+                    &Some(AppError::GenWithMsgAndErr(
                         "Error receiving SCRAM SHA256 client first message".to_string(),
                         Box::new(err),
                     )),
-                    None,
+                    &None,
                 )
             }
         };
@@ -476,7 +476,7 @@ where
         let server_response_processor =
             match client_response_handler.handle_client_first(&client_first_msg) {
                 Ok(processor) => processor,
-                Err(err) => return process_error(&self.server_response_sender, None, Some(err)),
+                Err(err) => return process_error(&self.server_response_sender, &None, &Some(err)),
             };
 
         // Process (build/send) server first (challenge) message
@@ -513,22 +513,22 @@ where
                 _ => {
                     return process_error(
                         &self.server_response_sender,
-                        Some(AppError::General(format!(
+                        &Some(AppError::General(format!(
                             "Unexpected SCRAM SHA256 client final message: msg={:?}",
                             &auth_msg
                         ))),
-                        None,
+                        &None,
                     )
                 }
             },
             Err(err) => {
                 return process_error(
                     &self.server_response_sender,
-                    Some(AppError::GenWithMsgAndErr(
+                    &Some(AppError::GenWithMsgAndErr(
                         "Error receiving SCRAM SHA256 client final message".to_string(),
                         Box::new(err),
                     )),
-                    None,
+                    &None,
                 )
             }
         };
@@ -541,7 +541,7 @@ where
         let server_response_processor =
             match client_response_handler.handle_client_final(&client_final_msg) {
                 Ok(processor) => processor,
-                Err(err) => return process_error(&self.server_response_sender, None, Some(err)),
+                Err(err) => return process_error(&self.server_response_sender, &None, &Some(err)),
             };
 
         // Process (build/send) server final message
@@ -801,8 +801,8 @@ pub mod test {
 
         let result = process_error(
             &Some(channel.0.clone()),
-            Some(AppError::GenWithCode(123)),
-            None,
+            &Some(AppError::GenWithCode(123)),
+            &None,
         );
 
         if let Err(err) = result {
@@ -830,8 +830,8 @@ pub mod test {
 
         let result = process_error(
             &Some(channel.0.clone()),
-            None,
-            Some(scram::Error::InvalidServer),
+            &None,
+            &Some(scram::Error::InvalidServer),
         );
 
         if let Err(err) = result {
@@ -855,7 +855,7 @@ pub mod test {
 
     #[test]
     fn scramsha256_process_error_when_no_sender_and_app_error() {
-        let result = process_error(&None, Some(AppError::GenWithCode(123)), None);
+        let result = process_error(&None, &Some(AppError::GenWithCode(123)), &None);
 
         if let Err(err) = result {
             panic!("Unexpected result: err={:?}", &err);

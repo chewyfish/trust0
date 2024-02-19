@@ -112,3 +112,66 @@ pub fn setup_xdg_vars() -> Result<(), AppError> {
 
     Ok(())
 }
+
+/// Unit tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn testutils_gather_rcvd_bytearr_channel_data() {
+        let channel = mpsc::channel();
+        let mut data0 = "hi".as_bytes().to_vec();
+        let mut data1 = "there".as_bytes().to_vec();
+
+        channel.0.send(data0.clone()).unwrap();
+        channel.0.send(data1.clone()).unwrap();
+
+        let received_data = gather_rcvd_bytearr_channel_data(&channel.1);
+
+        data0.append(&mut data1);
+        assert_eq!(received_data, data0);
+    }
+
+    #[test]
+    fn testutils_gather_rcvd_connection_channel_data() {
+        let channel = mpsc::channel();
+
+        channel
+            .0
+            .send(ConnectionEvent::Write("hi".as_bytes().to_vec()))
+            .unwrap();
+        channel.0.send(ConnectionEvent::Closed).unwrap();
+
+        let received_events = gather_rcvd_connection_channel_data(&channel.1);
+
+        let expected_events = vec![
+            ConnectionEvent::Write("hi".as_bytes().to_vec()),
+            ConnectionEvent::Closed,
+        ];
+
+        assert_eq!(received_events, expected_events);
+    }
+
+    #[test]
+    fn testutils_setup_xdg_vars() {
+        let result = setup_xdg_vars();
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        assert!(env::var("XDG_DATA_HOME")
+            .unwrap()
+            .replace(&['/', '\\'], "|")
+            .ends_with("|target|test-common|xdgroot|data"));
+        assert!(env::var("XDG_CONFIG_HOME")
+            .unwrap()
+            .replace(&['/', '\\'], "|")
+            .ends_with("|target|test-common|xdgroot|config"));
+        assert!(env::var("XDG_CACHE_HOME")
+            .unwrap()
+            .replace(&['/', '\\'], "|")
+            .ends_with("|target|test-common|xdgroot|cache"));
+    }
+}

@@ -52,14 +52,14 @@ impl Client {
     pub fn new(
         visitor: Box<dyn ClientVisitor>,
         tls_client_config: rustls::ClientConfig,
-        server_host: String,
+        server_host: &str,
         server_port: u16,
         expect_server_msg: bool,
     ) -> Self {
         Self {
             visitor,
             tls_client_config: Arc::new(tls_client_config),
-            server_host,
+            server_host: server_host.to_string(),
             server_port,
             expect_server_msg,
             connection: None,
@@ -319,11 +319,11 @@ pub mod tests {
 
     pub fn create_tls_client_config() -> Result<rustls::ClientConfig, anyhow::Error> {
         let rootca_cert_file: PathBuf = CERTFILE_ROOTCA_PATHPARTS.iter().collect();
-        let rootca_cert = load_certificates(rootca_cert_file.to_str().unwrap().to_string())?;
+        let rootca_cert = load_certificates(rootca_cert_file.to_str().as_ref().unwrap())?;
         let client_cert_file: PathBuf = CERTFILE_CLIENT0_PATHPARTS.iter().collect();
-        let client_cert = load_certificates(client_cert_file.to_str().unwrap().to_string())?;
+        let client_cert = load_certificates(client_cert_file.to_str().as_ref().unwrap())?;
         let client_key_file: PathBuf = KEYFILE_CLIENT0_PATHPARTS.iter().collect();
-        let client_key = load_private_key(client_key_file.to_str().unwrap().to_string())?;
+        let client_key = load_private_key(client_key_file.to_str().as_ref().unwrap())?;
 
         let mut ca_root_store = rustls::RootCertStore::empty();
 
@@ -420,7 +420,7 @@ pub mod tests {
         let client = Client::new(
             Box::new(MockCliVisit::new()),
             tls_client_config,
-            "server1".to_string(),
+            "server1",
             1234,
             false,
         );

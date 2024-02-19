@@ -44,13 +44,13 @@ impl TcpGatewayProxy {
     /// A newly constructed [`TcpGatewayProxy`] object.
     ///
     pub fn new(
-        app_config: Arc<AppConfig>,
+        app_config: &Arc<AppConfig>,
         server_visitor: Arc<Mutex<TcpGatewayProxyServerVisitor>>,
         proxy_port: u16,
     ) -> Self {
         Self {
             tls_server: server_std::Server::new(
-                server_visitor.clone(),
+                server_visitor,
                 &app_config.server_host,
                 proxy_port,
             ),
@@ -117,24 +117,24 @@ impl TcpGatewayProxyServerVisitor {
     /// A [`Result`] containing a newly constructed [`TcpGatewayProxyServerVisitor`] object.
     ///
     pub fn new(
-        app_config: Arc<AppConfig>,
-        service_mgr: Arc<Mutex<dyn ServiceMgr>>,
-        service: Service,
-        proxy_host: Option<String>,
+        app_config: &Arc<AppConfig>,
+        service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
+        service: &Service,
+        proxy_host: &Option<String>,
         proxy_port: u16,
-        proxy_tasks_sender: Sender<ProxyExecutorEvent>,
-        proxy_events_sender: Sender<ProxyEvent>,
-        services_by_proxy_key: Arc<Mutex<HashMap<String, u64>>>,
+        proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
+        proxy_events_sender: &Sender<ProxyEvent>,
+        services_by_proxy_key: &Arc<Mutex<HashMap<String, u64>>>,
     ) -> Result<Self, AppError> {
         Ok(Self {
-            app_config,
-            service_mgr,
-            service,
-            proxy_host,
+            app_config: app_config.clone(),
+            service_mgr: service_mgr.clone(),
+            service: service.clone(),
+            proxy_host: proxy_host.clone(),
             proxy_port,
-            proxy_tasks_sender,
-            proxy_events_sender,
-            services_by_proxy_key,
+            proxy_tasks_sender: proxy_tasks_sender.clone(),
+            proxy_events_sender: proxy_events_sender.clone(),
+            services_by_proxy_key: services_by_proxy_key.clone(),
             users_by_proxy_addrs: HashMap::new(),
             proxy_addrs_by_proxy_key: HashMap::new(),
             proxy_keys_by_user: HashMap::new(),
@@ -157,8 +157,7 @@ impl TcpGatewayProxyServerVisitor {
         &self,
         tls_conn: &TlsServerConnection,
     ) -> Result<(ClientConnVisitor, u64, alpn::Protocol), AppError> {
-        let mut conn_visitor =
-            ClientConnVisitor::new(self.app_config.clone(), self.service_mgr.clone());
+        let mut conn_visitor = ClientConnVisitor::new(&self.app_config, &self.service_mgr);
         let protocol =
             conn_visitor.process_authorization(tls_conn, Some(self.service.service_id))?;
         let user_id = conn_visitor.get_user().as_ref().unwrap().user_id;
@@ -169,14 +168,13 @@ impl TcpGatewayProxyServerVisitor {
         &self,
         _tls_conn: &TlsServerConnection,
     ) -> Result<(ClientConnVisitor, u64, alpn::Protocol), AppError> {
-        let mut conn_visitor =
-            ClientConnVisitor::new(self.app_config.clone(), self.service_mgr.clone());
+        let mut conn_visitor = ClientConnVisitor::new(&self.app_config, &self.service_mgr);
         conn_visitor.set_user(Some(user::User::new(
             100,
             None,
             None,
             "name100",
-            user::Status::Active,
+            &user::Status::Active,
             &[],
         )));
         conn_visitor.set_protocol(Some(alpn::Protocol::Service(200)));
@@ -194,7 +192,12 @@ impl server_std::ServerVisitor for TcpGatewayProxyServerVisitor {
         let conn_addrs = tls::message::Trust0Connection::create_connection_addrs(&tls_conn.sock);
         self.users_by_proxy_addrs
             .insert(conn_addrs.clone(), user_id);
-        conn_std::Connection::new(Box::new(conn_visitor), tls_conn, &conn_addrs, alpn_protocol)
+        conn_std::Connection::new(
+            Box::new(conn_visitor),
+            tls_conn,
+            &conn_addrs,
+            &alpn_protocol,
+        )
     }
 
     fn on_tls_handshaking(&mut self, _accepted: &Accepted) -> Result<ServerConfig, AppError> {
@@ -278,8 +281,8 @@ impl server_std::ServerVisitor for TcpGatewayProxyServerVisitor {
         let proxy_addrs = connection.get_session_addrs().clone();
         let proxy_key = ProxyEvent::key_value(
             &ProxyType::TcpAndTcp,
-            tcp_stream.peer_addr().ok(),
-            service_stream.peer_addr().ok(),
+            &tcp_stream.peer_addr().ok(),
+            &service_stream.peer_addr().ok(),
         );
         let client_stream = tcp_stream.try_clone().map_err(|err| {
             AppError::GenWithMsgAndErr(
@@ -499,7 +502,7 @@ pub mod tests {
             proxy_keys_by_user: HashMap::new(),
         }));
 
-        let _ = TcpGatewayProxy::new(app_config, server_visitor, 3000);
+        let _ = TcpGatewayProxy::new(&app_config, server_visitor, 3000);
     }
 
     #[test]
@@ -513,23 +516,23 @@ pub mod tests {
             )
             .unwrap(),
         );
-        let service_mgr = Arc::new(Mutex::new(MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<dyn ServiceMgr>> = Arc::new(Mutex::new(MockSvcMgr::new()));
 
         let result = TcpGatewayProxyServerVisitor::new(
-            app_config,
-            service_mgr,
-            Service {
+            &app_config,
+            &service_mgr,
+            &Service {
                 service_id: 200,
                 name: "svc200".to_string(),
                 transport: Transport::TCP,
                 host: "svchost1".to_string(),
                 port: 4000,
             },
-            Some("gwhost1".to_string()),
+            &Some("gwhost1".to_string()),
             2000,
-            sync::mpsc::channel().0,
-            sync::mpsc::channel().0,
-            Arc::new(Mutex::new(HashMap::new())),
+            &sync::mpsc::channel().0,
+            &sync::mpsc::channel().0,
+            &Arc::new(Mutex::new(HashMap::new())),
         );
 
         if let Err(err) = result {
