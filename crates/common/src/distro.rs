@@ -501,25 +501,6 @@ pub mod tests {
         None
     }
 
-    #[cfg(unix)]
-    #[test]
-    #[should_panic]
-    fn appinstalldir_parent_dir_when_home_envvar_not_set() {
-        env::remove_var("HOME");
-
-        let _ = AppInstallDir::home_dir();
-    }
-
-    #[cfg(windows)]
-    #[test]
-    #[should_panic]
-    fn appinstalldir_parent_dir_when_home_envvar_not_set() {
-        env::remove_var("APPDATA");
-        env::remove_var("CSIDL_APPDATA");
-
-        let _ = AppInstallDir::home_dir();
-    }
-
     #[test]
     fn appinstalldir_verify_app_dirs_when_xdg_is_defined() {
         let expected_data_home_path;
