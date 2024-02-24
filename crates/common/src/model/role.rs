@@ -5,7 +5,7 @@ use serde_derive::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct Role {
     /// Role ID (unique across roles)
-    pub role_id: u64,
+    pub role_id: i64,
     /// Friendly name for role
     pub name: String,
 }
@@ -22,7 +22,7 @@ impl Role {
     ///
     /// A newly constructed [`Role`] object.
     ///
-    pub fn new(role_id: u64, name: &str) -> Self {
+    pub fn new(role_id: i64, name: &str) -> Self {
         Self {
             role_id,
             name: name.to_string(),

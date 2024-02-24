@@ -108,7 +108,7 @@ pub struct UdpClientProxyServerVisitor {
     server_socket_channel_sender: Sender<ProxyEvent>,
     proxy_tasks_sender: Sender<ProxyExecutorEvent>,
     proxy_events_sender: Sender<ProxyEvent>,
-    services_by_proxy_key: Arc<Mutex<HashMap<String, u64>>>,
+    services_by_proxy_key: Arc<Mutex<HashMap<String, i64>>>,
     socket_channel_senders_by_proxy_key: HashMap<String, Sender<ProxyEvent>>,
     proxy_addrs_by_proxy_key: HashMap<ProxyKey, ConnectionAddrs>,
     shutdown_requested: bool,
@@ -126,7 +126,7 @@ impl UdpClientProxyServerVisitor {
         server_socket_channel_sender: &Sender<ProxyEvent>,
         proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
         proxy_events_sender: &Sender<ProxyEvent>,
-        services_by_proxy_key: &Arc<Mutex<HashMap<String, u64>>>,
+        services_by_proxy_key: &Arc<Mutex<HashMap<String, i64>>>,
     ) -> Result<Self, AppError> {
         Ok(Self {
             app_config: app_config.clone(),

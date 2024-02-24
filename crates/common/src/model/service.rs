@@ -15,7 +15,7 @@ pub enum Transport {
 #[serde(rename_all = "camelCase")]
 pub struct Service {
     /// Service ID (unique across services)
-    pub service_id: u64,
+    pub service_id: i64,
     /// Service key name (unique across services)
     pub name: String,
     /// Service transport type
@@ -41,7 +41,7 @@ impl Service {
     ///
     /// A newly constructed [`Service`] object.
     ///
-    pub fn new(service_id: u64, name: &str, transport: &Transport, host: &str, port: u16) -> Self {
+    pub fn new(service_id: i64, name: &str, transport: &Transport, host: &str, port: u16) -> Self {
         Self {
             service_id,
             name: name.to_string(),

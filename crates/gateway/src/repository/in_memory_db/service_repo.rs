@@ -10,7 +10,7 @@ use trust0_common::model::service::Service;
 use trust0_common::target;
 
 pub struct InMemServiceRepo {
-    services: RwLock<HashMap<u64, Service>>,
+    services: RwLock<HashMap<i64, Service>>,
     source_file: Option<String>,
     reloader_loading: Arc<Mutex<bool>>,
     reloader_new_data: Arc<Mutex<String>>,
@@ -29,7 +29,7 @@ impl InMemServiceRepo {
         }
     }
 
-    fn access_data_for_write(&self) -> Result<RwLockWriteGuard<HashMap<u64, Service>>, AppError> {
+    fn access_data_for_write(&self) -> Result<RwLockWriteGuard<HashMap<i64, Service>>, AppError> {
         if let Err(err) = self.process_source_data_updates() {
             error(
                 &target!(),
@@ -41,7 +41,7 @@ impl InMemServiceRepo {
         })
     }
 
-    fn access_data_for_read(&self) -> Result<RwLockReadGuard<HashMap<u64, Service>>, AppError> {
+    fn access_data_for_read(&self) -> Result<RwLockReadGuard<HashMap<i64, Service>>, AppError> {
         if let Err(err) = self.process_source_data_updates() {
             error(
                 &target!(),
@@ -133,7 +133,7 @@ impl ServiceRepository for InMemServiceRepo {
         Ok(data.insert(service.service_id, service.clone()))
     }
 
-    fn get(&self, service_id: u64) -> Result<Option<Service>, AppError> {
+    fn get(&self, service_id: i64) -> Result<Option<Service>, AppError> {
         let data = self.access_data_for_read()?;
         Ok(data.get(&service_id).cloned())
     }
@@ -147,7 +147,7 @@ impl ServiceRepository for InMemServiceRepo {
             .collect::<Vec<Service>>())
     }
 
-    fn delete(&self, service_id: u64) -> Result<Option<Service>, AppError> {
+    fn delete(&self, service_id: i64) -> Result<Option<Service>, AppError> {
         let mut data = self.access_data_for_write()?;
         Ok(data.remove(&service_id))
     }
@@ -194,7 +194,7 @@ mod tests {
             );
         }
 
-        let expected_service_db_map: HashMap<u64, Service> = HashMap::from([
+        let expected_service_db_map: HashMap<i64, Service> = HashMap::from([
             (
                 200,
                 Service {
@@ -247,14 +247,14 @@ mod tests {
             ),
         ]);
 
-        let actual_service_db_map: HashMap<u64, Service> = HashMap::from_iter(
+        let actual_service_db_map: HashMap<i64, Service> = HashMap::from_iter(
             service_repo
                 .services
                 .into_inner()
                 .unwrap()
                 .iter()
                 .map(|e| (e.0.clone(), e.1.clone()))
-                .collect::<Vec<(u64, Service)>>(),
+                .collect::<Vec<(i64, Service)>>(),
         );
 
         assert_eq!(actual_service_db_map.len(), expected_service_db_map.len());
@@ -291,7 +291,7 @@ mod tests {
             panic!("Unexpected process updates result: err={:?}", &err);
         }
 
-        let expected_service_db_map: HashMap<u64, Service> = HashMap::from([(
+        let expected_service_db_map: HashMap<i64, Service> = HashMap::from([(
             800,
             Service {
                 service_id: 800,
@@ -302,14 +302,14 @@ mod tests {
             },
         )]);
 
-        let actual_service_db_map: HashMap<u64, Service> = HashMap::from_iter(
+        let actual_service_db_map: HashMap<i64, Service> = HashMap::from_iter(
             service_repo
                 .services
                 .into_inner()
                 .unwrap()
                 .iter()
                 .map(|e| (e.0.clone(), e.1.clone()))
-                .collect::<Vec<(u64, Service)>>(),
+                .collect::<Vec<(i64, Service)>>(),
         );
 
         assert_eq!(actual_service_db_map.len(), expected_service_db_map.len());
@@ -513,7 +513,7 @@ mod tests {
         let actual_services = result.unwrap();
         assert_eq!(actual_services.len(), 3);
 
-        let expected_access_db_map: HashMap<u64, Service> = HashMap::from([
+        let expected_access_db_map: HashMap<i64, Service> = HashMap::from([
             (
                 1,
                 Service {

@@ -52,7 +52,7 @@ pub struct ManagementController {
     /// Context for an ongoing/past secondary authentication
     authn_context: Rc<Mutex<AuthnContext>>,
     /// Map of services (by service ID)
-    services_by_id: HashMap<u64, model::service::Service>,
+    services_by_id: HashMap<i64, model::service::Service>,
     /// Map of services (by service name)
     services_by_name: HashMap<String, model::service::Service>,
 }
@@ -273,7 +273,7 @@ impl ManagementController {
     /// A [`Result`] containing the [`management::response::Response`] object for the Proxies request.
     ///
     fn process_cmd_proxies(&mut self) -> Result<management::response::Response, AppError> {
-        let user_services: HashSet<u64> = self
+        let user_services: HashSet<i64> = self
             .access_repo
             .lock()
             .unwrap()
@@ -556,13 +556,13 @@ impl ManagementController {
         service_repo: &Arc<Mutex<dyn ServiceRepository>>,
     ) -> Result<
         (
-            HashMap<u64, model::service::Service>,
+            HashMap<i64, model::service::Service>,
             HashMap<String, model::service::Service>,
         ),
         AppError,
     > {
         let services = service_repo.lock().unwrap().get_all()?;
-        let services_by_id: HashMap<u64, model::service::Service> = services
+        let services_by_id: HashMap<i64, model::service::Service> = services
             .iter()
             .map(|service| (service.service_id, service.clone()))
             .collect();

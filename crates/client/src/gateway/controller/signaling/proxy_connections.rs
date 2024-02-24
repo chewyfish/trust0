@@ -27,7 +27,7 @@ pub struct ProxyConnectionsProcessor {
     /// Missing connection bind addresses
     /// key: (client bind address, gateway bind address)
     /// value: (missing count, service ID, proxy key)
-    missing_connection_binds: HashMap<ConnectionAddrs, (u16, u64, String)>,
+    missing_connection_binds: HashMap<ConnectionAddrs, (u16, i64, String)>,
     /// Missing signal event probes
     missing_signal_probes: u16,
 }
@@ -62,7 +62,7 @@ impl ProxyConnectionsProcessor {
     ///
     /// A map of (`service ID`, (`service name`, Vec<(`proxy key`, `proxy addrs`)>)) corresponding to proxy connections.
     ///
-    fn current_proxy_keys(&self) -> HashMap<u64, (String, Vec<(String, ConnectionAddrs)>)> {
+    fn current_proxy_keys(&self) -> HashMap<i64, (String, Vec<(String, ConnectionAddrs)>)> {
         let service_proxies = self.service_mgr.lock().unwrap().get_service_proxies();
         service_proxies
             .iter()
@@ -74,7 +74,7 @@ impl ProxyConnectionsProcessor {
                     (service.name.clone(), service_proxy.get_proxy_keys().clone()),
                 )
             })
-            .collect::<HashMap<u64, (String, Vec<(String, ConnectionAddrs)>)>>()
+            .collect::<HashMap<i64, (String, Vec<(String, ConnectionAddrs)>)>>()
     }
 
     /// Process inbound proxy connections signal event
@@ -93,7 +93,7 @@ impl ProxyConnectionsProcessor {
     fn process_inbound_event(
         &mut self,
         service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
-        proxy_keys: &HashMap<u64, (String, Vec<(String, ConnectionAddrs)>)>,
+        proxy_keys: &HashMap<i64, (String, Vec<(String, ConnectionAddrs)>)>,
         signal_event: &SignalEvent,
     ) -> Result<(), AppError> {
         let mut proxy_context_map = HashMap::new();
@@ -204,7 +204,7 @@ impl ProxyConnectionsProcessor {
     #[allow(clippy::type_complexity)]
     fn process_outbound_event(
         &mut self,
-        proxy_keys: &HashMap<u64, (String, Vec<(String, ConnectionAddrs)>)>,
+        proxy_keys: &HashMap<i64, (String, Vec<(String, ConnectionAddrs)>)>,
     ) -> Result<(), AppError> {
         let mut proxy_connections: Vec<Value> = Vec::new();
 

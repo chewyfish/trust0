@@ -5,13 +5,13 @@ use serde_derive::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct User {
     /// User ID (unique across users)
-    pub user_id: u64,
+    pub user_id: i64,
     /// Friendly name for user
     pub name: String,
     /// User account status
     pub status: Status,
     /// RBAC roles associated to user account
-    pub roles: Vec<u64>,
+    pub roles: Vec<i64>,
     /// (optional) Username used in secondary authentication
     pub user_name: Option<String>,
     /// (optional) Password used in secondary authentication
@@ -46,12 +46,12 @@ impl User {
     /// A newly constructed [`User`] object.
     ///
     pub fn new(
-        user_id: u64,
+        user_id: i64,
         user_name: Option<&str>,
         password: Option<&str>,
         name: &str,
         status: &Status,
-        roles: &[u64],
+        roles: &[i64],
     ) -> Self {
         Self {
             user_id,

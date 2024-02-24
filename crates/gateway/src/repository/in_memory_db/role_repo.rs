@@ -10,7 +10,7 @@ use trust0_common::model::role::Role;
 use trust0_common::target;
 
 pub struct InMemRoleRepo {
-    roles: RwLock<HashMap<u64, Role>>,
+    roles: RwLock<HashMap<i64, Role>>,
     source_file: Option<String>,
     reloader_loading: Arc<Mutex<bool>>,
     reloader_new_data: Arc<Mutex<String>>,
@@ -30,7 +30,7 @@ impl InMemRoleRepo {
         }
     }
 
-    fn access_data_for_write(&self) -> Result<RwLockWriteGuard<HashMap<u64, Role>>, AppError> {
+    fn access_data_for_write(&self) -> Result<RwLockWriteGuard<HashMap<i64, Role>>, AppError> {
         if let Err(err) = self.process_source_data_updates() {
             error(
                 &target!(),
@@ -42,7 +42,7 @@ impl InMemRoleRepo {
         })
     }
 
-    fn access_data_for_read(&self) -> Result<RwLockReadGuard<HashMap<u64, Role>>, AppError> {
+    fn access_data_for_read(&self) -> Result<RwLockReadGuard<HashMap<i64, Role>>, AppError> {
         if let Err(err) = self.process_source_data_updates() {
             error(
                 &target!(),
@@ -134,7 +134,7 @@ impl RoleRepository for InMemRoleRepo {
         Ok(data.insert(role.role_id, role.clone()))
     }
 
-    fn get(&self, role_id: u64) -> Result<Option<Role>, AppError> {
+    fn get(&self, role_id: i64) -> Result<Option<Role>, AppError> {
         let data = self.access_data_for_read()?;
         Ok(data.get(&role_id).cloned())
     }
@@ -148,7 +148,7 @@ impl RoleRepository for InMemRoleRepo {
             .collect::<Vec<Role>>())
     }
 
-    fn delete(&self, role_id: u64) -> Result<Option<Role>, AppError> {
+    fn delete(&self, role_id: i64) -> Result<Option<Role>, AppError> {
         let mut data = self.access_data_for_write()?;
         Ok(data.remove(&role_id))
     }
@@ -194,7 +194,7 @@ mod tests {
             );
         }
 
-        let expected_role_db_map: HashMap<u64, Role> = HashMap::from([
+        let expected_role_db_map: HashMap<i64, Role> = HashMap::from([
             (
                 50,
                 Role {
@@ -211,14 +211,14 @@ mod tests {
             ),
         ]);
 
-        let actual_role_db_map: HashMap<u64, Role> = HashMap::from_iter(
+        let actual_role_db_map: HashMap<i64, Role> = HashMap::from_iter(
             role_repo
                 .roles
                 .into_inner()
                 .unwrap()
                 .iter()
                 .map(|e| (e.0.clone(), e.1.clone()))
-                .collect::<Vec<(u64, Role)>>(),
+                .collect::<Vec<(i64, Role)>>(),
         );
 
         assert_eq!(actual_role_db_map.len(), expected_role_db_map.len());
@@ -256,7 +256,7 @@ mod tests {
             panic!("Unexpected process updates result: err={:?}", &err);
         }
 
-        let expected_role_db_map: HashMap<u64, Role> = HashMap::from([(
+        let expected_role_db_map: HashMap<i64, Role> = HashMap::from([(
             60,
             Role {
                 role_id: 60,
@@ -264,14 +264,14 @@ mod tests {
             },
         )]);
 
-        let actual_role_db_map: HashMap<u64, Role> = HashMap::from_iter(
+        let actual_role_db_map: HashMap<i64, Role> = HashMap::from_iter(
             role_repo
                 .roles
                 .into_inner()
                 .unwrap()
                 .iter()
                 .map(|e| (e.0.clone(), e.1.clone()))
-                .collect::<Vec<(u64, Role)>>(),
+                .collect::<Vec<(i64, Role)>>(),
         );
 
         assert_eq!(actual_role_db_map.len(), expected_role_db_map.len());
@@ -448,7 +448,7 @@ mod tests {
         let actual_roles = result.unwrap();
         assert_eq!(actual_roles.len(), 3);
 
-        let expected_access_db_map: HashMap<u64, Role> = HashMap::from([
+        let expected_access_db_map: HashMap<i64, Role> = HashMap::from([
             (
                 60,
                 Role {

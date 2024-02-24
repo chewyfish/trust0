@@ -14,7 +14,7 @@ pub trait UserRepository: Sync + Send {
     /// Gets an user.
     ///
     /// Returns user or None on success, otherwise it returns an error.
-    fn get(&self, user_id: u64) -> Result<Option<User>, AppError>;
+    fn get(&self, user_id: i64) -> Result<Option<User>, AppError>;
 
     /// Returns the list of all users.
     ///
@@ -24,7 +24,7 @@ pub trait UserRepository: Sync + Send {
     /// Deletes a user.
     ///
     /// Returns previous user or None on success, otherwise it returns an error.
-    fn delete(&self, user_id: u64) -> Result<Option<User>, AppError>;
+    fn delete(&self, user_id: i64) -> Result<Option<User>, AppError>;
 }
 
 /// Unit tests
@@ -42,9 +42,9 @@ pub mod tests {
         impl UserRepository for UserRepo {
             fn connect_to_datasource(&mut self, connect_spec: &str) -> Result<(), AppError>;
             fn put(&self, user: User) -> Result<Option<User>, AppError>;
-            fn get(&self, user_id: u64) -> Result<Option<User>, AppError>;
+            fn get(&self, user_id: i64) -> Result<Option<User>, AppError>;
             fn get_all(&self) -> Result<Vec<User>, AppError>;
-            fn delete(&self, user_id: u64) -> Result<Option<User>, AppError>;
+            fn delete(&self, user_id: i64) -> Result<Option<User>, AppError>;
         }
     }
 }

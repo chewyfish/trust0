@@ -12,7 +12,7 @@ pub enum Protocol {
     /// REPL control plane connection type
     ControlPlane,
     /// Service (proxy) connection type
-    Service(u64),
+    Service(i64),
 }
 
 impl Protocol {
@@ -53,7 +53,7 @@ impl Protocol {
     ///
     /// The serialized string value for the corresponding [`Protocol::Service`] for this service.
     ///
-    pub fn create_service_protocol(service_id: u64) -> String {
+    pub fn create_service_protocol(service_id: i64) -> String {
         format!("{}{}", PROTOCOL_SERVICE, service_id)
     }
 }

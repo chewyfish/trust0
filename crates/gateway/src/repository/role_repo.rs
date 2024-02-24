@@ -14,7 +14,7 @@ pub trait RoleRepository: Sync + Send {
     /// Gets a role.
     ///
     /// Returns role or None on success, otherwise it returns an error.
-    fn get(&self, role_id: u64) -> Result<Option<Role>, AppError>;
+    fn get(&self, role_id: i64) -> Result<Option<Role>, AppError>;
 
     /// Returns the list of all roles.
     ///
@@ -24,7 +24,7 @@ pub trait RoleRepository: Sync + Send {
     /// Deletes a role.
     ///
     /// Returns previous role or None on success, otherwise it returns an error.
-    fn delete(&self, role_id: u64) -> Result<Option<Role>, AppError>;
+    fn delete(&self, role_id: i64) -> Result<Option<Role>, AppError>;
 }
 
 /// Unit tests
@@ -42,9 +42,9 @@ pub mod tests {
         impl RoleRepository for RoleRepo {
             fn connect_to_datasource(&mut self, connect_spec: &str) -> Result<(), AppError>;
             fn put(&self, role: Role) -> Result<Option<Role>, AppError>;
-            fn get(&self, role_id: u64) -> Result<Option<Role>, AppError>;
+            fn get(&self, role_id: i64) -> Result<Option<Role>, AppError>;
             fn get_all(&self) -> Result<Vec<Role>, AppError>;
-            fn delete(&self, role_id: u64) -> Result<Option<Role>, AppError>;
+            fn delete(&self, role_id: i64) -> Result<Option<Role>, AppError>;
         }
     }
 }

@@ -88,13 +88,13 @@ pub struct TcpGatewayProxyServerVisitor {
     /// Channel sender for proxy events
     proxy_events_sender: Sender<ProxyEvent>,
     /// Map of services by proxy key
-    services_by_proxy_key: Arc<Mutex<HashMap<String, u64>>>,
+    services_by_proxy_key: Arc<Mutex<HashMap<String, i64>>>,
     /// Map of users by proxy address context
-    users_by_proxy_addrs: HashMap<ConnectionAddrs, u64>,
+    users_by_proxy_addrs: HashMap<ConnectionAddrs, i64>,
     /// Map of proxy address context by proxy key
     proxy_addrs_by_proxy_key: HashMap<String, ConnectionAddrs>,
     /// Map of proxy keys/addresses by user
-    proxy_keys_by_user: HashMap<u64, Vec<(String, ConnectionAddrs)>>,
+    proxy_keys_by_user: HashMap<i64, Vec<(String, ConnectionAddrs)>>,
 }
 
 impl TcpGatewayProxyServerVisitor {
@@ -124,7 +124,7 @@ impl TcpGatewayProxyServerVisitor {
         proxy_port: u16,
         proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
         proxy_events_sender: &Sender<ProxyEvent>,
-        services_by_proxy_key: &Arc<Mutex<HashMap<String, u64>>>,
+        services_by_proxy_key: &Arc<Mutex<HashMap<String, i64>>>,
     ) -> Result<Self, AppError> {
         Ok(Self {
             app_config: app_config.clone(),
@@ -156,7 +156,7 @@ impl TcpGatewayProxyServerVisitor {
     fn process_connection_authorization(
         &self,
         tls_conn: &TlsServerConnection,
-    ) -> Result<(ClientConnVisitor, u64, alpn::Protocol), AppError> {
+    ) -> Result<(ClientConnVisitor, i64, alpn::Protocol), AppError> {
         let mut conn_visitor = ClientConnVisitor::new(&self.app_config, &self.service_mgr);
         let protocol =
             conn_visitor.process_authorization(tls_conn, Some(self.service.service_id))?;
@@ -167,7 +167,7 @@ impl TcpGatewayProxyServerVisitor {
     fn process_connection_authorization(
         &self,
         _tls_conn: &TlsServerConnection,
-    ) -> Result<(ClientConnVisitor, u64, alpn::Protocol), AppError> {
+    ) -> Result<(ClientConnVisitor, i64, alpn::Protocol), AppError> {
         let mut conn_visitor = ClientConnVisitor::new(&self.app_config, &self.service_mgr);
         conn_visitor.set_user(Some(user::User::new(
             100,
@@ -367,7 +367,7 @@ impl GatewayServiceProxyVisitor for TcpGatewayProxyServerVisitor {
         self.proxy_port
     }
 
-    fn get_proxy_keys_for_user(&self, user_id: u64) -> Vec<(String, ConnectionAddrs)> {
+    fn get_proxy_keys_for_user(&self, user_id: i64) -> Vec<(String, ConnectionAddrs)> {
         self.proxy_keys_by_user
             .get(&user_id)
             .unwrap_or(&vec![])
@@ -377,7 +377,7 @@ impl GatewayServiceProxyVisitor for TcpGatewayProxyServerVisitor {
     fn shutdown_connections(
         &mut self,
         proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
-        user_id: Option<u64>,
+        user_id: Option<i64>,
     ) -> Result<(), AppError> {
         let mut errors: Vec<String> = vec![];
 

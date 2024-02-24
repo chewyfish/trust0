@@ -14,7 +14,7 @@ pub trait ServiceRepository: Sync + Send {
     /// Gets a service.
     ///
     /// Returns service or None on success, otherwise it returns an error.
-    fn get(&self, service_id: u64) -> Result<Option<Service>, AppError>;
+    fn get(&self, service_id: i64) -> Result<Option<Service>, AppError>;
 
     /// Returns the list of all services.
     ///
@@ -24,7 +24,7 @@ pub trait ServiceRepository: Sync + Send {
     /// Deletes a service.
     ///
     /// Returns previous service or None on success, otherwise it returns an error.
-    fn delete(&self, service_id: u64) -> Result<Option<Service>, AppError>;
+    fn delete(&self, service_id: i64) -> Result<Option<Service>, AppError>;
 }
 
 /// Unit tests
@@ -42,9 +42,9 @@ pub mod tests {
         impl ServiceRepository for ServiceRepo {
             fn connect_to_datasource(&mut self, connect_spec: &str) -> Result<(), AppError>;
             fn put(&self, service: Service) -> Result<Option<Service>, AppError>;
-            fn get(&self, service_id: u64) -> Result<Option<Service>, AppError>;
+            fn get(&self, service_id: i64) -> Result<Option<Service>, AppError>;
             fn get_all(&self) -> Result<Vec<Service>, AppError>;
-            fn delete(&self, service_id: u64) -> Result<Option<Service>, AppError>;
+            fn delete(&self, service_id: i64) -> Result<Option<Service>, AppError>;
         }
     }
 }

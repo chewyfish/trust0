@@ -10,7 +10,7 @@ use trust0_common::model::user::User;
 use trust0_common::target;
 
 pub struct InMemUserRepo {
-    users: RwLock<HashMap<u64, User>>,
+    users: RwLock<HashMap<i64, User>>,
     source_file: Option<String>,
     reloader_loading: Arc<Mutex<bool>>,
     reloader_new_data: Arc<Mutex<String>>,
@@ -29,7 +29,7 @@ impl InMemUserRepo {
         }
     }
 
-    fn access_data_for_write(&self) -> Result<RwLockWriteGuard<HashMap<u64, User>>, AppError> {
+    fn access_data_for_write(&self) -> Result<RwLockWriteGuard<HashMap<i64, User>>, AppError> {
         if let Err(err) = self.process_source_data_updates() {
             error(
                 &target!(),
@@ -41,7 +41,7 @@ impl InMemUserRepo {
         })
     }
 
-    fn access_data_for_read(&self) -> Result<RwLockReadGuard<HashMap<u64, User>>, AppError> {
+    fn access_data_for_read(&self) -> Result<RwLockReadGuard<HashMap<i64, User>>, AppError> {
         if let Err(err) = self.process_source_data_updates() {
             error(
                 &target!(),
@@ -133,7 +133,7 @@ impl UserRepository for InMemUserRepo {
         Ok(data.insert(user.user_id, user.clone()))
     }
 
-    fn get(&self, user_id: u64) -> Result<Option<User>, AppError> {
+    fn get(&self, user_id: i64) -> Result<Option<User>, AppError> {
         let data = self.access_data_for_read()?;
         Ok(data.get(&user_id).cloned())
     }
@@ -147,7 +147,7 @@ impl UserRepository for InMemUserRepo {
             .collect::<Vec<User>>())
     }
 
-    fn delete(&self, user_id: u64) -> Result<Option<User>, AppError> {
+    fn delete(&self, user_id: i64) -> Result<Option<User>, AppError> {
         let mut data = self.access_data_for_write()?;
         Ok(data.remove(&user_id))
     }
@@ -194,7 +194,7 @@ mod tests {
             );
         }
 
-        let expected_user_db_map: HashMap<u64, User> = HashMap::from([
+        let expected_user_db_map: HashMap<i64, User> = HashMap::from([
             (
                 100,
                 User {
@@ -219,14 +219,14 @@ mod tests {
             ),
         ]);
 
-        let actual_user_db_map: HashMap<u64, User> = HashMap::from_iter(
+        let actual_user_db_map: HashMap<i64, User> = HashMap::from_iter(
             user_repo
                 .users
                 .into_inner()
                 .unwrap()
                 .iter()
                 .map(|e| (e.0.clone(), e.1.clone()))
-                .collect::<Vec<(u64, User)>>(),
+                .collect::<Vec<(i64, User)>>(),
         );
 
         assert_eq!(actual_user_db_map.len(), expected_user_db_map.len());
@@ -264,7 +264,7 @@ mod tests {
             panic!("Unexpected process updates result: err={:?}", &err);
         }
 
-        let expected_user_db_map: HashMap<u64, User> = HashMap::from([(
+        let expected_user_db_map: HashMap<i64, User> = HashMap::from([(
             800,
             User {
                 user_id: 800,
@@ -276,14 +276,14 @@ mod tests {
             },
         )]);
 
-        let actual_user_db_map: HashMap<u64, User> = HashMap::from_iter(
+        let actual_user_db_map: HashMap<i64, User> = HashMap::from_iter(
             user_repo
                 .users
                 .into_inner()
                 .unwrap()
                 .iter()
                 .map(|e| (e.0.clone(), e.1.clone()))
-                .collect::<Vec<(u64, User)>>(),
+                .collect::<Vec<(i64, User)>>(),
         );
 
         assert_eq!(actual_user_db_map.len(), expected_user_db_map.len());
@@ -493,7 +493,7 @@ mod tests {
         let actual_users = result.unwrap();
         assert_eq!(actual_users.len(), 3);
 
-        let expected_access_db_map: HashMap<u64, User> = HashMap::from([
+        let expected_access_db_map: HashMap<i64, User> = HashMap::from([
             (
                 1,
                 User {

@@ -18,11 +18,11 @@ pub enum EntityType {
 #[serde(rename_all = "camelCase")]
 pub struct ServiceAccess {
     /// Service ID (unique across services)
-    pub service_id: u64,
+    pub service_id: i64,
     /// RBAC entity type
     pub entity_type: EntityType,
     /// Entity ID (either role ID or user ID)
-    pub entity_id: u64,
+    pub entity_id: i64,
 }
 
 impl ServiceAccess {
@@ -38,7 +38,7 @@ impl ServiceAccess {
     ///
     /// A newly constructed [`ServiceAccess`] object.
     ///
-    pub fn new(service_id: u64, entity_type: &EntityType, entity_id: u64) -> Self {
+    pub fn new(service_id: i64, entity_type: &EntityType, entity_id: i64) -> Self {
         Self {
             service_id,
             entity_type: entity_type.clone(),

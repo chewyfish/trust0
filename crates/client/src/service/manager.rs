@@ -68,7 +68,7 @@ pub trait ServiceMgr: Send {
     ///
     /// If found, service ID associated to proxy key.
     ///
-    fn get_proxy_service_for_proxy_key(&self, proxy_key: &str) -> Option<u64>;
+    fn get_proxy_service_for_proxy_key(&self, proxy_key: &str) -> Option<i64>;
 
     /// Proxy addresses for active service proxy
     ///
@@ -80,7 +80,7 @@ pub trait ServiceMgr: Send {
     ///
     /// If found, proxy addresses associated to service.
     ///
-    fn get_proxy_addrs_for_service(&self, service_id: u64) -> Option<ProxyAddrs>;
+    fn get_proxy_addrs_for_service(&self, service_id: i64) -> Option<ProxyAddrs>;
 
     /// Active service proxy visitors accessor
     ///
@@ -102,7 +102,7 @@ pub trait ServiceMgr: Send {
     ///
     fn get_proxy_visitor_for_service(
         &self,
-        service_id: u64,
+        service_id: i64,
     ) -> Option<&Arc<Mutex<dyn ClientServiceProxyVisitor>>>;
 
     /// Clone proxy tasks sender
@@ -140,7 +140,7 @@ pub trait ServiceMgr: Send {
     ///
     /// A [`Result`] indicating success/failure of the shutdown operation.
     ///
-    fn shutdown(&mut self, service_id: Option<u64>) -> Result<(), AppError>;
+    fn shutdown(&mut self, service_id: Option<i64>) -> Result<(), AppError>;
 
     /// Shutdown service proxy connection.
     ///
@@ -153,7 +153,7 @@ pub trait ServiceMgr: Send {
     ///
     /// A [`Result`] indicating success/failure of the shutdown operation.
     ///
-    fn shutdown_connection(&mut self, service_id: u64, proxy_key: &str) -> Result<(), AppError>;
+    fn shutdown_connection(&mut self, service_id: i64, proxy_key: &str) -> Result<(), AppError>;
 }
 
 /// Manage service connections for client session.  Only one of these should be constructed.
@@ -161,15 +161,15 @@ pub struct ClientServiceMgr {
     /// Application configuration object
     app_config: Arc<AppConfig>,
     /// Active service proxies
-    service_proxies: HashMap<u64, Arc<Mutex<dyn ClientServiceProxy>>>,
+    service_proxies: HashMap<i64, Arc<Mutex<dyn ClientServiceProxy>>>,
     /// Active service proxy visitors
-    service_proxy_visitors: HashMap<u64, Arc<Mutex<dyn ClientServiceProxyVisitor>>>,
+    service_proxy_visitors: HashMap<i64, Arc<Mutex<dyn ClientServiceProxyVisitor>>>,
     /// Service proxy server threads (polls new connections,...)
-    service_proxy_threads: HashMap<u64, JoinHandle<Result<(), AppError>>>,
+    service_proxy_threads: HashMap<i64, JoinHandle<Result<(), AppError>>>,
     /// Proxy address pair for service proxy
-    service_addrs: HashMap<u64, ProxyAddrs>,
+    service_addrs: HashMap<i64, ProxyAddrs>,
     /// Service IDs map keyed on proxy connection key
-    services_by_proxy_key: Arc<Mutex<HashMap<String, u64>>>,
+    services_by_proxy_key: Arc<Mutex<HashMap<String, i64>>>,
     /// Proxy events channel sender
     proxy_events_sender: Sender<ProxyEvent>,
     /// Proxy executor events channel sender
@@ -253,7 +253,7 @@ impl ClientServiceMgr {
                 .lock()
                 .unwrap()
                 .get_proxy_service_for_proxy_key(&proxy_key)
-                .unwrap_or(u64::MAX);
+                .unwrap_or(i64::MAX);
 
             if let Some(proxy_visitor) = service_mgr
                 .lock()
@@ -275,7 +275,7 @@ impl ClientServiceMgr {
 }
 
 impl ServiceMgr for ClientServiceMgr {
-    fn get_proxy_service_for_proxy_key(&self, proxy_key: &str) -> Option<u64> {
+    fn get_proxy_service_for_proxy_key(&self, proxy_key: &str) -> Option<i64> {
         self.services_by_proxy_key
             .lock()
             .unwrap()
@@ -283,7 +283,7 @@ impl ServiceMgr for ClientServiceMgr {
             .cloned()
     }
 
-    fn get_proxy_addrs_for_service(&self, service_id: u64) -> Option<ProxyAddrs> {
+    fn get_proxy_addrs_for_service(&self, service_id: i64) -> Option<ProxyAddrs> {
         self.service_addrs.get(&service_id).cloned()
     }
 
@@ -293,7 +293,7 @@ impl ServiceMgr for ClientServiceMgr {
 
     fn get_proxy_visitor_for_service(
         &self,
-        service_id: u64,
+        service_id: i64,
     ) -> Option<&Arc<Mutex<dyn ClientServiceProxyVisitor>>> {
         self.service_proxy_visitors.get(&service_id)
     }
@@ -401,7 +401,7 @@ impl ServiceMgr for ClientServiceMgr {
         Ok(proxy_addrs.clone())
     }
 
-    fn shutdown(&mut self, service_id: Option<u64>) -> Result<(), AppError> {
+    fn shutdown(&mut self, service_id: Option<i64>) -> Result<(), AppError> {
         let mut errors: Vec<String> = vec![];
 
         let mut removed_service_ids = Vec::new();
@@ -450,7 +450,7 @@ impl ServiceMgr for ClientServiceMgr {
         Ok(())
     }
 
-    fn shutdown_connection(&mut self, service_id: u64, proxy_key: &str) -> Result<(), AppError> {
+    fn shutdown_connection(&mut self, service_id: i64, proxy_key: &str) -> Result<(), AppError> {
         if let Some(proxy_visitor) = self.service_proxy_visitors.get(&service_id) {
             match proxy_visitor
                 .lock()
@@ -497,14 +497,14 @@ pub mod tests {
     mock! {
         pub SvcMgr {}
         impl ServiceMgr for SvcMgr {
-            fn get_proxy_service_for_proxy_key(&self, proxy_key: &str) -> Option<u64>;
-            fn get_proxy_addrs_for_service(&self, service_id: u64) -> Option<ProxyAddrs>;
+            fn get_proxy_service_for_proxy_key(&self, proxy_key: &str) -> Option<i64>;
+            fn get_proxy_addrs_for_service(&self, service_id: i64) -> Option<ProxyAddrs>;
             fn get_service_proxies(&self) -> Vec<Arc<Mutex<dyn ClientServiceProxyVisitor>>>;
-            fn get_proxy_visitor_for_service(&self, service_id: u64) -> Option<&'static Arc<Mutex<dyn ClientServiceProxyVisitor>>>;
+            fn get_proxy_visitor_for_service(&self, service_id: i64) -> Option<&'static Arc<Mutex<dyn ClientServiceProxyVisitor>>>;
             fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent>;
             fn startup(&mut self, service: &Service, proxy_addrs: &ProxyAddrs) -> Result<ProxyAddrs, AppError>;
-            fn shutdown(&mut self, service_id: Option<u64>) -> Result<(), AppError>;
-            fn shutdown_connection(&mut self, service_id: u64, proxy_key: &str) -> Result<(), AppError>;
+            fn shutdown(&mut self, service_id: Option<i64>) -> Result<(), AppError>;
+            fn shutdown_connection(&mut self, service_id: i64, proxy_key: &str) -> Result<(), AppError>;
         }
     }
 
