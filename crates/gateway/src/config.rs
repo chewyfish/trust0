@@ -10,13 +10,13 @@ use pki_types::{
     PrivatePkcs8KeyDer, PrivateSec1KeyDer,
 };
 
-use crate::repository::access_repo::in_memory_repo::InMemAccessRepo;
 use crate::repository::access_repo::AccessRepository;
-use crate::repository::role_repo::in_memory_repo::InMemRoleRepo;
+use crate::repository::in_memory_db::access_repo::InMemAccessRepo;
+use crate::repository::in_memory_db::role_repo::InMemRoleRepo;
+use crate::repository::in_memory_db::service_repo::InMemServiceRepo;
+use crate::repository::in_memory_db::user_repo::InMemUserRepo;
 use crate::repository::role_repo::RoleRepository;
-use crate::repository::service_repo::in_memory_repo::InMemServiceRepo;
 use crate::repository::service_repo::ServiceRepository;
-use crate::repository::user_repo::in_memory_repo::InMemUserRepo;
 use crate::repository::user_repo::UserRepository;
 use regex::Regex;
 use rustls::crypto::CryptoProvider;

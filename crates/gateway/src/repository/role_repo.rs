@@ -1,5 +1,3 @@
-pub mod in_memory_repo;
-
 use trust0_common::error::AppError;
 use trust0_common::model::role::Role;
 

@@ -169,7 +169,7 @@ mod tests {
     ];
 
     #[test]
-    fn inmemsvcrepo_connect_to_datasource_when_invalid_filepath() {
+    fn inmemrolerepo_connect_to_datasource_when_invalid_filepath() {
         let invalid_role_db_path: PathBuf = INVALID_ROLE_DB_FILE_PATHPARTS.iter().collect();
         let invalid_role_db_pathstr = invalid_role_db_path.to_str().unwrap();
 
@@ -181,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn inmemsvcrepo_connect_to_datasource_when_valid_filepath() {
+    fn inmemrolerepo_connect_to_datasource_when_valid_filepath() {
         let valid_role_db_path: PathBuf = VALID_ROLE_DB_FILE_PATHPARTS.iter().collect();
         let valid_role_db_pathstr = valid_role_db_path.to_str().unwrap();
 
@@ -234,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn inmemsvcrepo_process_source_data_updates_when_valid_json() {
+    fn inmemrolerepo_process_source_data_updates_when_valid_json() {
         let valid_role_db_path: PathBuf = VALID_ROLE_DB_FILE_PATHPARTS.iter().collect();
         let valid_role_db_pathstr = valid_role_db_path.to_str().unwrap();
 
@@ -287,7 +287,7 @@ mod tests {
     }
 
     #[test]
-    fn inmemsvcrepo_process_source_data_updates_when_invalid_json() {
+    fn inmemrolerepo_process_source_data_updates_when_invalid_json() {
         let valid_role_db_path: PathBuf = VALID_ROLE_DB_FILE_PATHPARTS.iter().collect();
         let valid_role_db_pathstr = valid_role_db_path.to_str().unwrap();
 
@@ -318,7 +318,7 @@ mod tests {
     }
 
     #[test]
-    fn inmemsvcrepo_put() {
+    fn inmemrolerepo_put() {
         let role_repo = InMemRoleRepo::new();
         let role_key = 60;
         let role = Role {
@@ -338,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn inmemsvcrepo_get_when_invalid_role() {
+    fn inmemrolerepo_get_when_invalid_role() {
         let role_repo = InMemRoleRepo::new();
         let role_key = 60;
         let role = Role {
@@ -358,7 +358,7 @@ mod tests {
     }
 
     #[test]
-    fn inmemsvcrepo_get_when_valid_role() {
+    fn inmemrolerepo_get_when_valid_role() {
         let role_repo = InMemRoleRepo::new();
         let role_keys = [60, 61, 62];
         let roles = [
@@ -405,7 +405,7 @@ mod tests {
     }
 
     #[test]
-    fn inmemsvcrepo_get_all() {
+    fn inmemrolerepo_get_all() {
         let role_repo = InMemRoleRepo::new();
         let role_keys = [60, 61, 62];
         let roles = [
@@ -482,7 +482,7 @@ mod tests {
     }
 
     #[test]
-    fn inmemsvcrepo_delete_when_invalid_role() {
+    fn inmemrolerepo_delete_when_invalid_role() {
         let role_repo = InMemRoleRepo::new();
         let role_key = 60;
         let role = Role {
@@ -502,7 +502,7 @@ mod tests {
     }
 
     #[test]
-    fn inmemsvcrepo_delete_when_valid_role() {
+    fn inmemrolerepo_delete_when_valid_role() {
         let role_repo = InMemRoleRepo::new();
         let role_key = 60;
         let role = Role {

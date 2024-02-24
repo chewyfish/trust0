@@ -157,7 +157,6 @@ impl UserRepository for InMemUserRepo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repository::user_repo::in_memory_repo::InMemUserRepo;
     use std::path::PathBuf;
     use trust0_common::model::user::{Status, User};
 
