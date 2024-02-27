@@ -17,6 +17,10 @@ use crate::repository::in_memory_db::access_repo::InMemAccessRepo;
 use crate::repository::in_memory_db::role_repo::InMemRoleRepo;
 use crate::repository::in_memory_db::service_repo::InMemServiceRepo;
 use crate::repository::in_memory_db::user_repo::InMemUserRepo;
+use crate::repository::postgres_db::access_repo::PostgresServiceAccessRepo;
+use crate::repository::postgres_db::role_repo::PostgresRoleRepo;
+use crate::repository::postgres_db::service_repo::PostgresServiceRepo;
+use crate::repository::postgres_db::user_repo::PostgresUserRepo;
 use crate::repository::role_repo::RoleRepository;
 use crate::repository::service_repo::ServiceRepository;
 use crate::repository::user_repo::UserRepository;
@@ -106,9 +110,13 @@ const INMEMDB_USER_FILENAME: &str = "trust0-db-user.json";
 
 /// Datasource configuration for the trust framework entities
 #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+#[allow(clippy::enum_variant_names)]
 pub enum DataSource {
-    /// In-memory DB, with a simple backing persistence store. Entity store connect strings file paths to JSON record files.
+    /// In-memory DB, with a simple backing persistence store. Entity store connect string is file path to directory holding JSON record files.
     InMemoryDb,
+
+    /// Postgres DB accessed via repository layer using diesel ORM.
+    PostgresDb,
 
     /// No DB configured, used in testing (internally empty in-memory DB structures are used)
     #[default]
@@ -126,12 +134,20 @@ impl DataSource {
         Box<dyn Fn() -> Arc<Mutex<dyn RoleRepository>>>,
         Box<dyn Fn() -> Arc<Mutex<dyn UserRepository>>>,
     ) {
-        (
-            Box::new(|| Arc::new(Mutex::new(InMemAccessRepo::new()))),
-            Box::new(|| Arc::new(Mutex::new(InMemServiceRepo::new()))),
-            Box::new(|| Arc::new(Mutex::new(InMemRoleRepo::new()))),
-            Box::new(|| Arc::new(Mutex::new(InMemUserRepo::new()))),
-        )
+        match self {
+            DataSource::PostgresDb => (
+                Box::new(|| Arc::new(Mutex::new(PostgresServiceAccessRepo::new()))),
+                Box::new(|| Arc::new(Mutex::new(PostgresServiceRepo::new()))),
+                Box::new(|| Arc::new(Mutex::new(PostgresRoleRepo::new()))),
+                Box::new(|| Arc::new(Mutex::new(PostgresUserRepo::new()))),
+            ),
+            _ => (
+                Box::new(|| Arc::new(Mutex::new(InMemAccessRepo::new()))),
+                Box::new(|| Arc::new(Mutex::new(InMemServiceRepo::new()))),
+                Box::new(|| Arc::new(Mutex::new(InMemRoleRepo::new()))),
+                Box::new(|| Arc::new(Mutex::new(InMemUserRepo::new()))),
+            ),
+        }
     }
 }
 
@@ -271,6 +287,7 @@ pub struct AppConfigArgs {
 
     /// DB entity store connect specifier string. Specification format is dependent on <DATASOURCE> type.
     /// Format: 'in-memory-db': Directory holding JSON files named 'trust0-db-access.json', 'trust0-db-role.json', 'trust0-db-service.json', 'trust0-db-user.json'
+    ///         'postgres-db': Standard Postgres connect string specification (https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING)
     #[arg(required = false, long = "db-connect", env, verbatim_doc_comment)]
     pub db_connect: Option<String>,
 
@@ -527,10 +544,10 @@ impl AppConfig {
         let role_repository = repo_factories.2();
         let user_repository = repo_factories.3();
 
-        if db_connect.is_some() {
+        if let Some(db_connect_str) = db_connect {
             match datasource {
                 DataSource::InMemoryDb => {
-                    let db_dir = PathBuf::from_str(db_connect.as_ref().unwrap()).unwrap();
+                    let db_dir = PathBuf::from_str(db_connect_str).unwrap();
                     access_repository.lock().unwrap().connect_to_datasource(
                         db_dir.join(INMEMDB_ACCESS_FILENAME).to_str().unwrap(),
                     )?;
@@ -543,6 +560,24 @@ impl AppConfig {
                     user_repository.lock().unwrap().connect_to_datasource(
                         db_dir.join(INMEMDB_USER_FILENAME).to_str().unwrap(),
                     )?;
+                }
+                DataSource::PostgresDb => {
+                    access_repository
+                        .lock()
+                        .unwrap()
+                        .connect_to_datasource(db_connect_str)?;
+                    role_repository
+                        .lock()
+                        .unwrap()
+                        .connect_to_datasource(db_connect_str)?;
+                    service_repository
+                        .lock()
+                        .unwrap()
+                        .connect_to_datasource(db_connect_str)?;
+                    user_repository
+                        .lock()
+                        .unwrap()
+                        .connect_to_datasource(db_connect_str)?;
                 }
                 _ => {}
             }
@@ -734,7 +769,12 @@ pub mod tests {
     }
 
     #[test]
-    fn datasource_repository_factories() {
+    fn datasource_repository_factories_when_postgresdb() {
+        _ = DataSource::PostgresDb.repository_factories();
+    }
+
+    #[test]
+    fn datasource_repository_factories_when_not_postgresdb() {
         let (access_repo_factory, service_repo_factory, role_repo_factory, user_repo_factory) =
             DataSource::default().repository_factories();
 
@@ -1016,6 +1056,45 @@ pub mod tests {
             &Some(db_dir_str.to_string()),
             &repo_factories,
         );
+
+        if let Err(err) = &result {
+            panic!("Unexpected result: err={:?}", err);
+        }
+    }
+
+    #[test]
+    fn appconfig_create_datasource_repositories_when_postgresdb_ds() {
+        let repo_factories: (
+            Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
+            Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,
+            Box<dyn Fn() -> Arc<Mutex<dyn RoleRepository>>>,
+            Box<dyn Fn() -> Arc<Mutex<dyn UserRepository>>>,
+        ) = (
+            Box::new(move || {
+                let mut access_repo = MockAccessRepo::new();
+                access_repo.expect_connect_to_datasource().never();
+                Arc::new(Mutex::new(access_repo))
+            }),
+            Box::new(move || {
+                let mut service_repo = MockServiceRepo::new();
+                service_repo.expect_connect_to_datasource().never();
+                Arc::new(Mutex::new(service_repo))
+            }),
+            Box::new(move || {
+                let mut role_repo = MockRoleRepo::new();
+                role_repo.expect_connect_to_datasource().never();
+                Arc::new(Mutex::new(role_repo))
+            }),
+            Box::new(move || {
+                let mut user_repo = MockUserRepo::new();
+                user_repo.expect_connect_to_datasource().never();
+                Arc::new(Mutex::new(user_repo))
+            }),
+        );
+
+        let datasource = DataSource::PostgresDb;
+
+        let result = AppConfig::create_datasource_repositories(&datasource, &None, &repo_factories);
 
         if let Err(err) = &result {
             panic!("Unexpected result: err={:?}", err);

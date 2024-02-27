@@ -11,6 +11,7 @@ publish = false
 anyhow = "1.0.76"
 clap = { version = "4.4.11", features = [ "derive", "env" ] }
 ctrlc = "3.4.2"
+diesel = { version = "2.1.4", optional = true }
 derive_builder = "0.12.0"
 dotenvy = "0.15.7"
 futures = "*"
@@ -39,4 +40,12 @@ x509-parser = "0.15.1"
 regex = "1.10.2"
 
 [dev-dependencies]
+diesel_migrations = "2.1.0"
 mockall = "0.12.1"
+pg-embed = { git = "https://github.com/faokunega/pg-embed.git", branch = "master", default-features = false, features = [ "rt_tokio_migrate" ] }
+serial_test = "3.0.0"
+tokio-test = "0.4.3"
+
+[features]
+default = ["postgres_db"]
+postgres_db = ["diesel/postgres"]
