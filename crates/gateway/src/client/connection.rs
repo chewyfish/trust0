@@ -97,7 +97,7 @@ impl ClientConnVisitor {
     pub fn process_authorization(
         &mut self,
         tls_conn: &dyn TlsConnection,
-        service_id: Option<u64>,
+        service_id: Option<i64>,
     ) -> Result<alpn::Protocol, AppError> {
         // Parse certificate context details
         let peer_certificates: Vec<CertificateDer<'static>> = tls_conn
@@ -458,7 +458,7 @@ mod tests {
         service_repo: Arc<Mutex<dyn ServiceRepository>>,
         role_repo: Arc<Mutex<dyn RoleRepository>>,
         access_repo: Arc<Mutex<dyn AccessRepository>>,
-        user_control_plane: Option<(u64, Arc<Mutex<dyn MessageProcessor>>)>,
+        user_control_plane: Option<(i64, Arc<Mutex<dyn MessageProcessor>>)>,
     ) -> Result<ClientConnVisitor, AppError> {
         let app_config = Arc::new(config::tests::create_app_config_with_repos(
             user_repo,

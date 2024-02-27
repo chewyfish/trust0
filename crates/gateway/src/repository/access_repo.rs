@@ -1,5 +1,3 @@
-pub mod in_memory_repo;
-
 use trust0_common::error::AppError;
 use trust0_common::model::access::{EntityType, ServiceAccess};
 use trust0_common::model::user::User;
@@ -11,23 +9,23 @@ pub trait AccessRepository: Sync + Send {
 
     /// Creates/updates a service access.
     ///
-    /// Returns a previous service access for this id or None on success, otherwise it returns an error.
-    fn put(&self, access: ServiceAccess) -> Result<Option<ServiceAccess>, AppError>;
+    /// Returns a updated service (included any new field values auto-generated), otherwise it returns an error.
+    fn put(&self, access: ServiceAccess) -> Result<ServiceAccess, AppError>;
 
     /// Gets a service access.
     ///
     /// Returns access or None on success, otherwise it returns an error.
     fn get(
         &self,
-        service_id: u64,
+        service_id: i64,
         entity_type: &EntityType,
-        entity_id: u64,
+        entity_id: i64,
     ) -> Result<Option<ServiceAccess>, AppError>;
 
     /// Returns a service access for a user if it is accessible.
     ///
     /// Returns access or None on success, otherwise it returns an error.
-    fn get_for_user(&self, service_id: u64, user: &User)
+    fn get_for_user(&self, service_id: i64, user: &User)
         -> Result<Option<ServiceAccess>, AppError>;
 
     /// Returns the list of all accessible service accesses for a user (either directly or based on associated role)
@@ -40,9 +38,9 @@ pub trait AccessRepository: Sync + Send {
     /// Returns previous service access or None on success, otherwise it returns an error.
     fn delete(
         &self,
-        service_id: u64,
+        service_id: i64,
         entity_type: &EntityType,
-        entity_id: u64,
+        entity_id: i64,
     ) -> Result<Option<ServiceAccess>, AppError>;
 }
 
@@ -60,11 +58,11 @@ pub mod tests {
         pub AccessRepo {}
         impl AccessRepository for AccessRepo {
             fn connect_to_datasource(&mut self, connect_spec: &str) -> Result<(), AppError>;
-            fn put(&self, access: ServiceAccess) -> Result<Option<ServiceAccess>, AppError>;
-            fn get(&self, service_id: u64, entity_type: &EntityType, entity_id: u64) -> Result<Option<ServiceAccess>, AppError>;
-            fn get_for_user(&self, service_id: u64, user: &User) -> Result<Option<ServiceAccess>, AppError>;
+            fn put(&self, access: ServiceAccess) -> Result<ServiceAccess, AppError>;
+            fn get(&self, service_id: i64, entity_type: &EntityType, entity_id: i64) -> Result<Option<ServiceAccess>, AppError>;
+            fn get_for_user(&self, service_id: i64, user: &User) -> Result<Option<ServiceAccess>, AppError>;
             fn get_all_for_user(&self, user: &User) -> Result<Vec<ServiceAccess>, AppError>;
-            fn delete(&self, service_id: u64, entity_type: &EntityType, entity_id: u64) -> Result<Option<ServiceAccess>, AppError>;
+            fn delete(&self, service_id: i64, entity_type: &EntityType, entity_id: i64) -> Result<Option<ServiceAccess>, AppError>;
         }
     }
 }

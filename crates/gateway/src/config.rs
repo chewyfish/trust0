@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::{env, fmt};
 
@@ -10,13 +12,21 @@ use pki_types::{
     PrivatePkcs8KeyDer, PrivateSec1KeyDer,
 };
 
-use crate::repository::access_repo::in_memory_repo::InMemAccessRepo;
 use crate::repository::access_repo::AccessRepository;
-use crate::repository::role_repo::in_memory_repo::InMemRoleRepo;
+use crate::repository::in_memory_db::access_repo::InMemAccessRepo;
+use crate::repository::in_memory_db::role_repo::InMemRoleRepo;
+use crate::repository::in_memory_db::service_repo::InMemServiceRepo;
+use crate::repository::in_memory_db::user_repo::InMemUserRepo;
+#[cfg(feature = "postgres_db")]
+use crate::repository::postgres_db::access_repo::PostgresServiceAccessRepo;
+#[cfg(feature = "postgres_db")]
+use crate::repository::postgres_db::role_repo::PostgresRoleRepo;
+#[cfg(feature = "postgres_db")]
+use crate::repository::postgres_db::service_repo::PostgresServiceRepo;
+#[cfg(feature = "postgres_db")]
+use crate::repository::postgres_db::user_repo::PostgresUserRepo;
 use crate::repository::role_repo::RoleRepository;
-use crate::repository::service_repo::in_memory_repo::InMemServiceRepo;
 use crate::repository::service_repo::ServiceRepository;
-use crate::repository::user_repo::in_memory_repo::InMemUserRepo;
 use crate::repository::user_repo::UserRepository;
 use regex::Regex;
 use rustls::crypto::CryptoProvider;
@@ -97,11 +107,21 @@ lazy_static! {
     };
 }
 
+const INMEMDB_ACCESS_FILENAME: &str = "trust0-db-access.json";
+const INMEMDB_ROLE_FILENAME: &str = "trust0-db-role.json";
+const INMEMDB_SERVICE_FILENAME: &str = "trust0-db-service.json";
+const INMEMDB_USER_FILENAME: &str = "trust0-db-user.json";
+
 /// Datasource configuration for the trust framework entities
 #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+#[allow(clippy::enum_variant_names)]
 pub enum DataSource {
-    /// In-memory DB, with a simple backing persistence store. Entity store connect strings file paths to JSON record files.
+    /// In-memory DB, with a simple backing persistence store. Entity store connect string is file path to directory holding JSON record files.
     InMemoryDb,
+
+    /// Postgres DB accessed via repository layer using diesel ORM.
+    #[cfg(feature = "postgres_db")]
+    PostgresDb,
 
     /// No DB configured, used in testing (internally empty in-memory DB structures are used)
     #[default]
@@ -119,12 +139,21 @@ impl DataSource {
         Box<dyn Fn() -> Arc<Mutex<dyn RoleRepository>>>,
         Box<dyn Fn() -> Arc<Mutex<dyn UserRepository>>>,
     ) {
-        (
-            Box::new(|| Arc::new(Mutex::new(InMemAccessRepo::new()))),
-            Box::new(|| Arc::new(Mutex::new(InMemServiceRepo::new()))),
-            Box::new(|| Arc::new(Mutex::new(InMemRoleRepo::new()))),
-            Box::new(|| Arc::new(Mutex::new(InMemUserRepo::new()))),
-        )
+        match self {
+            #[cfg(feature = "postgres_db")]
+            DataSource::PostgresDb => (
+                Box::new(|| Arc::new(Mutex::new(PostgresServiceAccessRepo::new()))),
+                Box::new(|| Arc::new(Mutex::new(PostgresServiceRepo::new()))),
+                Box::new(|| Arc::new(Mutex::new(PostgresRoleRepo::new()))),
+                Box::new(|| Arc::new(Mutex::new(PostgresUserRepo::new()))),
+            ),
+            _ => (
+                Box::new(|| Arc::new(Mutex::new(InMemAccessRepo::new()))),
+                Box::new(|| Arc::new(Mutex::new(InMemServiceRepo::new()))),
+                Box::new(|| Arc::new(Mutex::new(InMemRoleRepo::new()))),
+                Box::new(|| Arc::new(Mutex::new(InMemUserRepo::new()))),
+            ),
+        }
     }
 }
 
@@ -262,21 +291,11 @@ pub struct AppConfigArgs {
     #[arg(required = false, value_enum, long = "datasource", default_value_t = crate::config::DataSource::InMemoryDb, env)]
     pub datasource: DataSource,
 
-    /// (Service) Access entity store connect specifier string
-    #[arg(required = false, long = "access-db-connect", env)]
-    pub access_db_connect: Option<String>,
-
-    /// Service entity store connect specifier string
-    #[arg(required = false, long = "service-db-connect", env)]
-    pub service_db_connect: Option<String>,
-
-    /// Role entity store connect specifier string
-    #[arg(required = false, long = "role-db-connect", env)]
-    pub role_db_connect: Option<String>,
-
-    /// User entity store connect specifier string
-    #[arg(required = false, long = "user-db-connect", env)]
-    pub user_db_connect: Option<String>,
+    /// DB entity store connect specifier string. Specification format is dependent on <DATASOURCE> type.
+    /// Format: 'in-memory-db': Directory holding JSON files named 'trust0-db-access.json', 'trust0-db-role.json', 'trust0-db-service.json', 'trust0-db-user.json'
+    ///         'postgres-db': Standard Postgres connect string specification (https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING)
+    #[arg(required = false, long = "db-connect", env, verbatim_doc_comment)]
+    pub db_connect: Option<String>,
 
     /// [CA] Enable certificate authority. This will dynamically issue expiring certificates to clients.
     #[arg(required = false, long = "ca-enabled", default_value_t = false, env)]
@@ -426,10 +445,7 @@ impl AppConfig {
         // Datasource repositories
         let repositories = Self::create_datasource_repositories(
             &config_args.datasource,
-            &config_args.access_db_connect,
-            &config_args.service_db_connect,
-            &config_args.role_db_connect,
-            &config_args.user_db_connect,
+            &config_args.db_connect,
             &config_args.datasource.repository_factories(),
         )?;
 
@@ -513,10 +529,7 @@ impl AppConfig {
     /// Instantiate main repositories based on datasource config. Returns tuple of access, service, role and user repositories.
     fn create_datasource_repositories(
         datasource: &DataSource,
-        access_db_connect: &Option<String>,
-        service_db_connect: &Option<String>,
-        role_db_connect: &Option<String>,
-        user_db_connect: &Option<String>,
+        db_connect: &Option<String>,
         repo_factories: &(
             Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
             Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,
@@ -537,30 +550,43 @@ impl AppConfig {
         let role_repository = repo_factories.2();
         let user_repository = repo_factories.3();
 
-        if let DataSource::InMemoryDb = datasource {
-            if access_db_connect.is_some() {
-                access_repository
-                    .lock()
-                    .unwrap()
-                    .connect_to_datasource(access_db_connect.as_ref().unwrap().as_str())?;
-            }
-            if service_db_connect.is_some() {
-                service_repository
-                    .lock()
-                    .unwrap()
-                    .connect_to_datasource(service_db_connect.as_ref().unwrap().as_str())?;
-            }
-            if role_db_connect.is_some() {
-                role_repository
-                    .lock()
-                    .unwrap()
-                    .connect_to_datasource(role_db_connect.as_ref().unwrap().as_str())?;
-            }
-            if user_db_connect.is_some() {
-                user_repository
-                    .lock()
-                    .unwrap()
-                    .connect_to_datasource(user_db_connect.as_ref().unwrap().as_str())?;
+        if let Some(db_connect_str) = db_connect {
+            match datasource {
+                DataSource::InMemoryDb => {
+                    let db_dir = PathBuf::from_str(db_connect_str).unwrap();
+                    access_repository.lock().unwrap().connect_to_datasource(
+                        db_dir.join(INMEMDB_ACCESS_FILENAME).to_str().unwrap(),
+                    )?;
+                    role_repository.lock().unwrap().connect_to_datasource(
+                        db_dir.join(INMEMDB_ROLE_FILENAME).to_str().unwrap(),
+                    )?;
+                    service_repository.lock().unwrap().connect_to_datasource(
+                        db_dir.join(INMEMDB_SERVICE_FILENAME).to_str().unwrap(),
+                    )?;
+                    user_repository.lock().unwrap().connect_to_datasource(
+                        db_dir.join(INMEMDB_USER_FILENAME).to_str().unwrap(),
+                    )?;
+                }
+                #[cfg(feature = "postgres_db")]
+                DataSource::PostgresDb => {
+                    access_repository
+                        .lock()
+                        .unwrap()
+                        .connect_to_datasource(db_connect_str)?;
+                    role_repository
+                        .lock()
+                        .unwrap()
+                        .connect_to_datasource(db_connect_str)?;
+                    service_repository
+                        .lock()
+                        .unwrap()
+                        .connect_to_datasource(db_connect_str)?;
+                    user_repository
+                        .lock()
+                        .unwrap()
+                        .connect_to_datasource(db_connect_str)?;
+                }
+                _ => {}
             }
         }
 
@@ -628,6 +654,7 @@ pub mod tests {
     use once_cell::sync::Lazy;
     use std::env;
     use std::path::PathBuf;
+    #[cfg(feature = "postgres_db")]
     use trust0_common::model;
 
     const CONFIG_FILE_PATHPARTS: [&str; 3] =
@@ -641,12 +668,7 @@ pub mod tests {
         [env!("CARGO_MANIFEST_DIR"), "testdata", "gateway.crt.pem"];
     const KEYFILE_GATEWAY_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "gateway.key.pem"];
-    const DB_ACCESS_PATHPARTS: [&str; 3] =
-        [env!("CARGO_MANIFEST_DIR"), "testdata", "db-access.json"];
-    const DB_SERVICE_PATHPARTS: [&str; 3] =
-        [env!("CARGO_MANIFEST_DIR"), "testdata", "db-service.json"];
-    const DB_ROLE_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "db-role.json"];
-    const DB_USER_PATHPARTS: [&str; 3] = [env!("CARGO_MANIFEST_DIR"), "testdata", "db-user.json"];
+    const DB_DIR_PATHPARTS: [&str; 2] = [env!("CARGO_MANIFEST_DIR"), "testdata"];
 
     static TEST_MUTEX: Lazy<Arc<Mutex<bool>>> = Lazy::new(|| Arc::new(Mutex::new(true)));
 
@@ -726,10 +748,7 @@ pub mod tests {
         env::remove_var("NO_MASK_ADDRESSES");
         env::remove_var("MODE");
         env::remove_var("DATASOURCE");
-        env::remove_var("ACCESS_DB_CONNECT");
-        env::remove_var("SERVICE_DB_CONNECT");
-        env::remove_var("ROLE_DB_CONNECT");
-        env::remove_var("USER_DB_CONNECT");
+        env::remove_var("DB_CONNECT");
         env::remove_var("CA_ENABLED");
         env::remove_var("CA_KEY_ALGORITHM");
         env::remove_var("CA_VALIDITY_PERIOD_DAYS");
@@ -757,8 +776,15 @@ pub mod tests {
         assert_eq!(format!("{}", KeyAlgorithm::Ed25519), "ed25519");
     }
 
+    #[cfg(feature = "postgres_db")]
     #[test]
-    fn datasource_repository_factories() {
+    fn datasource_repository_factories_when_postgresdb() {
+        _ = DataSource::PostgresDb.repository_factories();
+    }
+
+    #[cfg(feature = "postgres_db")]
+    #[test]
+    fn datasource_repository_factories_when_not_postgresdb() {
         let (access_repo_factory, service_repo_factory, role_repo_factory, user_repo_factory) =
             DataSource::default().repository_factories();
 
@@ -781,9 +807,9 @@ pub mod tests {
         assert!(roles.unwrap().is_empty());
 
         let user_repo = user_repo_factory();
-        let users = user_repo.lock().unwrap().get_all();
-        assert!(users.is_ok());
-        assert!(users.unwrap().is_empty());
+        let user = user_repo.lock().unwrap().get(100);
+        assert!(user.is_ok());
+        assert!(user.unwrap().is_none());
     }
 
     #[test]
@@ -792,14 +818,8 @@ pub mod tests {
         let gateway_key_file_str = gateway_key_file.to_str().unwrap();
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_cert_file_str = gateway_cert_file.to_str().unwrap();
-        let access_db_file: PathBuf = DB_ACCESS_PATHPARTS.iter().collect();
-        let access_db_file_str = access_db_file.to_str().unwrap();
-        let service_db_file: PathBuf = DB_SERVICE_PATHPARTS.iter().collect();
-        let service_db_file_str = service_db_file.to_str().unwrap();
-        let role_db_file: PathBuf = DB_ROLE_PATHPARTS.iter().collect();
-        let role_db_file_str = role_db_file.to_str().unwrap();
-        let user_db_file: PathBuf = DB_USER_PATHPARTS.iter().collect();
-        let user_db_file_str = user_db_file.to_str().unwrap();
+        let db_dir: PathBuf = DB_DIR_PATHPARTS.iter().collect();
+        let db_dir_str = db_dir.to_str().unwrap();
         let result;
         {
             let mutex = TEST_MUTEX.clone();
@@ -820,10 +840,7 @@ pub mod tests {
             env::set_var("NO_MASK_ADDRESSES", "true");
             env::set_var("MODE", "control-plane");
             env::set_var("DATASOURCE", "in-memory-db");
-            env::set_var("ACCESS_DB_CONNECT", access_db_file_str);
-            env::set_var("SERVICE_DB_CONNECT", service_db_file_str);
-            env::set_var("ROLE_DB_CONNECT", role_db_file_str);
-            env::set_var("USER_DB_CONNECT", user_db_file_str);
+            env::set_var("DB_CONNECT", db_dir_str);
             env::set_var("CA_ENABLED", "true");
             env::set_var("CA_KEY_ALGORITHM", "ecdsa-p384");
             env::set_var("CA_VALIDITY_PERIOD_DAYS", "200");
@@ -870,14 +887,8 @@ pub mod tests {
         let gateway_key_file_str = gateway_key_file.to_str().unwrap();
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_cert_file_str = gateway_cert_file.to_str().unwrap();
-        let access_db_file: PathBuf = DB_ACCESS_PATHPARTS.iter().collect();
-        let access_db_file_str = access_db_file.to_str().unwrap();
-        let service_db_file: PathBuf = DB_SERVICE_PATHPARTS.iter().collect();
-        let service_db_file_str = service_db_file.to_str().unwrap();
-        let role_db_file: PathBuf = DB_ROLE_PATHPARTS.iter().collect();
-        let role_db_file_str = role_db_file.to_str().unwrap();
-        let user_db_file: PathBuf = DB_USER_PATHPARTS.iter().collect();
-        let user_db_file_str = user_db_file.to_str().unwrap();
+        let db_dir: PathBuf = DB_DIR_PATHPARTS.iter().collect();
+        let db_dir_str = db_dir.to_str().unwrap();
         let result;
         {
             let mutex = TEST_MUTEX.clone();
@@ -897,10 +908,7 @@ pub mod tests {
             env::set_var("NO_MASK_ADDRESSES", "true");
             env::set_var("MODE", "control-plane");
             env::set_var("DATASOURCE", "in-memory-db");
-            env::set_var("ACCESS_DB_CONNECT", access_db_file_str);
-            env::set_var("SERVICE_DB_CONNECT", service_db_file_str);
-            env::set_var("ROLE_DB_CONNECT", role_db_file_str);
-            env::set_var("USER_DB_CONNECT", user_db_file_str);
+            env::set_var("DB_CONNECT", db_dir_str);
             env::set_var("VERBOSE", "true");
 
             result = AppConfig::new();
@@ -986,19 +994,29 @@ pub mod tests {
     #[test]
     fn appconfig_create_datasource_repositories_when_inmemdb_ds() {
         let datasource = DataSource::InMemoryDb;
-        let access_db_file: PathBuf = DB_ACCESS_PATHPARTS.iter().collect();
-        let access_db_file_str = access_db_file.to_str().unwrap().to_string();
-        let service_db_file: PathBuf = DB_SERVICE_PATHPARTS.iter().collect();
-        let service_db_file_str = service_db_file.to_str().unwrap().to_string();
-        let role_db_file: PathBuf = DB_ROLE_PATHPARTS.iter().collect();
-        let role_db_file_str = role_db_file.to_str().unwrap().to_string();
-        let user_db_file: PathBuf = DB_USER_PATHPARTS.iter().collect();
-        let user_db_file_str = user_db_file.to_str().unwrap().to_string();
+        let db_dir: PathBuf = DB_DIR_PATHPARTS.iter().collect();
+        let db_dir_str = db_dir.to_str().unwrap();
 
-        let access_db_file_str_copy = access_db_file_str.clone();
-        let service_db_file_str_copy = service_db_file_str.clone();
-        let role_db_file_str_copy = role_db_file_str.clone();
-        let user_db_file_str_copy = user_db_file_str.clone();
+        let access_db_file_str_copy = db_dir
+            .join(INMEMDB_ACCESS_FILENAME)
+            .to_str()
+            .unwrap()
+            .to_string();
+        let role_db_file_str_copy = db_dir
+            .join(INMEMDB_ROLE_FILENAME)
+            .to_str()
+            .unwrap()
+            .to_string();
+        let service_db_file_str_copy = db_dir
+            .join(INMEMDB_SERVICE_FILENAME)
+            .to_str()
+            .unwrap()
+            .to_string();
+        let user_db_file_str_copy = db_dir
+            .join(INMEMDB_USER_FILENAME)
+            .to_str()
+            .unwrap()
+            .to_string();
         let repo_factories: (
             Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
             Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,
@@ -1045,12 +1063,49 @@ pub mod tests {
 
         let result = AppConfig::create_datasource_repositories(
             &datasource,
-            &Some(access_db_file_str),
-            &Some(service_db_file_str),
-            &Some(role_db_file_str),
-            &Some(user_db_file_str),
+            &Some(db_dir_str.to_string()),
             &repo_factories,
         );
+
+        if let Err(err) = &result {
+            panic!("Unexpected result: err={:?}", err);
+        }
+    }
+
+    #[cfg(feature = "postgres_db")]
+    #[test]
+    fn appconfig_create_datasource_repositories_when_postgresdb_ds() {
+        let repo_factories: (
+            Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
+            Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,
+            Box<dyn Fn() -> Arc<Mutex<dyn RoleRepository>>>,
+            Box<dyn Fn() -> Arc<Mutex<dyn UserRepository>>>,
+        ) = (
+            Box::new(move || {
+                let mut access_repo = MockAccessRepo::new();
+                access_repo.expect_connect_to_datasource().never();
+                Arc::new(Mutex::new(access_repo))
+            }),
+            Box::new(move || {
+                let mut service_repo = MockServiceRepo::new();
+                service_repo.expect_connect_to_datasource().never();
+                Arc::new(Mutex::new(service_repo))
+            }),
+            Box::new(move || {
+                let mut role_repo = MockRoleRepo::new();
+                role_repo.expect_connect_to_datasource().never();
+                Arc::new(Mutex::new(role_repo))
+            }),
+            Box::new(move || {
+                let mut user_repo = MockUserRepo::new();
+                user_repo.expect_connect_to_datasource().never();
+                Arc::new(Mutex::new(user_repo))
+            }),
+        );
+
+        let datasource = DataSource::PostgresDb;
+
+        let result = AppConfig::create_datasource_repositories(&datasource, &None, &repo_factories);
 
         if let Err(err) = &result {
             panic!("Unexpected result: err={:?}", err);
@@ -1089,14 +1144,7 @@ pub mod tests {
 
         let datasource = DataSource::NoDb;
 
-        let result = AppConfig::create_datasource_repositories(
-            &datasource,
-            &None,
-            &None,
-            &None,
-            &None,
-            &repo_factories,
-        );
+        let result = AppConfig::create_datasource_repositories(&datasource, &None, &repo_factories);
 
         if let Err(err) = &result {
             panic!("Unexpected result: err={:?}", err);

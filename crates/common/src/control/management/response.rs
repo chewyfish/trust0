@@ -102,7 +102,7 @@ impl TryInto<MessageFrame> for &Response {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Default, Debug)]
 pub struct User {
     /// User ID (unique across users)
-    user_id: u64,
+    user_id: i64,
     /// Friendly name for user
     name: String,
     /// Indicates the current status of the user
@@ -122,7 +122,7 @@ impl User {
     ///
     /// A newly constructed [`User`] object.
     ///
-    pub fn new(user_id: u64, name: &str, status: &str) -> Self {
+    pub fn new(user_id: i64, name: &str, status: &str) -> Self {
         Self {
             user_id,
             name: name.to_string(),
@@ -323,7 +323,7 @@ impl TryInto<Value> for &Proxy {
 #[derive(Serialize, Deserialize, Clone, PartialEq, Default, Debug)]
 pub struct Service {
     /// Service ID (unique across services)
-    pub id: u64,
+    pub id: i64,
     /// Well-known service key name (unique across services)
     pub name: String,
     /// Network transport type (`TCP`, `UDP`)
@@ -347,7 +347,7 @@ impl Service {
     /// A newly constructed [`Service`] object.
     ///
     pub fn new(
-        id: u64,
+        id: i64,
         name: &str,
         transport: &model::service::Transport,
         address: &Option<String>,

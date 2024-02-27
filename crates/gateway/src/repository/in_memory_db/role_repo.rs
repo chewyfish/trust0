@@ -10,7 +10,7 @@ use trust0_common::model::role::Role;
 use trust0_common::target;
 
 pub struct InMemRoleRepo {
-    roles: RwLock<HashMap<u64, Role>>,
+    roles: RwLock<HashMap<i64, Role>>,
     source_file: Option<String>,
     reloader_loading: Arc<Mutex<bool>>,
     reloader_new_data: Arc<Mutex<String>>,
@@ -30,7 +30,7 @@ impl InMemRoleRepo {
         }
     }
 
-    fn access_data_for_write(&self) -> Result<RwLockWriteGuard<HashMap<u64, Role>>, AppError> {
+    fn access_data_for_write(&self) -> Result<RwLockWriteGuard<HashMap<i64, Role>>, AppError> {
         if let Err(err) = self.process_source_data_updates() {
             error(
                 &target!(),
@@ -42,7 +42,7 @@ impl InMemRoleRepo {
         })
     }
 
-    fn access_data_for_read(&self) -> Result<RwLockReadGuard<HashMap<u64, Role>>, AppError> {
+    fn access_data_for_read(&self) -> Result<RwLockReadGuard<HashMap<i64, Role>>, AppError> {
         if let Err(err) = self.process_source_data_updates() {
             error(
                 &target!(),
@@ -129,12 +129,20 @@ impl RoleRepository for InMemRoleRepo {
         Ok(())
     }
 
-    fn put(&self, role: Role) -> Result<Option<Role>, AppError> {
+    fn put(&self, role: Role) -> Result<Role, AppError> {
         let mut data = self.access_data_for_write()?;
-        Ok(data.insert(role.role_id, role.clone()))
+        let mut role = role.clone();
+
+        if role.role_id == 0 {
+            let next_id = data.values().map(|r| r.role_id + 1).max();
+            role.role_id = next_id.unwrap_or(1);
+        }
+
+        _ = data.insert(role.role_id, role.clone());
+        Ok(role)
     }
 
-    fn get(&self, role_id: u64) -> Result<Option<Role>, AppError> {
+    fn get(&self, role_id: i64) -> Result<Option<Role>, AppError> {
         let data = self.access_data_for_read()?;
         Ok(data.get(&role_id).cloned())
     }
@@ -148,7 +156,7 @@ impl RoleRepository for InMemRoleRepo {
             .collect::<Vec<Role>>())
     }
 
-    fn delete(&self, role_id: u64) -> Result<Option<Role>, AppError> {
+    fn delete(&self, role_id: i64) -> Result<Option<Role>, AppError> {
         let mut data = self.access_data_for_write()?;
         Ok(data.remove(&role_id))
     }
@@ -160,16 +168,19 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    const VALID_ROLE_DB_FILE_PATHPARTS: [&str; 3] =
-        [env!("CARGO_MANIFEST_DIR"), "testdata", "db-role.json"];
+    const VALID_ROLE_DB_FILE_PATHPARTS: [&str; 3] = [
+        env!("CARGO_MANIFEST_DIR"),
+        "testdata",
+        "trust0-db-role.json",
+    ];
     const INVALID_ROLE_DB_FILE_PATHPARTS: [&str; 3] = [
         env!("CARGO_MANIFEST_DIR"),
         "testdata",
-        "db-role-INVALID.json",
+        "trust0-db-role-INVALID.json",
     ];
 
     #[test]
-    fn inmemsvcrepo_connect_to_datasource_when_invalid_filepath() {
+    fn inmemrolerepo_connect_to_datasource_when_invalid_filepath() {
         let invalid_role_db_path: PathBuf = INVALID_ROLE_DB_FILE_PATHPARTS.iter().collect();
         let invalid_role_db_pathstr = invalid_role_db_path.to_str().unwrap();
 
@@ -181,7 +192,7 @@ mod tests {
     }
 
     #[test]
-    fn inmemsvcrepo_connect_to_datasource_when_valid_filepath() {
+    fn inmemrolerepo_connect_to_datasource_when_valid_filepath() {
         let valid_role_db_path: PathBuf = VALID_ROLE_DB_FILE_PATHPARTS.iter().collect();
         let valid_role_db_pathstr = valid_role_db_path.to_str().unwrap();
 
@@ -194,7 +205,7 @@ mod tests {
             );
         }
 
-        let expected_role_db_map: HashMap<u64, Role> = HashMap::from([
+        let expected_role_db_map: HashMap<i64, Role> = HashMap::from([
             (
                 50,
                 Role {
@@ -211,14 +222,14 @@ mod tests {
             ),
         ]);
 
-        let actual_role_db_map: HashMap<u64, Role> = HashMap::from_iter(
+        let actual_role_db_map: HashMap<i64, Role> = HashMap::from_iter(
             role_repo
                 .roles
                 .into_inner()
                 .unwrap()
                 .iter()
                 .map(|e| (e.0.clone(), e.1.clone()))
-                .collect::<Vec<(u64, Role)>>(),
+                .collect::<Vec<(i64, Role)>>(),
         );
 
         assert_eq!(actual_role_db_map.len(), expected_role_db_map.len());
@@ -234,7 +245,7 @@ mod tests {
     }
 
     #[test]
-    fn inmemsvcrepo_process_source_data_updates_when_valid_json() {
+    fn inmemrolerepo_process_source_data_updates_when_valid_json() {
         let valid_role_db_path: PathBuf = VALID_ROLE_DB_FILE_PATHPARTS.iter().collect();
         let valid_role_db_pathstr = valid_role_db_path.to_str().unwrap();
 
@@ -256,7 +267,7 @@ mod tests {
             panic!("Unexpected process updates result: err={:?}", &err);
         }
 
-        let expected_role_db_map: HashMap<u64, Role> = HashMap::from([(
+        let expected_role_db_map: HashMap<i64, Role> = HashMap::from([(
             60,
             Role {
                 role_id: 60,
@@ -264,14 +275,14 @@ mod tests {
             },
         )]);
 
-        let actual_role_db_map: HashMap<u64, Role> = HashMap::from_iter(
+        let actual_role_db_map: HashMap<i64, Role> = HashMap::from_iter(
             role_repo
                 .roles
                 .into_inner()
                 .unwrap()
                 .iter()
                 .map(|e| (e.0.clone(), e.1.clone()))
-                .collect::<Vec<(u64, Role)>>(),
+                .collect::<Vec<(i64, Role)>>(),
         );
 
         assert_eq!(actual_role_db_map.len(), expected_role_db_map.len());
@@ -287,7 +298,7 @@ mod tests {
     }
 
     #[test]
-    fn inmemsvcrepo_process_source_data_updates_when_invalid_json() {
+    fn inmemrolerepo_process_source_data_updates_when_invalid_json() {
         let valid_role_db_path: PathBuf = VALID_ROLE_DB_FILE_PATHPARTS.iter().collect();
         let valid_role_db_pathstr = valid_role_db_path.to_str().unwrap();
 
@@ -318,7 +329,38 @@ mod tests {
     }
 
     #[test]
-    fn inmemsvcrepo_put() {
+    fn inmemrolerepo_put_when_existing_role() {
+        let role_repo = InMemRoleRepo::new();
+        let role_key = 60;
+        let mut role = Role {
+            role_id: 60,
+            name: "Role60".to_string(),
+        };
+        role_repo
+            .roles
+            .write()
+            .unwrap()
+            .insert(role_key, role.clone());
+        role.name = "Role60.1".to_string();
+
+        let result = role_repo.put(role.clone());
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err)
+        }
+
+        let returned_role = result.unwrap();
+
+        let stored_map = role_repo.roles.read().unwrap();
+        let stored_entry = stored_map.get(&role_key);
+
+        assert!(stored_entry.is_some());
+        assert_eq!(*stored_entry.unwrap(), role);
+        assert_eq!(returned_role, role);
+    }
+
+    #[test]
+    fn inmemrolerepo_put_when_new_role_and_given_id() {
         let role_repo = InMemRoleRepo::new();
         let role_key = 60;
         let role = Role {
@@ -326,19 +368,82 @@ mod tests {
             name: "Role60".to_string(),
         };
 
-        if let Err(err) = role_repo.put(role.clone()) {
+        let result = role_repo.put(role.clone());
+
+        if let Err(err) = result {
             panic!("Unexpected result: err={:?}", &err)
         }
+
+        let returned_role = result.unwrap();
 
         let stored_map = role_repo.roles.read().unwrap();
         let stored_entry = stored_map.get(&role_key);
 
         assert!(stored_entry.is_some());
         assert_eq!(*stored_entry.unwrap(), role);
+        assert_eq!(returned_role, role);
     }
 
     #[test]
-    fn inmemsvcrepo_get_when_invalid_role() {
+    fn inmemrolerepo_put_when_new_role_and_not_given_id_and_empty_db() {
+        let role_repo = InMemRoleRepo::new();
+        let mut role = Role {
+            role_id: 0,
+            name: "RoleXX".to_string(),
+        };
+
+        let result = role_repo.put(role.clone());
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err)
+        }
+
+        let returned_role = result.unwrap();
+
+        let stored_map = role_repo.roles.read().unwrap();
+        let stored_entry = stored_map.iter().map(|e| e.1).cloned().next();
+
+        role.role_id = 1;
+
+        assert!(stored_entry.is_some());
+        assert_eq!(stored_entry.unwrap(), role);
+        assert_eq!(returned_role, role);
+    }
+
+    #[test]
+    fn inmemrolerepo_put_when_new_role_and_not_given_id_and_non_empty_db() {
+        let role_repo = InMemRoleRepo::new();
+        let role60 = Role {
+            role_id: 60,
+            name: "Role60".to_string(),
+        };
+        let role61 = Role {
+            role_id: 61,
+            name: "Role61".to_string(),
+        };
+        role_repo.roles.write().unwrap().insert(60, role60.clone());
+        role_repo.roles.write().unwrap().insert(61, role61.clone());
+
+        let mut role = Role {
+            role_id: 0,
+            name: "RoleXX".to_string(),
+        };
+
+        let result = role_repo.put(role.clone());
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err)
+        }
+
+        let returned_role = result.unwrap();
+
+        role.role_id = 62;
+
+        assert_eq!(returned_role, role);
+    }
+
+    #[test]
+    fn inmemrolerepo_get_when_invalid_role() {
         let role_repo = InMemRoleRepo::new();
         let role_key = 60;
         let role = Role {
@@ -358,7 +463,7 @@ mod tests {
     }
 
     #[test]
-    fn inmemsvcrepo_get_when_valid_role() {
+    fn inmemrolerepo_get_when_valid_role() {
         let role_repo = InMemRoleRepo::new();
         let role_keys = [60, 61, 62];
         let roles = [
@@ -405,7 +510,7 @@ mod tests {
     }
 
     #[test]
-    fn inmemsvcrepo_get_all() {
+    fn inmemrolerepo_get_all() {
         let role_repo = InMemRoleRepo::new();
         let role_keys = [60, 61, 62];
         let roles = [
@@ -448,7 +553,7 @@ mod tests {
         let actual_roles = result.unwrap();
         assert_eq!(actual_roles.len(), 3);
 
-        let expected_access_db_map: HashMap<u64, Role> = HashMap::from([
+        let expected_role_db_map: HashMap<i64, Role> = HashMap::from([
             (
                 60,
                 Role {
@@ -475,14 +580,14 @@ mod tests {
         assert_eq!(
             actual_roles
                 .iter()
-                .filter(|entry| !expected_access_db_map.contains_key(&entry.role_id))
+                .filter(|entry| !expected_role_db_map.contains_key(&entry.role_id))
                 .count(),
             0
         );
     }
 
     #[test]
-    fn inmemsvcrepo_delete_when_invalid_role() {
+    fn inmemrolerepo_delete_when_invalid_role() {
         let role_repo = InMemRoleRepo::new();
         let role_key = 60;
         let role = Role {
@@ -502,7 +607,7 @@ mod tests {
     }
 
     #[test]
-    fn inmemsvcrepo_delete_when_valid_role() {
+    fn inmemrolerepo_delete_when_valid_role() {
         let role_repo = InMemRoleRepo::new();
         let role_key = 60;
         let role = Role {

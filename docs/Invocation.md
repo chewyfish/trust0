@@ -122,28 +122,16 @@ Options:
           [default: in-memory-db]
 
           Possible values:
-          - in-memory-db: In-memory DB, with a simple backing persistence store. Entity store connect strings file paths to JSON record files
+          - in-memory-db: In-memory DB, with a simple backing persistence store. Entity store connect string is file path to directory holding JSON record files
+          - postgres-db:  Postgres DB accessed via repository layer using diesel ORM
           - no-db:        No DB configured, used in testing (internally empty in-memory DB structures are used)
 
-      --access-db-connect <ACCESS_DB_CONNECT>
-          (Service) Access entity store connect specifier string
+      --db-connect <DB_CONNECT>
+          DB entity store connect specifier string. Specification format is dependent on <DATASOURCE> type.
+          Format: 'in-memory-db': Directory holding JSON files named 'trust0-db-access.json', 'trust0-db-role.json', 'trust0-db-service.json', 'trust0-db-user.json'
+                  'postgres-db': Standard Postgres connect string specification (https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING)
           
-          [env: ACCESS_DB_CONNECT=]
-
-      --service-db-connect <SERVICE_DB_CONNECT>
-          Service entity store connect specifier string
-          
-          [env: SERVICE_DB_CONNECT=]
-
-      --role-db-connect <ROLE_DB_CONNECT>
-          Role entity store connect specifier string
-          
-          [env: ROLE_DB_CONNECT=]
-
-      --user-db-connect <USER_DB_CONNECT>
-          User entity store connect specifier string
-          
-          [env: USER_DB_CONNECT=]
+          [env: DB_CONNECT=]
 
       --ca-enabled
           [CA] Enable certificate authority. This will dynamically issue expiring certificates to clients

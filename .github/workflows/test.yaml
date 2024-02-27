@@ -21,5 +21,14 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Setup Cache
         uses: Swatinem/rust-cache@v2
-      - name: Run Tests w/Coverage
+      - name: Install postgres client (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpq-dev
+      - name: Run Tests w/Coverage (Linux)
+        if: runner.os == 'Linux'
+        run: cargo llvm-cov --workspace --features postgres_db --verbose
+      - name: Run Tests w/Coverage (Non-Linux)
+        if: runner.os != 'Linux'
         run: cargo llvm-cov --workspace --verbose

@@ -30,7 +30,7 @@ const VALIDATION_MSG_SAN_URI_PLATFORM_REQUIRED: &str = "SAN URI Platform is requ
 #[serde(rename_all = "camelCase")]
 pub struct CertAccessContext {
     /// DB User ID for user
-    pub user_id: u64,
+    pub user_id: i64,
     /// Machine architecture platform hosting certificate
     pub platform: String,
 }
@@ -860,7 +860,7 @@ pub struct ClientCertificateBuilder {
     /// Common certificate builder delegate object
     common_builder: CommonCertificateBuilder,
     /// Subject alternative name URI access context JSON `userId` property
-    san_uri_user_id: Option<u64>,
+    san_uri_user_id: Option<i64>,
     /// Subject alternative name URI access context JSON `platform` property
     san_uri_platform: Option<String>,
 }
@@ -981,7 +981,7 @@ impl ClientCertificateBuilder {
     ///
     /// [`Self`] for further function invocation.
     ///
-    pub fn san_uri_user_id(&mut self, user_id: u64) -> &mut Self {
+    pub fn san_uri_user_id(&mut self, user_id: i64) -> &mut Self {
         self.san_uri_user_id = Some(user_id);
         self
     }

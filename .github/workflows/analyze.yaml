@@ -21,7 +21,7 @@ jobs:
       - name: Setup Cache
         uses: Swatinem/rust-cache@v2
       - name: Run Cargo Check
-        run: cargo check --workspace
+        run: cargo check --workspace --features postgres_db
       - name: Run Lint Analysis
         run: cargo clippy -- -D warnings
       - name: Run Format Check

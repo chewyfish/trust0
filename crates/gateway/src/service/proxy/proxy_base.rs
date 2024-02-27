@@ -64,7 +64,7 @@ pub trait GatewayServiceProxyVisitor: server_std::ServerVisitor + Send {
     ///
     /// A list of (proxy key, (client address, gateway address)) for user.
     ///
-    fn get_proxy_keys_for_user(&self, user_id: u64) -> Vec<(String, ConnectionAddrs)>;
+    fn get_proxy_keys_for_user(&self, user_id: i64) -> Vec<(String, ConnectionAddrs)>;
 
     /// Shutdown the active service proxy connections. Consider either all connections or for given user ID.
     ///
@@ -79,7 +79,7 @@ pub trait GatewayServiceProxyVisitor: server_std::ServerVisitor + Send {
     fn shutdown_connections(
         &mut self,
         proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
-        user_id: Option<u64>,
+        user_id: Option<i64>,
     ) -> Result<(), AppError>;
 
     /// Shutdown service proxy connection.
@@ -153,8 +153,8 @@ pub mod tests {
             fn get_service(&self) -> Service;
             fn get_proxy_host(&self) -> Option<String>;
             fn get_proxy_port(&self) -> u16;
-            fn get_proxy_keys_for_user(&self, user_id: u64) -> Vec<(String, ConnectionAddrs)>;
-            fn shutdown_connections(&mut self, proxy_tasks_sender: &Sender<ProxyExecutorEvent>, user_id: Option<u64>) -> Result<(), AppError>;
+            fn get_proxy_keys_for_user(&self, user_id: i64) -> Vec<(String, ConnectionAddrs)>;
+            fn shutdown_connections(&mut self, proxy_tasks_sender: &Sender<ProxyExecutorEvent>, user_id: Option<i64>) -> Result<(), AppError>;
             fn shutdown_connection(&mut self, proxy_tasks_sender: &Sender<ProxyExecutorEvent>, proxy_key: &str) -> Result<(), AppError>;
             fn remove_proxy_for_key(&mut self, proxy_key: &str) -> bool;
         }

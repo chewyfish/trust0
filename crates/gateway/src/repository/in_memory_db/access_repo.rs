@@ -11,7 +11,7 @@ use trust0_common::model::user::User;
 use trust0_common::target;
 
 #[derive(Clone, Hash, Eq, PartialEq)]
-struct AccessKey(u64, EntityType, u64);
+struct AccessKey(i64, EntityType, i64);
 
 pub struct InMemAccessRepo {
     accesses: RwLock<HashMap<AccessKey, ServiceAccess>>,
@@ -145,23 +145,24 @@ impl AccessRepository for InMemAccessRepo {
         Ok(())
     }
 
-    fn put(&self, access: ServiceAccess) -> Result<Option<ServiceAccess>, AppError> {
+    fn put(&self, access: ServiceAccess) -> Result<ServiceAccess, AppError> {
         let mut data = self.access_data_for_write()?;
-        Ok(data.insert(
+        _ = data.insert(
             AccessKey(
                 access.service_id,
                 access.entity_type.clone(),
                 access.entity_id,
             ),
             access.clone(),
-        ))
+        );
+        Ok(access)
     }
 
     fn get(
         &self,
-        service_id: u64,
+        service_id: i64,
         entity_type: &EntityType,
-        entity_id: u64,
+        entity_id: i64,
     ) -> Result<Option<ServiceAccess>, AppError> {
         let data = self.access_data_for_read()?;
         Ok(data
@@ -171,10 +172,10 @@ impl AccessRepository for InMemAccessRepo {
 
     fn get_for_user(
         &self,
-        service_id: u64,
+        service_id: i64,
         user: &User,
     ) -> Result<Option<ServiceAccess>, AppError> {
-        let user_roles: HashSet<u64> = user.roles.iter().cloned().collect();
+        let user_roles: HashSet<i64> = user.roles.iter().cloned().collect();
         let data = self.access_data_for_read()?;
         Ok(data
             .iter()
@@ -189,7 +190,7 @@ impl AccessRepository for InMemAccessRepo {
     }
 
     fn get_all_for_user(&self, user: &User) -> Result<Vec<ServiceAccess>, AppError> {
-        let user_roles: HashSet<u64> = user.roles.iter().cloned().collect();
+        let user_roles: HashSet<i64> = user.roles.iter().cloned().collect();
         let data = self.access_data_for_read()?;
         Ok(data
             .iter()
@@ -203,9 +204,9 @@ impl AccessRepository for InMemAccessRepo {
 
     fn delete(
         &self,
-        service_id: u64,
+        service_id: i64,
         entity_type: &EntityType,
-        entity_id: u64,
+        entity_id: i64,
     ) -> Result<Option<ServiceAccess>, AppError> {
         let mut data = self.access_data_for_write()?;
         Ok(data.remove(&AccessKey(service_id, entity_type.clone(), entity_id)))
@@ -219,12 +220,15 @@ mod tests {
     use std::path::PathBuf;
     use trust0_common::model::user::Status;
 
-    const VALID_ACCESS_DB_FILE_PATHPARTS: [&str; 3] =
-        [env!("CARGO_MANIFEST_DIR"), "testdata", "db-access.json"];
+    const VALID_ACCESS_DB_FILE_PATHPARTS: [&str; 3] = [
+        env!("CARGO_MANIFEST_DIR"),
+        "testdata",
+        "trust0-db-access.json",
+    ];
     const INVALID_ACCESS_DB_FILE_PATHPARTS: [&str; 3] = [
         env!("CARGO_MANIFEST_DIR"),
         "testdata",
-        "db-access-INVALID.json",
+        "trust0-db-access-INVALID.json",
     ];
 
     #[test]
@@ -422,6 +426,63 @@ mod tests {
 
         assert!(stored_entry.is_some());
         assert_eq!(*stored_entry.unwrap(), access);
+    }
+
+    #[test]
+    fn inmemaccessrepo_put_when_existing_role() {
+        let access_repo = InMemAccessRepo::new();
+        let access_key = AccessKey(2, EntityType::User, 1);
+        let access = ServiceAccess {
+            service_id: 2,
+            entity_type: EntityType::User,
+            entity_id: 1,
+        };
+        access_repo
+            .accesses
+            .write()
+            .unwrap()
+            .insert(access_key.clone(), access.clone());
+
+        let result = access_repo.put(access.clone());
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err)
+        }
+
+        let returned_access = result.unwrap();
+
+        let stored_map = access_repo.accesses.read().unwrap();
+        let stored_entry = stored_map.get(&access_key);
+
+        assert!(stored_entry.is_some());
+        assert_eq!(*stored_entry.unwrap(), access);
+        assert_eq!(returned_access, access);
+    }
+
+    #[test]
+    fn inmemaccessrepo_put_when_new_role() {
+        let access_repo = InMemAccessRepo::new();
+        let access_key = AccessKey(2, EntityType::User, 1);
+        let access = ServiceAccess {
+            service_id: 2,
+            entity_type: EntityType::User,
+            entity_id: 1,
+        };
+
+        let result = access_repo.put(access.clone());
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err)
+        }
+
+        let returned_access = result.unwrap();
+
+        let stored_map = access_repo.accesses.read().unwrap();
+        let stored_entry = stored_map.get(&access_key);
+
+        assert!(stored_entry.is_some());
+        assert_eq!(*stored_entry.unwrap(), access);
+        assert_eq!(returned_access, access);
     }
 
     #[test]

@@ -20,4 +20,4 @@ jobs:
       - name: Setup Cache
         uses: Swatinem/rust-cache@v2
       - name: Compile Crates (Debug)
-        run: cargo build --workspace
+        run: cargo build --workspace --features postgres_db

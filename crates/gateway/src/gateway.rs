@@ -121,7 +121,7 @@ impl ServerVisitor {
     ///
     pub fn get_service_proxy(
         &self,
-        service_id: u64,
+        service_id: i64,
     ) -> Result<Arc<Mutex<dyn GatewayServiceProxyVisitor>>, AppError> {
         match self
             .service_mgr

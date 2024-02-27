@@ -241,7 +241,7 @@ pub enum Command {
 
         /// The Trust0 user account ID value
         #[arg(required = true, long = "auth-user-id", env)]
-        auth_user_id: u64,
+        auth_user_id: i64,
 
         /// The machine architecture/platform for the device using the client certificate
         #[arg(required = true, long = "auth-platform", env)]

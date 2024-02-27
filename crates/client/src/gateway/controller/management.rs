@@ -58,7 +58,7 @@ pub struct ManagementController {
     /// Records whether user has passed secondary authentication
     authenticated: Rc<Mutex<bool>>,
     /// Service ID map, but service name
-    service_ids: HashMap<String, u64>,
+    service_ids: HashMap<String, i64>,
 }
 
 impl ManagementController {
@@ -1179,7 +1179,7 @@ pub mod tests {
         assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
 
         assert!(controller.service_ids.contains_key("svc200"));
-        assert_eq!(*controller.service_ids.get("svc200").unwrap(), 200u64);
+        assert_eq!(*controller.service_ids.get("svc200").unwrap(), 200i64);
     }
 
     #[test]
