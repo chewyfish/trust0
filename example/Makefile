@@ -28,6 +28,11 @@ EXECBIN_EXTRA_ARGS=
 
 include ${EXAMPLE_CONFIG_FILE}
 
+# Params - Datasource
+
+DATASOURCE_INMEMDB_DB_CONNECT=${EXAMPLE_BUILD_DIR}
+DATASOURCE_POSTGRESDB_DB_CONNECT=postgres://t0user:t0pass@localhost:5432/trust0
+
 # Params - Certificate Authority
 
 ROOT_CA__PKI_NAME=example-ca.local
@@ -68,6 +73,10 @@ TRUST0_GATEWAY__BIND_HOST=[::1]
 TRUST0_GATEWAY__SERVICE_HOST=${TRUST0_GATEWAY__HOST}
 TRUST0_GATEWAY__CA_VALIDITY_PERIOD_DAYS=20
 TRUST0_GATEWAY__CA_REISSUANCE_THRESHOLD_DAYS=15
+TRUST0_GATEWAY__DATASOURCE=in-memory-db
+TRUST0_GATEWAY__DB_CONNECT=${DATASOURCE_INMEMDB_DB_CONNECT}
+#TRUST0_GATEWAY__DATASOURCE=postgres-db
+#TRUST0_GATEWAY__DB_CONNECT=${DATASOURCE_POSTGRESDB_DB_CONNECT}
 
 # Params - Trust Client
 
@@ -88,10 +97,6 @@ TRUST0_CLIENT__PKI_KEY_FILE=${EXAMPLE_BUILD_DIR}/${TRUST0_CLIENT__PKI_NAME}.key.
 TRUST0_CLIENT__BINARY_NAME=trust0-client
 TRUST0_CLIENT__BINARY_FILE=${PROJECT_DIR}/target/debug/${TRUST0_CLIENT__BINARY_NAME}
 TRUST0_CLIENT__BIND_HOST=127.0.0.1
-
-# Params - Datasource
-
-DATASOURCE_INMEMDB_DB_CONNECT=${EXAMPLE_BUILD_DIR}
 
 # Params - CRL
 
@@ -145,16 +150,16 @@ trust0-gateway: trust0-common
 
 ifeq ($(CA_ENABLED),false)
 run-trust0-gateway: trust0-gateway
-	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource in-memory-db --db-connect ${DATASOURCE_INMEMDB_DB_CONNECT}
+	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource ${TRUST0_GATEWAY__DATASOURCE} --db-connect ${TRUST0_GATEWAY__DB_CONNECT}
 
 run-trust0-gateway-nodeps:
-	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource in-memory-db --db-connect ${DATASOURCE_INMEMDB_DB_CONNECT}
+	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource ${TRUST0_GATEWAY__DATASOURCE} --db-connect ${TRUST0_GATEWAY__DB_CONNECT}
 else
 run-trust0-gateway: trust0-gateway
-	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --auth-key-file ${ROOT_CA__PKI_KEY_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource in-memory-db --db-connect ${DATASOURCE_INMEMDB_DB_CONNECT} --mfa-scheme scram-sha256 --ca-enabled --ca-key-algorithm ${TRUST0_KEYALG_TYPE} --ca-validity-period-days ${TRUST0_GATEWAY__CA_VALIDITY_PERIOD_DAYS} --ca-reissuance-threshold-days ${TRUST0_GATEWAY__CA_REISSUANCE_THRESHOLD_DAYS}
+	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --auth-key-file ${ROOT_CA__PKI_KEY_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource ${TRUST0_GATEWAY__DATASOURCE} --db-connect ${TRUST0_GATEWAY__DB_CONNECT} --mfa-scheme scram-sha256 --ca-enabled --ca-key-algorithm ${TRUST0_KEYALG_TYPE} --ca-validity-period-days ${TRUST0_GATEWAY__CA_VALIDITY_PERIOD_DAYS} --ca-reissuance-threshold-days ${TRUST0_GATEWAY__CA_REISSUANCE_THRESHOLD_DAYS}
 
 run-trust0-gateway-nodeps:
-	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --auth-key-file ${ROOT_CA__PKI_KEY_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource in-memory-db --db-connect ${DATASOURCE_INMEMDB_DB_CONNECT} --mfa-scheme scram-sha256 --ca-enabled --ca-key-algorithm ${TRUST0_KEYALG_TYPE} --ca-validity-period-days ${TRUST0_GATEWAY__CA_VALIDITY_PERIOD_DAYS} --ca-reissuance-threshold-days ${TRUST0_GATEWAY__CA_REISSUANCE_THRESHOLD_DAYS}
+	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --auth-key-file ${ROOT_CA__PKI_KEY_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource ${TRUST0_GATEWAY__DATASOURCE} --db-connect ${TRUST0_GATEWAY__DB_CONNECT} --mfa-scheme scram-sha256 --ca-enabled --ca-key-algorithm ${TRUST0_KEYALG_TYPE} --ca-validity-period-days ${TRUST0_GATEWAY__CA_VALIDITY_PERIOD_DAYS} --ca-reissuance-threshold-days ${TRUST0_GATEWAY__CA_REISSUANCE_THRESHOLD_DAYS}
 endif
 
 # Targets - Trust Client
