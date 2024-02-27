@@ -209,9 +209,16 @@ For more details on using the CRL feature:
 
 The database is used to enforce user access to Trust0 and the respective services.
 
-Currently only a simple in-memory DB based on JSON files is available. At runtime, the system will periodically scan for file changes and reload the corresponding DB with latest records from the changed file.
-
 The repository is exposed as an abstract trait, so additional DB implementations may be developed.
+
+Currently, there are two supported DB implementations:
+
+| DB Type     | Description                                                                                                                                                                 |
+|-------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `in-memory` | DB based on JSON record files. At runtime, the system will periodically scan for file<br>changes and reload the corresponding DB with latest records from the changed file. |
+| `postgres`  | Repositories using an ORM, which connects to a Postgres DB.                                                                                                                 |
+
+The following sections represent a pseudo-layout for the core respository tables. Actual table layout may differ.
 
 #### User Table
 
