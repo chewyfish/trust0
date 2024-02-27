@@ -128,23 +128,22 @@ impl UserRepository for InMemUserRepo {
         Ok(())
     }
 
-    fn put(&self, user: User) -> Result<Option<User>, AppError> {
+    fn put(&self, user: User) -> Result<User, AppError> {
         let mut data = self.access_data_for_write()?;
-        Ok(data.insert(user.user_id, user.clone()))
+        let mut user = user.clone();
+
+        if user.user_id == 0 {
+            let next_id = data.values().map(|r| r.user_id + 1).max();
+            user.user_id = next_id.unwrap_or(1);
+        }
+
+        _ = data.insert(user.user_id, user.clone());
+        Ok(user)
     }
 
     fn get(&self, user_id: i64) -> Result<Option<User>, AppError> {
         let data = self.access_data_for_read()?;
         Ok(data.get(&user_id).cloned())
-    }
-
-    fn get_all(&self) -> Result<Vec<User>, AppError> {
-        let data = self.access_data_for_read()?;
-        Ok(data
-            .iter()
-            .map(|entry| entry.1)
-            .cloned()
-            .collect::<Vec<User>>())
     }
 
     fn delete(&self, user_id: i64) -> Result<Option<User>, AppError> {
@@ -160,12 +159,15 @@ mod tests {
     use std::path::PathBuf;
     use trust0_common::model::user::{Status, User};
 
-    const VALID_USER_DB_FILE_PATHPARTS: [&str; 3] =
-        [env!("CARGO_MANIFEST_DIR"), "testdata", "db-user.json"];
+    const VALID_USER_DB_FILE_PATHPARTS: [&str; 3] = [
+        env!("CARGO_MANIFEST_DIR"),
+        "testdata",
+        "trust0-db-user.json",
+    ];
     const INVALID_USER_DB_FILE_PATHPARTS: [&str; 3] = [
         env!("CARGO_MANIFEST_DIR"),
         "testdata",
-        "db-user-INVALID.json",
+        "trust0-db-user-INVALID.json",
     ];
 
     #[test]
@@ -355,6 +357,144 @@ mod tests {
     }
 
     #[test]
+    fn inmemuserrepo_put_when_existing_role() {
+        let user_repo = InMemUserRepo::new();
+        let user_key = 1;
+        let mut user = User {
+            user_id: 1,
+            user_name: Some("uname1".to_string()),
+            password: Some("pass1".to_string()),
+            name: "user1".to_string(),
+            status: Status::Active,
+            roles: vec![60, 61],
+        };
+        user_repo
+            .users
+            .write()
+            .unwrap()
+            .insert(user_key, user.clone());
+        user.name = "user1.1".to_string();
+
+        let result = user_repo.put(user.clone());
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err)
+        }
+
+        let returned_user = result.unwrap();
+
+        let stored_map = user_repo.users.read().unwrap();
+        let stored_entry = stored_map.get(&user_key);
+
+        assert!(stored_entry.is_some());
+        assert_eq!(*stored_entry.unwrap(), user);
+        assert_eq!(returned_user, user);
+    }
+
+    #[test]
+    fn inmemuserrepo_put_when_new_role_and_given_id() {
+        let user_repo = InMemUserRepo::new();
+        let user_key = 1;
+        let user = User {
+            user_id: 1,
+            user_name: Some("uname1".to_string()),
+            password: Some("pass1".to_string()),
+            name: "user1".to_string(),
+            status: Status::Active,
+            roles: vec![60, 61],
+        };
+
+        let result = user_repo.put(user.clone());
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err)
+        }
+
+        let returned_user = result.unwrap();
+
+        let stored_map = user_repo.users.read().unwrap();
+        let stored_entry = stored_map.get(&user_key);
+
+        assert!(stored_entry.is_some());
+        assert_eq!(*stored_entry.unwrap(), user);
+        assert_eq!(returned_user, user);
+    }
+
+    #[test]
+    fn inmemuserrepo_put_when_new_role_and_not_given_id_and_empty_db() {
+        let user_repo = InMemUserRepo::new();
+        let mut user = User {
+            user_id: 0,
+            user_name: Some("unameXX".to_string()),
+            password: Some("passXX".to_string()),
+            name: "userXX".to_string(),
+            status: Status::Active,
+            roles: vec![60, 61],
+        };
+
+        let result = user_repo.put(user.clone());
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err)
+        }
+
+        let returned_user = result.unwrap();
+
+        let stored_map = user_repo.users.read().unwrap();
+        let stored_entry = stored_map.iter().map(|e| e.1).cloned().next();
+
+        user.user_id = 1;
+
+        assert!(stored_entry.is_some());
+        assert_eq!(stored_entry.unwrap(), user);
+        assert_eq!(returned_user, user);
+    }
+
+    #[test]
+    fn inmemuserrepo_put_when_new_role_and_not_given_id_and_non_empty_db() {
+        let user_repo = InMemUserRepo::new();
+        let user1 = User {
+            user_id: 1,
+            user_name: Some("uname1".to_string()),
+            password: Some("pass1".to_string()),
+            name: "user1".to_string(),
+            status: Status::Active,
+            roles: vec![60, 61],
+        };
+        let user2 = User {
+            user_id: 2,
+            user_name: Some("uname2".to_string()),
+            password: Some("pass2".to_string()),
+            name: "user2".to_string(),
+            status: Status::Active,
+            roles: vec![160, 161],
+        };
+        user_repo.users.write().unwrap().insert(60, user1.clone());
+        user_repo.users.write().unwrap().insert(61, user2.clone());
+
+        let mut user = User {
+            user_id: 0,
+            user_name: Some("unameXX".to_string()),
+            password: Some("passXX".to_string()),
+            name: "userXX".to_string(),
+            status: Status::Active,
+            roles: vec![60, 61],
+        };
+
+        let result = user_repo.put(user.clone());
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err)
+        }
+
+        let returned_user = result.unwrap();
+
+        user.user_id = 3;
+
+        assert_eq!(returned_user, user);
+    }
+
+    #[test]
     fn inmemuserrepo_get_when_invalid_user() {
         let user_repo = InMemUserRepo::new();
         let user_key = 1;
@@ -435,107 +575,6 @@ mod tests {
 
         assert!(actual_user.is_some());
         assert_eq!(actual_user.unwrap(), users[1]);
-    }
-
-    #[test]
-    fn inmemuserrepo_get_all() {
-        let user_repo = InMemUserRepo::new();
-        let user_keys = [1, 2, 3];
-        let users = [
-            User {
-                user_id: 1,
-                user_name: Some("uname1".to_string()),
-                password: Some("pass1".to_string()),
-                name: "user1".to_string(),
-                status: Status::Active,
-                roles: vec![60],
-            },
-            User {
-                user_id: 2,
-                user_name: Some("uname2".to_string()),
-                password: Some("pass2".to_string()),
-                name: "user2".to_string(),
-                status: Status::Active,
-                roles: vec![],
-            },
-            User {
-                user_id: 3,
-                user_name: Some("uname3".to_string()),
-                password: Some("pass3".to_string()),
-                name: "user3".to_string(),
-                status: Status::Inactive,
-                roles: vec![61, 62],
-            },
-        ];
-
-        user_repo
-            .users
-            .write()
-            .unwrap()
-            .insert(user_keys[0], users[0].clone());
-        user_repo
-            .users
-            .write()
-            .unwrap()
-            .insert(user_keys[1], users[1].clone());
-        user_repo
-            .users
-            .write()
-            .unwrap()
-            .insert(user_keys[2], users[2].clone());
-
-        let result = user_repo.get_all();
-
-        if let Err(err) = &result {
-            panic!("Unexpected result: err={:?}", &err)
-        }
-
-        let actual_users = result.unwrap();
-        assert_eq!(actual_users.len(), 3);
-
-        let expected_access_db_map: HashMap<i64, User> = HashMap::from([
-            (
-                1,
-                User {
-                    user_id: 1,
-                    user_name: Some("uname1".to_string()),
-                    password: Some("pass1".to_string()),
-                    name: "user1".to_string(),
-                    status: Status::Active,
-                    roles: vec![60],
-                },
-            ),
-            (
-                2,
-                User {
-                    user_id: 2,
-                    user_name: Some("uname2".to_string()),
-                    password: Some("pass2".to_string()),
-                    name: "user2".to_string(),
-                    status: Status::Active,
-                    roles: vec![],
-                },
-            ),
-            (
-                3,
-                User {
-                    user_id: 3,
-                    user_name: Some("uname3".to_string()),
-                    password: Some("pass3".to_string()),
-                    name: "user3".to_string(),
-                    status: Status::Inactive,
-                    roles: vec![61, 62],
-                },
-            ),
-        ]);
-
-        assert_eq!(
-            actual_users
-                .iter()
-                .filter(|entry| !expected_access_db_map.contains_key(&entry.user_id))
-                .count(),
-            0
-        );
     }
 
     #[test]

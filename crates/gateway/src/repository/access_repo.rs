@@ -9,8 +9,8 @@ pub trait AccessRepository: Sync + Send {
 
     /// Creates/updates a service access.
     ///
-    /// Returns a previous service access for this id or None on success, otherwise it returns an error.
-    fn put(&self, access: ServiceAccess) -> Result<Option<ServiceAccess>, AppError>;
+    /// Returns a updated service (included any new field values auto-generated), otherwise it returns an error.
+    fn put(&self, access: ServiceAccess) -> Result<ServiceAccess, AppError>;
 
     /// Gets a service access.
     ///
@@ -58,7 +58,7 @@ pub mod tests {
         pub AccessRepo {}
         impl AccessRepository for AccessRepo {
             fn connect_to_datasource(&mut self, connect_spec: &str) -> Result<(), AppError>;
-            fn put(&self, access: ServiceAccess) -> Result<Option<ServiceAccess>, AppError>;
+            fn put(&self, access: ServiceAccess) -> Result<ServiceAccess, AppError>;
             fn get(&self, service_id: i64, entity_type: &EntityType, entity_id: i64) -> Result<Option<ServiceAccess>, AppError>;
             fn get_for_user(&self, service_id: i64, user: &User) -> Result<Option<ServiceAccess>, AppError>;
             fn get_all_for_user(&self, user: &User) -> Result<Vec<ServiceAccess>, AppError>;
