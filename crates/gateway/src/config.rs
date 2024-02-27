@@ -17,9 +17,13 @@ use crate::repository::in_memory_db::access_repo::InMemAccessRepo;
 use crate::repository::in_memory_db::role_repo::InMemRoleRepo;
 use crate::repository::in_memory_db::service_repo::InMemServiceRepo;
 use crate::repository::in_memory_db::user_repo::InMemUserRepo;
+#[cfg(feature = "postgres_db")]
 use crate::repository::postgres_db::access_repo::PostgresServiceAccessRepo;
+#[cfg(feature = "postgres_db")]
 use crate::repository::postgres_db::role_repo::PostgresRoleRepo;
+#[cfg(feature = "postgres_db")]
 use crate::repository::postgres_db::service_repo::PostgresServiceRepo;
+#[cfg(feature = "postgres_db")]
 use crate::repository::postgres_db::user_repo::PostgresUserRepo;
 use crate::repository::role_repo::RoleRepository;
 use crate::repository::service_repo::ServiceRepository;
@@ -116,6 +120,7 @@ pub enum DataSource {
     InMemoryDb,
 
     /// Postgres DB accessed via repository layer using diesel ORM.
+    #[cfg(feature = "postgres_db")]
     PostgresDb,
 
     /// No DB configured, used in testing (internally empty in-memory DB structures are used)
@@ -135,6 +140,7 @@ impl DataSource {
         Box<dyn Fn() -> Arc<Mutex<dyn UserRepository>>>,
     ) {
         match self {
+            #[cfg(feature = "postgres_db")]
             DataSource::PostgresDb => (
                 Box::new(|| Arc::new(Mutex::new(PostgresServiceAccessRepo::new()))),
                 Box::new(|| Arc::new(Mutex::new(PostgresServiceRepo::new()))),
@@ -561,6 +567,7 @@ impl AppConfig {
                         db_dir.join(INMEMDB_USER_FILENAME).to_str().unwrap(),
                     )?;
                 }
+                #[cfg(feature = "postgres_db")]
                 DataSource::PostgresDb => {
                     access_repository
                         .lock()
@@ -647,6 +654,7 @@ pub mod tests {
     use once_cell::sync::Lazy;
     use std::env;
     use std::path::PathBuf;
+    #[cfg(feature = "postgres_db")]
     use trust0_common::model;
 
     const CONFIG_FILE_PATHPARTS: [&str; 3] =
@@ -768,11 +776,13 @@ pub mod tests {
         assert_eq!(format!("{}", KeyAlgorithm::Ed25519), "ed25519");
     }
 
+    #[cfg(feature = "postgres_db")]
     #[test]
     fn datasource_repository_factories_when_postgresdb() {
         _ = DataSource::PostgresDb.repository_factories();
     }
 
+    #[cfg(feature = "postgres_db")]
     #[test]
     fn datasource_repository_factories_when_not_postgresdb() {
         let (access_repo_factory, service_repo_factory, role_repo_factory, user_repo_factory) =
@@ -1062,6 +1072,7 @@ pub mod tests {
         }
     }
 
+    #[cfg(feature = "postgres_db")]
     #[test]
     fn appconfig_create_datasource_repositories_when_postgresdb_ds() {
         let repo_factories: (

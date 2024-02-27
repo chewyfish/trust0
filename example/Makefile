@@ -23,6 +23,8 @@ else
 PKI_PROVIDER=${PKI_PROVIDER_TRUST0}
 endif
 
+CARGOBUILD_GATEWAY_ARGS=
+#CARGOBUILD_GATEWAY_ARGS="--features postgres_db"
 CARGOBUILD_EXTRA_ARGS=
 EXECBIN_EXTRA_ARGS=
 
@@ -146,7 +148,7 @@ root-ca-pki: generate-root-ca-pki-resources
 gateway-server-pki: generate-gateway-pki-resources
 
 trust0-gateway: trust0-common
-	${CARGO_CMD} build --color=always --bin trust0-gateway --manifest-path ${PROJECT_DIR}/crates/gateway/Cargo.toml ${CARGOBUILD_EXTRA_ARGS}
+	${CARGO_CMD} build --color=always --bin trust0-gateway --manifest-path ${PROJECT_DIR}/crates/gateway/Cargo.toml ${CARGOBUILD_GATEWAY_ARGS} ${CARGOBUILD_EXTRA_ARGS}
 
 ifeq ($(CA_ENABLED),false)
 run-trust0-gateway: trust0-gateway

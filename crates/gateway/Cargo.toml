@@ -47,5 +47,4 @@ serial_test = "3.0.0"
 tokio-test = "0.4.3"
 
 [features]
-default = ["postgres_db"]
 postgres_db = ["diesel/postgres"]
