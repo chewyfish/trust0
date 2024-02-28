@@ -119,7 +119,7 @@ pub enum DataSource {
     /// In-memory DB, with a simple backing persistence store. Entity store connect string is file path to directory holding JSON record files.
     InMemoryDb,
 
-    /// Postgres DB accessed via repository layer using diesel ORM.
+    /// Postgres DB
     #[cfg(feature = "postgres_db")]
     PostgresDb,
 
@@ -292,8 +292,8 @@ pub struct AppConfigArgs {
     pub datasource: DataSource,
 
     /// DB entity store connect specifier string. Specification format is dependent on <DATASOURCE> type.
-    /// Format: 'in-memory-db': Directory holding JSON files named 'trust0-db-access.json', 'trust0-db-role.json', 'trust0-db-service.json', 'trust0-db-user.json'
-    ///         'postgres-db': Standard Postgres connect string specification (https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING)
+    /// For 'in-memory-db' datasource: Directory holding JSON files named 'trust0-db-access.json', 'trust0-db-role.json', 'trust0-db-service.json', 'trust0-db-user.json'
+    /// For 'postgres-db' datasource: Standard Postgres connect string specification (https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING)
     #[arg(required = false, long = "db-connect", env, verbatim_doc_comment)]
     pub db_connect: Option<String>,
 

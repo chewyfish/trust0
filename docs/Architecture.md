@@ -92,7 +92,6 @@ Here is the current list of signaling events in use:
 | Proxy Connections   | `T0C` <--> `T0G` | <p>This event is sent bidirectionally every `6 secs`. It contains the current list of service<br>proxy connections' bind address pairs (as known by the gateway (1)) for the<br>respective user session.</p><p>Each side will keep track of missing binds as a consecutive count. When that reaches `5`,<br>those corresponding missing connection(s) will be shut down.</p><p>Additionally, each side will also keep track of consecutive missing `Proxy Connections`<br>signal events. when that reaches `5`, the entire user session(control plane, service<br>proxy connections) will be shut down.</p><p>(1) - Upon TLS connection establishment an initial message, detailing the connection bind<br>addresses, is sent from the gateway to the client. This address pair will be used in<br>coordinating the active state for the respective connection. |
 | Certificate Reissue | `T0C` <--- `T0G` | <p>If the client certificate is expiring in the near future, the gateway (if CA is enabled) will<br>send a new certificate and public/private key pair via this event. The client will backup<br>the current PKI resources and save these new files (which will be used on client restart).</p><p>Refer to [Certificate Authority](#certificate-authority) for more information about its design and implementation.</p>                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
-
 The Trust0 Gateway can enable a certificate authority (CA) to send clients new certificates, when their existing certificates are expiring.
 ### Service Proxy
 
@@ -216,7 +215,7 @@ Currently, there are two supported DB implementations:
 | DB Type     | Description                                                                                                                                                                 |
 |-------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `in-memory` | DB based on JSON record files. At runtime, the system will periodically scan for file<br>changes and reload the corresponding DB with latest records from the changed file. |
-| `postgres`  | Repositories using an ORM, which connects to a Postgres DB.                                                                                                                 |
+| `postgres`  | Repositories using diesel ORM, which connects/executes queries against a Postgres DB.                                                                                       |
 
 The following sections represent a pseudo-layout for the core respository tables. Actual table layout may differ.
 
