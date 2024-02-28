@@ -65,10 +65,4 @@ diesel::joinable!(service_accesses -> services (service_id));
 diesel::joinable!(user_roles -> roles (role_id));
 diesel::joinable!(user_roles -> users (user_id));
 
-diesel::allow_tables_to_appear_in_same_query!(
-    roles,
-    service_accesses,
-    services,
-    user_roles,
-    users,
-);
+diesel::allow_tables_to_appear_in_same_query!(roles, service_accesses, services, user_roles, users,);
