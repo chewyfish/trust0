@@ -5,6 +5,8 @@ diesel::table! {
         id -> Int8,
         #[max_length = 50]
         name -> Varchar,
+        created_at -> Nullable<Timestamp>,
+        updated_at -> Nullable<Timestamp>,
     }
 }
 
@@ -14,6 +16,8 @@ diesel::table! {
         entity_type -> Varchar,
         entity_id -> Int8,
         service_id -> Int8,
+        created_at -> Nullable<Timestamp>,
+        updated_at -> Nullable<Timestamp>,
     }
 }
 
@@ -27,6 +31,8 @@ diesel::table! {
         #[max_length = 255]
         host -> Varchar,
         port -> Int4,
+        created_at -> Nullable<Timestamp>,
+        updated_at -> Nullable<Timestamp>,
     }
 }
 
@@ -34,6 +40,8 @@ diesel::table! {
     user_roles (user_id, role_id) {
         user_id -> Int8,
         role_id -> Int8,
+        created_at -> Nullable<Timestamp>,
+        updated_at -> Nullable<Timestamp>,
     }
 }
 
@@ -48,6 +56,8 @@ diesel::table! {
         user_name -> Nullable<Varchar>,
         #[max_length = 255]
         password -> Nullable<Varchar>,
+        created_at -> Nullable<Timestamp>,
+        updated_at -> Nullable<Timestamp>,
     }
 }
 

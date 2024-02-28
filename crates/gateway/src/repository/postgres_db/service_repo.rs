@@ -1,6 +1,7 @@
 use diesel::prelude::*;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 use crate::repository::postgres_db::db_conn;
 use crate::repository::postgres_db::db_schema::services::dsl::*;
@@ -23,6 +24,10 @@ pub struct Service {
     pub host: String,
     /// Service address port (used in gateway proxy connections)
     pub port: i32,
+    /// Datetime record was created
+    pub created_at: Option<SystemTime>,
+    /// Datetime record was last updated
+    pub updated_at: Option<SystemTime>,
 }
 
 impl From<model::service::Service> for Service {
@@ -36,6 +41,8 @@ impl From<model::service::Service> for Service {
             },
             host: service.host,
             port: service.port as i32,
+            created_at: None,
+            updated_at: None,
         }
     }
 }
@@ -278,6 +285,8 @@ mod tests {
             transport: "TCP".to_string(),
             host: "host200.com".to_string(),
             port: 8200,
+            created_at: None,
+            updated_at: None,
         };
         let expected_udp_service = Service {
             id: 201,
@@ -285,6 +294,8 @@ mod tests {
             transport: "UDP".to_string(),
             host: "host201.com".to_string(),
             port: 8201,
+            created_at: None,
+            updated_at: None,
         };
         assert_eq!(Service::from(model_tcp_service), expected_tcp_service);
         assert_eq!(Service::from(model_udp_service), expected_udp_service);
@@ -298,6 +309,8 @@ mod tests {
             transport: "TCP".to_string(),
             host: "host200.com".to_string(),
             port: 8200,
+            created_at: None,
+            updated_at: None,
         };
         let udp_service = Service {
             id: 201,
@@ -305,6 +318,8 @@ mod tests {
             transport: "UDP".to_string(),
             host: "host201.com".to_string(),
             port: 8201,
+            created_at: None,
+            updated_at: None,
         };
         let expected_model_tcp_service = model::service::Service {
             service_id: 200,

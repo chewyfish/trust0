@@ -21,7 +21,7 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
       - name: Setup Cache
         uses: Swatinem/rust-cache@v2
-      - name: Install postgres client (Linux)
+      - name: Install Postgres Client (Linux)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update

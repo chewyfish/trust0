@@ -1,0 +1,10 @@
+ALTER TABLE roles DROP COLUMN created_at;
+ALTER TABLE roles DROP COLUMN updated_at;
+ALTER TABLE services DROP COLUMN created_at;
+ALTER TABLE services DROP COLUMN updated_at;
+ALTER TABLE service_accesses DROP COLUMN created_at;
+ALTER TABLE service_accesses DROP COLUMN updated_at;
+ALTER TABLE users DROP COLUMN created_at;
+ALTER TABLE users DROP COLUMN updated_at;
+ALTER TABLE user_roles DROP COLUMN created_at;
+ALTER TABLE user_roles DROP COLUMN updated_at;

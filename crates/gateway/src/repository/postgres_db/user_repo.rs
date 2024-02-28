@@ -1,6 +1,7 @@
 use diesel::prelude::*;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 use crate::repository::postgres_db::db_conn;
 use crate::repository::postgres_db::db_schema::user_roles;
@@ -24,6 +25,10 @@ pub struct User {
     pub user_name: Option<String>,
     /// (optional) Password used in secondary authentication
     pub password: Option<String>,
+    /// Datetime record was created
+    pub created_at: Option<SystemTime>,
+    /// Datetime record was last updated
+    pub updated_at: Option<SystemTime>,
 }
 
 impl From<model::user::User> for User {
@@ -37,6 +42,8 @@ impl From<model::user::User> for User {
             },
             user_name: user.user_name.clone(),
             password: user.password.clone(),
+            created_at: None,
+            updated_at: None,
         }
     }
 }
@@ -366,6 +373,8 @@ mod tests {
             status: "Active".to_string(),
             user_name: Some("uname100".to_string()),
             password: Some("pass100".to_string()),
+            created_at: None,
+            updated_at: None,
         };
         let expected_user101 = User {
             id: 101,
@@ -373,6 +382,8 @@ mod tests {
             status: "Inactive".to_string(),
             user_name: None,
             password: None,
+            created_at: None,
+            updated_at: None,
         };
         assert_eq!(User::from(model_user100), expected_user100);
         assert_eq!(User::from(model_user101), expected_user101);
@@ -386,6 +397,8 @@ mod tests {
             status: "Active".to_string(),
             user_name: Some("uname100".to_string()),
             password: Some("pass100".to_string()),
+            created_at: None,
+            updated_at: None,
         };
         let user101 = User {
             id: 101,
@@ -393,6 +406,8 @@ mod tests {
             status: "Inactive".to_string(),
             user_name: None,
             password: None,
+            created_at: None,
+            updated_at: None,
         };
         let expected_model_user100 = model::user::User {
             user_id: 100,
