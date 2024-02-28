@@ -1,6 +1,7 @@
 use diesel::prelude::*;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 use crate::repository::postgres_db::db_conn;
 use crate::repository::postgres_db::db_schema::roles::dsl::*;
@@ -17,6 +18,10 @@ pub struct Role {
     pub id: i64,
     /// Friendly name for role
     pub name: String,
+    /// Datetime record was created
+    pub created_at: Option<SystemTime>,
+    /// Datetime record was last updated
+    pub updated_at: Option<SystemTime>,
 }
 
 impl From<model::role::Role> for Role {
@@ -24,6 +29,8 @@ impl From<model::role::Role> for Role {
         Self {
             id: role.role_id,
             name: role.name,
+            created_at: None,
+            updated_at: None,
         }
     }
 }
@@ -225,6 +232,8 @@ mod tests {
         let expected_role = Role {
             id: 50,
             name: "Role50.1".to_string(),
+            created_at: None,
+            updated_at: None,
         };
         assert_eq!(Role::from(model_role), expected_role);
     }
@@ -234,6 +243,8 @@ mod tests {
         let role = Role {
             id: 50,
             name: "Role50.1".to_string(),
+            created_at: None,
+            updated_at: None,
         };
         let expected_model_role = model::role::Role {
             role_id: 50,

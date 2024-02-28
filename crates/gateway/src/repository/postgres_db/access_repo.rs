@@ -2,6 +2,7 @@ use diesel::prelude::*;
 use diesel::sql_types;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 use crate::repository::access_repo::AccessRepository;
 use crate::repository::postgres_db::db_conn;
@@ -20,6 +21,10 @@ pub struct ServiceAccess {
     pub entity_type: String,
     /// Entity ID (either role ID or user ID)
     pub entity_id: i64,
+    /// Datetime record was created
+    pub created_at: Option<SystemTime>,
+    /// Datetime record was last updated
+    pub updated_at: Option<SystemTime>,
 }
 
 fn entity_type_to_string(model_entity_type: &model::access::EntityType) -> String {
@@ -36,6 +41,8 @@ impl From<model::access::ServiceAccess> for ServiceAccess {
             service_id: access.service_id,
             entity_type: entity_type_to_string(&access.entity_type),
             entity_id: access.entity_id,
+            created_at: None,
+            updated_at: None,
         }
     }
 }
@@ -308,11 +315,15 @@ mod tests {
             service_id: 200,
             entity_type: "Role".to_string(),
             entity_id: 50,
+            created_at: None,
+            updated_at: None,
         };
         let expected_access2 = ServiceAccess {
             service_id: 201,
             entity_type: "User".to_string(),
             entity_id: 100,
+            created_at: None,
+            updated_at: None,
         };
         assert_eq!(ServiceAccess::from(model_access1), expected_access1);
         assert_eq!(ServiceAccess::from(model_access2), expected_access2);
@@ -324,11 +335,15 @@ mod tests {
             service_id: 200,
             entity_type: "Role".to_string(),
             entity_id: 50,
+            created_at: None,
+            updated_at: None,
         };
         let access2 = ServiceAccess {
             service_id: 201,
             entity_type: "User".to_string(),
             entity_id: 100,
+            created_at: None,
+            updated_at: None,
         };
         let expected_model_access1 = model::access::ServiceAccess {
             service_id: 200,
