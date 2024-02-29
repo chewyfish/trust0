@@ -26,7 +26,6 @@ This is early alpha, use with care.
 * Incorporate device posture trust assessment and rules processor for security enforcement
 * Build (more) testing: integration, performance, ...
 * Strategize non-name resolution (DNS/hosts file/...) approach to handle client hostname verification for TLS-type service connections
-* Consider supporting: UDP multicast services, QUIC
 * Consider gateway-to-gateway service proxy routing (reasons of proximity, security, ...)
 * Consider gateway load-balancing, via client redirect (reasons of load, rollout deployment, ...)
 * Accommodate integration to well-known identity provider (IdP) systems/protocols for user authentication and 2FA purposes
