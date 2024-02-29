@@ -52,7 +52,6 @@ impl UserRepository for PostgresUserRepo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repository::role_repo::tests::MockRoleRepo;
     use crate::repository::user_repo::tests::MockUserRepo;
     use mockall::predicate;
     use trust0_common::model::user::Status;

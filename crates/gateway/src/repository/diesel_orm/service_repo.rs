@@ -215,6 +215,7 @@ impl ServiceRepository for DieselServiceRepo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::repository::diesel_orm::db_conn;
     use crate::repository::postgres_db;
     use serial_test::serial;
     use std::collections::HashMap;
