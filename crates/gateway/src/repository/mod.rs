@@ -1,4 +1,6 @@
 pub mod access_repo;
+#[cfg(feature = "postgres_db")]
+pub mod diesel_orm;
 pub mod in_memory_db;
 #[cfg(feature = "postgres_db")]
 pub mod postgres_db;

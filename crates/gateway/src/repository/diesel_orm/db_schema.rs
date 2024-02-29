@@ -2,7 +2,7 @@
 
 diesel::table! {
     roles (id) {
-        id -> Int8,
+        id -> Bigint,
         #[max_length = 50]
         name -> Varchar,
         created_at -> Nullable<Timestamp>,
@@ -14,8 +14,8 @@ diesel::table! {
     service_accesses (entity_type, entity_id, service_id) {
         #[max_length = 20]
         entity_type -> Varchar,
-        entity_id -> Int8,
-        service_id -> Int8,
+        entity_id -> Bigint,
+        service_id -> Bigint,
         created_at -> Nullable<Timestamp>,
         updated_at -> Nullable<Timestamp>,
     }
@@ -23,14 +23,14 @@ diesel::table! {
 
 diesel::table! {
     services (id) {
-        id -> Int8,
+        id -> Bigint,
         #[max_length = 50]
         name -> Varchar,
         #[max_length = 20]
         transport -> Varchar,
         #[max_length = 255]
         host -> Varchar,
-        port -> Int4,
+        port -> Integer,
         created_at -> Nullable<Timestamp>,
         updated_at -> Nullable<Timestamp>,
     }
@@ -38,8 +38,8 @@ diesel::table! {
 
 diesel::table! {
     user_roles (user_id, role_id) {
-        user_id -> Int8,
-        role_id -> Int8,
+        user_id -> Bigint,
+        role_id -> Bigint,
         created_at -> Nullable<Timestamp>,
         updated_at -> Nullable<Timestamp>,
     }
@@ -47,7 +47,7 @@ diesel::table! {
 
 diesel::table! {
     users (id) {
-        id -> Int8,
+        id -> Bigint,
         #[max_length = 50]
         name -> Varchar,
         #[max_length = 20]
