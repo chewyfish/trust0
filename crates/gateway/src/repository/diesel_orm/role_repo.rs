@@ -1,6 +1,9 @@
+#[cfg(not(feature = "postgres_db"))]
+use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "postgres_db")]
 use std::time::SystemTime;
 
 use crate::repository::diesel_orm::db_schema::roles::dsl::*;
@@ -11,16 +14,21 @@ use trust0_common::model;
 /// RBAC Role ORM model struct
 #[derive(Debug, AsChangeset, Identifiable, Insertable, Queryable, Selectable, PartialEq)]
 #[diesel(table_name = crate::repository::diesel_orm::db_schema::roles)]
-#[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct Role {
     /// Role ID (unique across roles)
     pub id: i64,
     /// Friendly name for role
     pub name: String,
     /// Datetime record was created
+    #[cfg(feature = "postgres_db")]
     pub created_at: Option<SystemTime>,
+    #[cfg(not(feature = "postgres_db"))]
+    pub created_at: Option<NaiveDateTime>,
     /// Datetime record was last updated
+    #[cfg(feature = "postgres_db")]
     pub updated_at: Option<SystemTime>,
+    #[cfg(not(feature = "postgres_db"))]
+    pub updated_at: Option<NaiveDateTime>,
 }
 
 impl From<model::role::Role> for Role {
@@ -88,10 +96,10 @@ impl RoleRepository for DieselRoleRepo {
         if role.role_id != 0 {
             match diesel::update(roles.filter(id.eq(role.role_id)))
                 .set((id.eq(role.role_id), name.eq(role.name.as_str())))
-                .returning(id)
-                .get_result::<i64>(self.connection.lock().unwrap().deref_mut())
+                .execute(self.connection.lock().unwrap().deref_mut())
             {
-                Ok(_) => return Ok(role),
+                Ok(rows) if rows > 0 => return Ok(role),
+                Ok(_) => {}
                 Err(diesel::NotFound) => {}
                 Err(err) => {
                     return Err(AppError::GenWithMsgAndErr(
@@ -103,14 +111,26 @@ impl RoleRepository for DieselRoleRepo {
         }
 
         let query_result = match role.role_id == 0 {
-            true => diesel::insert_into(roles)
-                .values(name.eq(role.name.as_str()))
-                .returning(id)
-                .get_result::<i64>(self.connection.lock().unwrap().deref_mut()),
+            true => {
+                #[cfg(not(feature = "postgres_db"))]
+                {
+                    diesel::insert_into(roles)
+                        .values(name.eq(role.name.as_str()))
+                        .execute(self.connection.lock().unwrap().deref_mut())
+                        .map(|_| 100_i64)
+                }
+                #[cfg(feature = "postgres_db")]
+                {
+                    diesel::insert_into(roles)
+                        .values(name.eq(role.name.as_str()))
+                        .returning(id)
+                        .get_result::<i64>(self.connection.lock().unwrap().deref_mut())
+                }
+            }
             false => diesel::insert_into(roles)
                 .values((id.eq(role.role_id), name.eq(role.name.as_str())))
-                .returning(id)
-                .get_result::<i64>(self.connection.lock().unwrap().deref_mut()),
+                .execute(self.connection.lock().unwrap().deref_mut())
+                .map(|_| role.role_id),
         };
 
         match query_result {

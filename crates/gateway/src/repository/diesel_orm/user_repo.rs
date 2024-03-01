@@ -1,6 +1,9 @@
+#[cfg(not(feature = "postgres_db"))]
+use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "postgres_db")]
 use std::time::SystemTime;
 
 use crate::repository::diesel_orm::db_schema::user_roles;
@@ -12,7 +15,6 @@ use trust0_common::model;
 /// User ORM model struct
 #[derive(Debug, AsChangeset, Identifiable, Insertable, Queryable, Selectable, PartialEq)]
 #[diesel(table_name = crate::repository::diesel_orm::db_schema::users)]
-#[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct User {
     /// User ID (unique across users)
     pub id: i64,
@@ -25,9 +27,15 @@ pub struct User {
     /// (optional) Password used in secondary authentication
     pub password: Option<String>,
     /// Datetime record was created
+    #[cfg(feature = "postgres_db")]
     pub created_at: Option<SystemTime>,
+    #[cfg(not(feature = "postgres_db"))]
+    pub created_at: Option<NaiveDateTime>,
     /// Datetime record was last updated
+    #[cfg(feature = "postgres_db")]
     pub updated_at: Option<SystemTime>,
+    #[cfg(not(feature = "postgres_db"))]
+    pub updated_at: Option<NaiveDateTime>,
 }
 
 impl From<model::user::User> for User {
@@ -75,7 +83,6 @@ impl From<&User> for model::user::User {
 #[diesel(belongs_to(crate::repository::diesel_orm::role_repo::Role))]
 #[diesel(table_name = crate::repository::diesel_orm::db_schema::user_roles)]
 #[diesel(primary_key(user_id, role_id))]
-#[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct UserRole {
     pub user_id: i64,
     pub role_id: i64,
@@ -114,13 +121,30 @@ impl DieselUserRepo {
     ///
     /// # Arguments
     ///
-    /// * `db_conn` - [`PgConnection`] object
+    /// * `db_conn` - [`Connection`] object
     /// * `user_id` - User ID
     ///
     /// # Returns
     ///
     /// A [`Result`] containing a vector of [`i64`] role IDs.
     ///
+    #[cfg(not(feature = "postgres_db"))]
+    fn get_all_user_records(
+        &self,
+        db_conn: &mut MysqlConnection,
+        user_id: i64,
+    ) -> Result<Vec<i64>, diesel::result::Error> {
+        let user_roles_list: Vec<UserRole> = user_roles::dsl::user_roles
+            .filter(user_roles::dsl::user_id.eq(user_id))
+            .select(UserRole::as_select())
+            .load(db_conn)?;
+
+        Ok(user_roles_list
+            .iter()
+            .map(|user_role| user_role.role_id)
+            .collect::<Vec<i64>>())
+    }
+    #[cfg(feature = "postgres_db")]
     fn get_all_user_records(
         &self,
         db_conn: &mut PgConnection,
@@ -141,13 +165,30 @@ impl DieselUserRepo {
     ///
     /// # Arguments
     ///
-    /// * `db_conn` - [`PgConnection`] object
+    /// * `db_conn` - [`Connection`] object
     /// * `user_id` - User ID
     ///
     /// # Returns
     ///
     /// A [`Result`] containing a boolean indicating if record was found and deleted.
     ///
+    #[cfg(not(feature = "postgres_db"))]
+    fn delete_user_roles(
+        &self,
+        db_conn: &mut MysqlConnection,
+        user_id: i64,
+    ) -> Result<bool, diesel::result::Error> {
+        match diesel::delete(
+            user_roles::dsl::user_roles.filter(user_roles::dsl::user_id.eq(user_id)),
+        )
+        .execute(db_conn)
+        {
+            Ok(_) => Ok(true),
+            Err(diesel::NotFound) => Ok(false),
+            Err(err) => Err(err),
+        }
+    }
+    #[cfg(feature = "postgres_db")]
     fn delete_user_roles(
         &self,
         db_conn: &mut PgConnection,
@@ -191,10 +232,10 @@ impl UserRepository for DieselUserRepo {
                             user_name.eq(user_entity.user_name.clone()),
                             password.eq(user_entity.password.clone()),
                         ))
-                        .returning(id)
-                        .get_result::<i64>(db_conn)
+                        .execute(db_conn)
                     {
-                        Ok(_) => upserted_user = Some(user.clone()),
+                        Ok(rows) if rows > 0 => upserted_user = Some(user.clone()),
+                        Ok(_) => {}
                         Err(diesel::NotFound) => {}
                         Err(err) => return Err(err),
                     }
@@ -203,15 +244,32 @@ impl UserRepository for DieselUserRepo {
                 // Insert user record
                 if upserted_user.is_none() {
                     let query_result = match user_entity.id == 0 {
-                        true => diesel::insert_into(users)
-                            .values((
-                                name.eq(user_entity.name.as_str()),
-                                status.eq(user_entity.status.as_str()),
-                                user_name.eq(user_entity.user_name.clone()),
-                                password.eq(user_entity.password.clone()),
-                            ))
-                            .returning(id)
-                            .get_result::<i64>(db_conn),
+                        true => {
+                            #[cfg(not(feature = "postgres_db"))]
+                            {
+                                diesel::insert_into(users)
+                                    .values((
+                                        name.eq(user_entity.name.as_str()),
+                                        status.eq(user_entity.status.as_str()),
+                                        user_name.eq(user_entity.user_name.clone()),
+                                        password.eq(user_entity.password.clone()),
+                                    ))
+                                    .execute(db_conn)
+                                    .map(|_| 100_i64)
+                            }
+                            #[cfg(feature = "postgres_db")]
+                            {
+                                diesel::insert_into(users)
+                                    .values((
+                                        name.eq(user_entity.name.as_str()),
+                                        status.eq(user_entity.status.as_str()),
+                                        user_name.eq(user_entity.user_name.clone()),
+                                        password.eq(user_entity.password.clone()),
+                                    ))
+                                    .returning(id)
+                                    .get_result::<i64>(db_conn)
+                            }
+                        }
                         false => diesel::insert_into(users)
                             .values((
                                 id.eq(user_entity.id),
@@ -220,8 +278,8 @@ impl UserRepository for DieselUserRepo {
                                 user_name.eq(user_entity.user_name.clone()),
                                 password.eq(user_entity.password.clone()),
                             ))
-                            .returning(id)
-                            .get_result::<i64>(db_conn),
+                            .execute(db_conn)
+                            .map(|_| user_entity.id),
                     };
 
                     match query_result {
@@ -247,8 +305,7 @@ impl UserRepository for DieselUserRepo {
                             user_roles::dsl::user_id.eq(upserted_user.as_ref().unwrap().user_id),
                             user_roles::dsl::role_id.eq(user_role),
                         ))
-                        .returning(UserRole::as_returning())
-                        .get_result(db_conn)?;
+                        .execute(db_conn)?;
                 }
 
                 upserted_user.as_mut().unwrap().roles = user_roles;

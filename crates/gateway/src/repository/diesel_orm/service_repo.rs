@@ -1,6 +1,9 @@
+#[cfg(not(feature = "postgres_db"))]
+use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "postgres_db")]
 use std::time::SystemTime;
 
 use crate::repository::diesel_orm::db_schema::services::dsl::*;
@@ -11,7 +14,6 @@ use trust0_common::model;
 /// Service ORM model struct
 #[derive(Debug, AsChangeset, Identifiable, Insertable, Queryable, Selectable, PartialEq)]
 #[diesel(table_name = crate::repository::diesel_orm::db_schema::services)]
-#[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct Service {
     /// Service ID (unique across services)
     pub id: i64,
@@ -24,9 +26,15 @@ pub struct Service {
     /// Service address port (used in gateway proxy connections)
     pub port: i32,
     /// Datetime record was created
+    #[cfg(feature = "postgres_db")]
     pub created_at: Option<SystemTime>,
+    #[cfg(not(feature = "postgres_db"))]
+    pub created_at: Option<NaiveDateTime>,
     /// Datetime record was last updated
+    #[cfg(feature = "postgres_db")]
     pub updated_at: Option<SystemTime>,
+    #[cfg(not(feature = "postgres_db"))]
+    pub updated_at: Option<NaiveDateTime>,
 }
 
 impl From<model::service::Service> for Service {
@@ -114,10 +122,10 @@ impl ServiceRepository for DieselServiceRepo {
                     host.eq(service_entity.host.as_str()),
                     port.eq(service_entity.port),
                 ))
-                .returning(id)
-                .get_result::<i64>(self.connection.lock().unwrap().deref_mut())
+                .execute(self.connection.lock().unwrap().deref_mut())
             {
-                Ok(_) => return Ok(service),
+                Ok(rows) if rows > 0 => return Ok(service),
+                Ok(_) => {}
                 Err(diesel::NotFound) => {}
                 Err(err) => {
                     return Err(AppError::GenWithMsgAndErr(
@@ -129,15 +137,32 @@ impl ServiceRepository for DieselServiceRepo {
         }
 
         let query_result = match service_entity.id == 0 {
-            true => diesel::insert_into(services)
-                .values((
-                    name.eq(service_entity.name.as_str()),
-                    transport.eq(service_entity.transport.as_str()),
-                    host.eq(service_entity.host.as_str()),
-                    port.eq(service_entity.port),
-                ))
-                .returning(id)
-                .get_result::<i64>(self.connection.lock().unwrap().deref_mut()),
+            true => {
+                #[cfg(not(feature = "postgres_db"))]
+                {
+                    diesel::insert_into(services)
+                        .values((
+                            name.eq(service_entity.name.as_str()),
+                            transport.eq(service_entity.transport.as_str()),
+                            host.eq(service_entity.host.as_str()),
+                            port.eq(service_entity.port),
+                        ))
+                        .execute(self.connection.lock().unwrap().deref_mut())
+                        .map(|_| 100_i64)
+                }
+                #[cfg(feature = "postgres_db")]
+                {
+                    diesel::insert_into(services)
+                        .values((
+                            name.eq(service_entity.name.as_str()),
+                            transport.eq(service_entity.transport.as_str()),
+                            host.eq(service_entity.host.as_str()),
+                            port.eq(service_entity.port),
+                        ))
+                        .returning(id)
+                        .get_result::<i64>(self.connection.lock().unwrap().deref_mut())
+                }
+            }
             false => diesel::insert_into(services)
                 .values((
                     id.eq(service_entity.id),
@@ -146,8 +171,8 @@ impl ServiceRepository for DieselServiceRepo {
                     host.eq(service_entity.host.as_str()),
                     port.eq(service_entity.port),
                 ))
-                .returning(id)
-                .get_result::<i64>(self.connection.lock().unwrap().deref_mut()),
+                .execute(self.connection.lock().unwrap().deref_mut())
+                .map(|_| service_entity.id),
         };
 
         match query_result {

@@ -17,6 +17,14 @@ use crate::repository::in_memory_db::access_repo::InMemAccessRepo;
 use crate::repository::in_memory_db::role_repo::InMemRoleRepo;
 use crate::repository::in_memory_db::service_repo::InMemServiceRepo;
 use crate::repository::in_memory_db::user_repo::InMemUserRepo;
+#[cfg(feature = "mysql_db")]
+use crate::repository::mysql_db::access_repo::MysqlServiceAccessRepo;
+#[cfg(feature = "mysql_db")]
+use crate::repository::mysql_db::role_repo::MysqlRoleRepo;
+#[cfg(feature = "mysql_db")]
+use crate::repository::mysql_db::service_repo::MysqlServiceRepo;
+#[cfg(feature = "mysql_db")]
+use crate::repository::mysql_db::user_repo::MysqlUserRepo;
 #[cfg(feature = "postgres_db")]
 use crate::repository::postgres_db::access_repo::PostgresServiceAccessRepo;
 #[cfg(feature = "postgres_db")]
@@ -119,6 +127,10 @@ pub enum DataSource {
     /// In-memory DB, with a simple backing persistence store. Entity store connect string is file path to directory holding JSON record files.
     InMemoryDb,
 
+    /// MySQL DB
+    #[cfg(feature = "mysql_db")]
+    MysqlDb,
+
     /// Postgres DB
     #[cfg(feature = "postgres_db")]
     PostgresDb,
@@ -140,6 +152,13 @@ impl DataSource {
         Box<dyn Fn() -> Arc<Mutex<dyn UserRepository>>>,
     ) {
         match self {
+            #[cfg(feature = "mysql_db")]
+            DataSource::MysqlDb => (
+                Box::new(|| Arc::new(Mutex::new(MysqlServiceAccessRepo::new()))),
+                Box::new(|| Arc::new(Mutex::new(MysqlServiceRepo::new()))),
+                Box::new(|| Arc::new(Mutex::new(MysqlRoleRepo::new()))),
+                Box::new(|| Arc::new(Mutex::new(MysqlUserRepo::new()))),
+            ),
             #[cfg(feature = "postgres_db")]
             DataSource::PostgresDb => (
                 Box::new(|| Arc::new(Mutex::new(PostgresServiceAccessRepo::new()))),
@@ -293,7 +312,8 @@ pub struct AppConfigArgs {
 
     /// DB entity store connect specifier string. Specification format is dependent on <DATASOURCE> type.
     /// For 'in-memory-db' datasource: Directory holding JSON files named 'trust0-db-access.json', 'trust0-db-role.json', 'trust0-db-service.json', 'trust0-db-user.json'
-    /// For 'postgres-db' datasource: Standard Postgres connect string specification (https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING)
+    /// For 'mysql-db' datasource: Connection URL detailed in diesel documentation - https://docs.rs/diesel/2.1.4/diesel/mysql/struct.MysqlConnection.html
+    /// For 'postgres-db' datasource: Standard Postgres connect string specification - https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
     #[arg(required = false, long = "db-connect", env, verbatim_doc_comment)]
     pub db_connect: Option<String>,
 
@@ -566,6 +586,25 @@ impl AppConfig {
                     user_repository.lock().unwrap().connect_to_datasource(
                         db_dir.join(INMEMDB_USER_FILENAME).to_str().unwrap(),
                     )?;
+                }
+                #[cfg(feature = "mysql_db")]
+                DataSource::MysqlDb => {
+                    access_repository
+                        .lock()
+                        .unwrap()
+                        .connect_to_datasource(db_connect_str)?;
+                    role_repository
+                        .lock()
+                        .unwrap()
+                        .connect_to_datasource(db_connect_str)?;
+                    service_repository
+                        .lock()
+                        .unwrap()
+                        .connect_to_datasource(db_connect_str)?;
+                    user_repository
+                        .lock()
+                        .unwrap()
+                        .connect_to_datasource(db_connect_str)?;
                 }
                 #[cfg(feature = "postgres_db")]
                 DataSource::PostgresDb => {

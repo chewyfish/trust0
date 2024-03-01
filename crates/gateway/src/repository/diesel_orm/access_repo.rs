@@ -1,7 +1,10 @@
+#[cfg(not(feature = "postgres_db"))]
+use chrono::NaiveDateTime;
 use diesel::prelude::*;
 use diesel::sql_types;
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
+#[cfg(feature = "postgres_db")]
 use std::time::SystemTime;
 
 use crate::repository::access_repo::AccessRepository;
@@ -12,18 +15,23 @@ use trust0_common::model;
 /// Service access ORM model struct
 #[derive(Clone, Debug, AsChangeset, Insertable, Queryable, Selectable, PartialEq)]
 #[diesel(table_name = crate::repository::diesel_orm::db_schema::service_accesses)]
-#[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct ServiceAccess {
-    /// Service ID (unique across services)
-    pub service_id: i64,
     /// RBAC entity type
     pub entity_type: String,
     /// Entity ID (either role ID or user ID)
     pub entity_id: i64,
+    /// Service ID (unique across services)
+    pub service_id: i64,
     /// Datetime record was created
+    #[cfg(feature = "postgres_db")]
     pub created_at: Option<SystemTime>,
+    #[cfg(not(feature = "postgres_db"))]
+    pub created_at: Option<NaiveDateTime>,
     /// Datetime record was last updated
+    #[cfg(feature = "postgres_db")]
     pub updated_at: Option<SystemTime>,
+    #[cfg(not(feature = "postgres_db"))]
+    pub updated_at: Option<NaiveDateTime>,
 }
 
 fn entity_type_to_string(model_entity_type: &model::access::EntityType) -> String {
@@ -37,9 +45,9 @@ fn entity_type_to_string(model_entity_type: &model::access::EntityType) -> Strin
 impl From<model::access::ServiceAccess> for ServiceAccess {
     fn from(access: model::access::ServiceAccess) -> Self {
         Self {
-            service_id: access.service_id,
             entity_type: entity_type_to_string(&access.entity_type),
             entity_id: access.entity_id,
+            service_id: access.service_id,
             created_at: None,
             updated_at: None,
         }
@@ -110,20 +118,24 @@ impl AccessRepository for DieselServiceAccessRepo {
         // Delete (if necess)
         _ = self.delete(access.service_id, &access.entity_type, access.entity_id)?;
 
-        // Insert
-        diesel::insert_into(dsl::service_accesses)
+        match diesel::insert_into(dsl::service_accesses)
             .values((
                 dsl::service_id.eq(access_entity.service_id),
                 dsl::entity_type.eq(access_entity.entity_type.as_str()),
                 dsl::entity_id.eq(access_entity.entity_id),
             ))
-            .returning(ServiceAccess::as_returning())
-            .get_result::<ServiceAccess>(self.connection.lock().unwrap().deref_mut())
-            .map_err(|err| {
-                AppError::GenWithMsgAndErr("Error putting ServiceAccess".to_string(), Box::new(err))
-            })?;
-
-        Ok(access)
+            .execute(self.connection.lock().unwrap().deref_mut())
+        {
+            Ok(rows) if rows > 0 => Ok(access),
+            Ok(_) => Err(AppError::General(format!(
+                "Error putting ServiceAccess: val={:?}",
+                &access
+            ))),
+            Err(err) => Err(AppError::GenWithMsgAndErr(
+                "Error putting ServiceAccess".to_string(),
+                Box::new(err),
+            )),
+        }
     }
 
     fn get(
@@ -302,16 +314,16 @@ mod tests {
             entity_id: 100,
         };
         let expected_access1 = ServiceAccess {
-            service_id: 200,
             entity_type: "Role".to_string(),
             entity_id: 50,
+            service_id: 200,
             created_at: None,
             updated_at: None,
         };
         let expected_access2 = ServiceAccess {
-            service_id: 201,
             entity_type: "User".to_string(),
             entity_id: 100,
+            service_id: 201,
             created_at: None,
             updated_at: None,
         };
@@ -322,16 +334,16 @@ mod tests {
     #[test]
     fn diselaccessrepo_access_to_model() {
         let access1 = ServiceAccess {
-            service_id: 200,
             entity_type: "Role".to_string(),
             entity_id: 50,
+            service_id: 200,
             created_at: None,
             updated_at: None,
         };
         let access2 = ServiceAccess {
-            service_id: 201,
             entity_type: "User".to_string(),
             entity_id: 100,
+            service_id: 201,
             created_at: None,
             updated_at: None,
         };
