@@ -1,4 +1,6 @@
+use std::collections::VecDeque;
 use std::io::{self, BufRead, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 
@@ -31,7 +33,10 @@ pub fn write_shell_prompt(include_welcome: bool) -> Result<(), AppError> {
 
 /// Handles REPL shell's output
 pub struct ShellOutputWriter {
+    /// A [`Write`] object used to send output
     writer: Option<Box<dyn Write + Send>>,
+    /// Prompt displayed toggle
+    prompted_toggle: Arc<AtomicBool>,
 }
 
 impl ShellOutputWriter {
@@ -46,10 +51,32 @@ impl ShellOutputWriter {
     /// A newly constructed [`ShellOutputWriter`] object.
     ///
     pub fn new(writer: Option<Box<dyn Write + Send>>) -> Self {
-        Self { writer }
+        Self {
+            writer,
+            prompted_toggle: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// Shell prompt status toggler accessor
+    ///
+    /// # Returns
+    ///
+    /// [`AtomicBool`] for prompted status toggler
+    ///
+    pub fn prompted_toggle(&self) -> &Arc<AtomicBool> {
+        &self.prompted_toggle
     }
 
     /// print REPL shell prompt to STDOUT
+    ///
+    /// # Arguments
+    ///
+    /// * `include_welcome` - Indicates whether to additionally show the application welcome message
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success/failure for the write operation.
+    ///
     pub fn write_shell_prompt(&mut self, include_welcome: bool) -> Result<(), AppError> {
         let mut stdout_writer: Box<dyn Write + Send> = Box::new(io::stdout());
         let writer = self.writer.as_mut().unwrap_or(&mut stdout_writer);
@@ -76,7 +103,11 @@ impl ShellOutputWriter {
         })?;
         writer.flush().map_err(|err| {
             AppError::GenWithMsgAndErr("Error flushing STDOUT".to_string(), Box::new(err))
-        })
+        })?;
+
+        self.prompted_toggle.store(true, Ordering::SeqCst);
+
+        Ok(())
     }
 }
 
@@ -96,25 +127,39 @@ impl Write for ShellOutputWriter {
 
 /// Handles REPL shell's input
 pub struct ShellInputReader {
+    /// Indicates whether the next input read from the TTY should not be echoed back
     disable_tty_echo: Arc<Mutex<bool>>,
+    /// Channel sender for incoming TTY text lines
     channel_send: Sender<io::Result<String>>,
+    /// Channel receiver for incoming TTY text lines
     channel_recv: Receiver<io::Result<String>>,
+    /// Initial input lines to use upon shell readiness
+    initial_lines: VecDeque<String>,
+    /// Prompt displayed toggle
+    prompted_toggle: Arc<AtomicBool>,
 }
 
 impl ShellInputReader {
-    /// ThreadedStdin constructor
+    /// ShellInputReader constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `initial_lines` - A vector of initial input lines to use upon shell readiness
+    /// * `prompted_toggle` - Shell output prompt toggler
     ///
     /// # Returns
     ///
     /// A newly constructed [`ShellInputReader`] object.
     ///
-    pub fn new() -> Self {
+    pub fn new(initial_lines: &[String], prompted_toggle: &Arc<AtomicBool>) -> Self {
         let (send, recv) = mpsc::channel();
 
         ShellInputReader {
             disable_tty_echo: Arc::new(Mutex::new(false)),
             channel_send: send,
             channel_recv: recv,
+            initial_lines: VecDeque::from(initial_lines.to_vec()),
+            prompted_toggle: prompted_toggle.clone(),
         }
     }
 
@@ -183,6 +228,20 @@ impl InputTextStreamConnector for ShellInputReader {
     }
 
     fn next_line(&mut self) -> Result<Option<String>, AppError> {
+        // Prefer initial lines over STDIN (when shell is ready for next input)
+        if !self.initial_lines.is_empty()
+            && self
+                .prompted_toggle
+                .compare_exchange(true, false, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+        {
+            return Ok(Some(format!(
+                "{}\n",
+                self.initial_lines.pop_front().unwrap()
+            )));
+        }
+
+        // Return queued input line (if avail)
         match self.channel_recv.try_recv() {
             Ok(result) => match result {
                 Ok(line) => Ok(Some(format!("{line}\n"))),
@@ -263,6 +322,19 @@ pub mod tests {
     // =====
 
     #[test]
+    fn shellout_new() {
+        let shell_output = ShellOutputWriter::new(Some(Box::new(ShellOutputWriter::new(Some(
+            Box::new(ChannelWriter {
+                channel_sender: mpsc::channel().0,
+            }),
+        )))));
+
+        assert!(shell_output.writer.is_some());
+        assert!(!shell_output.prompted_toggle.load(Ordering::SeqCst));
+        assert!(!shell_output.prompted_toggle().load(Ordering::SeqCst));
+    }
+
+    #[test]
     fn shellout_write_shell_prompt_with_welcome() {
         let expected_output = format!(
             "{} v{} {}\n{}",
@@ -277,6 +349,7 @@ pub mod tests {
 
         let mut shell_output = ShellOutputWriter {
             writer: Some(Box::new(channel_writer)),
+            prompted_toggle: Arc::new(AtomicBool::new(false)),
         };
 
         if let Err(err) = shell_output.write_shell_prompt(true) {
@@ -297,6 +370,7 @@ pub mod tests {
         }
 
         assert_eq!(output_data, expected_output);
+        assert!(shell_output.prompted_toggle.load(Ordering::SeqCst))
     }
 
     #[test]
@@ -311,11 +385,14 @@ pub mod tests {
 
         let mut shell_output = ShellOutputWriter {
             writer: Some(Box::new(shell_writer)),
+            prompted_toggle: Arc::new(AtomicBool::new(false)),
         };
 
         if shell_output.write_shell_prompt(true).is_ok() {
             panic!("Unexpected successful result");
         }
+
+        assert!(!shell_output.prompted_toggle.load(Ordering::SeqCst))
     }
 
     #[test]
@@ -336,11 +413,14 @@ pub mod tests {
 
         let mut shell_output = ShellOutputWriter {
             writer: Some(Box::new(shell_writer)),
+            prompted_toggle: Arc::new(AtomicBool::new(false)),
         };
 
         if shell_output.write_shell_prompt(true).is_ok() {
             panic!("Unexpected successful result");
         }
+
+        assert!(!shell_output.prompted_toggle.load(Ordering::SeqCst))
     }
 
     #[test]
@@ -358,11 +438,14 @@ pub mod tests {
 
         let mut shell_output = ShellOutputWriter {
             writer: Some(Box::new(shell_writer)),
+            prompted_toggle: Arc::new(AtomicBool::new(false)),
         };
 
         if shell_output.write_shell_prompt(true).is_ok() {
             panic!("Unexpected successful result");
         }
+
+        assert!(!shell_output.prompted_toggle.load(Ordering::SeqCst))
     }
 
     #[test]
@@ -376,6 +459,7 @@ pub mod tests {
 
         let mut shell_output = ShellOutputWriter {
             writer: Some(Box::new(channel_writer)),
+            prompted_toggle: Arc::new(AtomicBool::new(false)),
         };
 
         if let Err(err) = shell_output.write_shell_prompt(false) {
@@ -389,14 +473,21 @@ pub mod tests {
         }
 
         assert_eq!(output_result.unwrap(), expected_output);
+        assert!(shell_output.prompted_toggle.load(Ordering::SeqCst))
     }
 
     #[test]
     fn shellinp_new() {
-        let input_reader = ShellInputReader::new();
+        let prompted_toggle = Arc::new(AtomicBool::new(true));
+        let initial_lines = vec!["line1".to_string(), "line2".to_string()];
+
+        let input_reader = ShellInputReader::new(initial_lines.as_slice(), &prompted_toggle);
 
         let disable_tty_echo = input_reader.clone_disable_tty_echo();
         assert!(!*disable_tty_echo.lock().unwrap());
+
+        assert!(input_reader.prompted_toggle.as_ref().load(Ordering::SeqCst));
+        assert_eq!(input_reader.initial_lines, VecDeque::from(initial_lines));
 
         let channel_sender = input_reader.clone_channel_sender();
         let channel_receiver = &input_reader.channel_recv;
@@ -510,10 +601,13 @@ pub mod tests {
 
     #[test]
     fn shellinp_next_line_when_no_lines() {
-        let mut threaded_stdin = ShellInputReader::new();
+        let prompted_toggle = Arc::new(AtomicBool::new(true));
+        let initial_lines = vec![];
+
+        let mut input_reader = ShellInputReader::new(initial_lines.as_slice(), &prompted_toggle);
 
         loop {
-            match threaded_stdin.next_line() {
+            match input_reader.next_line() {
                 Ok(line) => match line {
                     Some(line_val) => panic!("Unexpected line received: line={}", &line_val),
                     None => break,
@@ -525,16 +619,18 @@ pub mod tests {
 
     #[test]
     fn shellinp_next_line_when_2_lines() {
-        let mut threaded_stdin = ShellInputReader::new();
+        let prompted_toggle = Arc::new(AtomicBool::new(true));
+        let initial_lines = vec![];
 
-        let line_channel_sender = threaded_stdin.clone_channel_sender();
+        let mut input_reader = ShellInputReader::new(initial_lines.as_slice(), &prompted_toggle);
 
+        let line_channel_sender = input_reader.clone_channel_sender();
         line_channel_sender.send(Ok("line1".to_string())).unwrap();
         line_channel_sender.send(Ok("line2".to_string())).unwrap();
 
         let mut recvd_lines = vec![];
         loop {
-            match threaded_stdin.next_line() {
+            match input_reader.next_line() {
                 Ok(line) => match line {
                     Some(line_val) => {
                         if recvd_lines.len() == 2 {
@@ -556,16 +652,71 @@ pub mod tests {
     }
 
     #[test]
+    fn shellinp_next_line_when_interleaved_initial_and_channel_lines() {
+        let prompted_toggle = Arc::new(AtomicBool::new(false));
+        let initial_lines = vec!["init_line1".to_string(), "init_line2".to_string()];
+
+        let mut input_reader = ShellInputReader::new(initial_lines.as_slice(), &prompted_toggle);
+
+        let line_channel_sender = input_reader.clone_channel_sender();
+        line_channel_sender
+            .send(Ok("chan_line1".to_string()))
+            .unwrap();
+        line_channel_sender
+            .send(Ok("chan_line2".to_string()))
+            .unwrap();
+
+        let mut recvd_lines = vec![];
+        loop {
+            if (recvd_lines.len() % 2) == 0 {
+                prompted_toggle.store(true, Ordering::SeqCst);
+            } else {
+                assert!(!prompted_toggle.load(Ordering::SeqCst));
+            }
+
+            match input_reader.next_line() {
+                Ok(line) => match line {
+                    Some(line_val) => {
+                        if recvd_lines.len() == 4 {
+                            panic!(
+                                "Unexpected 5th line received: recvd={:?}, line={}",
+                                &recvd_lines, &line_val
+                            )
+                        } else {
+                            recvd_lines.push(line_val);
+                        }
+                    }
+                    None => break,
+                },
+                Err(err) => panic!("Unexpected next line result: err={:?}", &err),
+            }
+        }
+
+        assert_eq!(recvd_lines.len(), 4);
+        assert_eq!(
+            recvd_lines,
+            vec![
+                "init_line1\n".to_string(),
+                "chan_line1\n".to_string(),
+                "init_line2\n".to_string(),
+                "chan_line2\n".to_string()
+            ]
+        );
+    }
+
+    #[test]
     fn shellinp_next_line_when_io_error_line() {
-        let mut threaded_stdin = ShellInputReader::new();
+        let prompted_toggle = Arc::new(AtomicBool::new(true));
+        let initial_lines = vec![];
 
-        let line_channel_sender = threaded_stdin.clone_channel_sender();
+        let mut input_reader = ShellInputReader::new(initial_lines.as_slice(), &prompted_toggle);
 
+        let line_channel_sender = input_reader.clone_channel_sender();
         line_channel_sender
             .send(Err(io::Error::from(io::ErrorKind::UnexpectedEof)))
             .unwrap();
 
-        match threaded_stdin.next_line() {
+        match input_reader.next_line() {
             Ok(line) => panic!("Unexpected successful received line: line={:?}", &line),
             Err(_) => {}
         }

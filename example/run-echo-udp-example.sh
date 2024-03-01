@@ -18,10 +18,14 @@ source "${EXAMPLE_DIR}"/run-configure.sh
 
 ARG1=${1:-}
 if [ "$ARG1" == "verbose" ]; then
+  #GATEWAY_BIN_ARGS="--verbose --no-mask-addrs --mfa-scheme scram-sha256"
   GATEWAY_BIN_ARGS="--verbose --no-mask-addrs"
+  #CLIENT_BIN_ARGS="--script-file '${EXAMPLE_DIR}/cmdscript-echo-udp.txt' --verbose"
   CLIENT_BIN_ARGS="--verbose"
 else
+  #GATEWAY_BIN_ARGS="--no-mask-addrs --mfa-scheme scram-sha256"
   GATEWAY_BIN_ARGS="--no-mask-addrs"
+  #CLIENT_BIN_ARGS="--script-file '${EXAMPLE_DIR}/cmdscript-echo-udp.txt'"
   CLIENT_BIN_ARGS=""
 fi
 

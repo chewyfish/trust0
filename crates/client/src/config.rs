@@ -9,6 +9,7 @@ use crate::console::ShellOutputWriter;
 use trust0_common::crypto::file::{load_certificates, load_private_key};
 use trust0_common::distro::AppInstallFile;
 use trust0_common::error::AppError;
+use trust0_common::file;
 
 /// Connects to the Trust0 gateway server at HOSTNAME:PORT (default PORT is 443).
 /// An control plane REPL shell allows service proxies to be opened (among other features).
@@ -72,6 +73,10 @@ pub struct AppConfigArgs {
     #[arg(required = false, long = "insecure", env)]
     pub insecure: bool,
 
+    /// Command lines script file to initially execute
+    #[arg(required = false, short = 's', long = "script-file", env)]
+    pub script_file: Option<String>,
+
     /// Enable verbose logging
     #[arg(required = false, long = "verbose", env)]
     pub verbose: bool,
@@ -88,6 +93,7 @@ pub struct AppConfig {
     pub tls_client_config: rustls::ClientConfig,
     pub verbose_logging: bool,
     pub console_shell_output: Arc<Mutex<ShellOutputWriter>>,
+    pub command_script_lines: Vec<String>,
 }
 
 impl AppConfig {
@@ -109,6 +115,16 @@ impl AppConfig {
 
         // Parse process arguments
         let config_args = Self::parse_config();
+
+        // Parse script file (if given)
+        let command_script_lines = match config_args.script_file {
+            Some(filepath) => file::load_text_data(&filepath)?
+                .as_str()
+                .lines()
+                .map(|l| l.to_string())
+                .collect(),
+            None => Vec::new(),
+        };
 
         // Create TLS client configuration
         let auth_certs = load_certificates(&config_args.auth_cert_file)?;
@@ -163,6 +179,7 @@ impl AppConfig {
             tls_client_config,
             verbose_logging: config_args.verbose,
             console_shell_output: Arc::new(Mutex::new(ShellOutputWriter::new(None))),
+            command_script_lines,
         })
     }
 
@@ -261,6 +278,8 @@ pub mod tests {
         "testdata",
         "client-uid100.key.pem",
     ];
+    const COMMAND_SCRIPT_FILE_PATHPARTS: [&str; 3] =
+        [env!("CARGO_MANIFEST_DIR"), "testdata", "command-script.txt"];
 
     pub static TEST_MUTEX: Lazy<Arc<Mutex<bool>>> = Lazy::new(|| Arc::new(Mutex::new(true)));
 
@@ -313,6 +332,7 @@ pub mod tests {
             tls_client_config,
             verbose_logging: false,
             console_shell_output: Arc::new(Mutex::new(shell_output_writer)),
+            command_script_lines: Vec::new(),
         })
     }
 
@@ -328,6 +348,7 @@ pub mod tests {
         env::remove_var("CIPHER_SUITE");
         env::remove_var("MAX_FRAG_SIZE");
         env::remove_var("INSECURE");
+        env::remove_var("SCRIPT_FILE");
         env::remove_var("VERBOSE")
     }
 
@@ -342,6 +363,8 @@ pub mod tests {
         let client_key_file_str = client_key_file.to_str().unwrap();
         let client_cert_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let client_cert_file_str = client_cert_file.to_str().unwrap();
+        let command_script_file: PathBuf = COMMAND_SCRIPT_FILE_PATHPARTS.iter().collect();
+        let command_script_file_str = command_script_file.to_str().unwrap();
         let result;
         {
             let mutex = TEST_MUTEX.clone();
@@ -357,6 +380,7 @@ pub mod tests {
             env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
             env::set_var("MAX_FRAG_SIZE", "1024");
             env::set_var("INSECURE", "true");
+            env::set_var("SCRIPT_FILE", command_script_file_str);
             env::set_var("VERBOSE", "true");
 
             result = AppConfig::new();
@@ -382,6 +406,10 @@ pub mod tests {
         );
         assert!(config.tls_client_config.max_fragment_size.is_some());
         assert_eq!(config.tls_client_config.max_fragment_size.unwrap(), 1024);
+        assert_eq!(
+            config.command_script_lines,
+            vec!["command1".to_string(), "command2".to_string()]
+        );
         assert!(config.verbose_logging);
     }
 
@@ -434,6 +462,7 @@ pub mod tests {
         );
         assert!(config.tls_client_config.max_fragment_size.is_some());
         assert_eq!(config.tls_client_config.max_fragment_size.unwrap(), 128);
+        assert!(config.command_script_lines.is_empty());
         assert!(config.verbose_logging);
     }
 

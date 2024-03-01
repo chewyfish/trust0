@@ -117,12 +117,14 @@ Options:
 
       --datasource <DATASOURCE>
           DB datasource type
-          
+
           [env: DATASOURCE=]
           [default: in-memory-db]
 
           Possible values:
           - in-memory-db: In-memory DB, with a simple backing persistence store. Entity store connect string is file path to directory holding JSON record files
+          - mysql-db:     MySQL DB (only shown when gateway built with 'mysql-db' feature)
+          - postgres-db:  Postgres DB (only shown when gateway built with 'postgres-db' feature)
           - no-db:        No DB configured, used in testing (internally empty in-memory DB structures are used)
 
       --db-connect <DB_CONNECT>
@@ -244,6 +246,11 @@ Options:
           Disable certificate verification
           
           [env: INSECURE=false]
+
+  -s, --script-file <SCRIPT_FILE>
+          Command lines script file to initially execute
+          
+          [env: SCRIPT_FILE=]
 
       --verbose
           Enable verbose logging

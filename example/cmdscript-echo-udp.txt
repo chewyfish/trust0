@@ -1,0 +1,3 @@
+login
+start -s echo-udp -p 8601
+proxies
