@@ -4,6 +4,7 @@ use std::borrow::Borrow;
 use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 use std::rc::Rc;
+use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 use std::time::Duration;
 use trust0_common::authn::authenticator::{AuthenticatorClient, AuthnMessage, AuthnType};
@@ -79,7 +80,15 @@ impl ManagementController {
         service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
         message_outbox: &Arc<Mutex<VecDeque<Vec<u8>>>>,
     ) -> Self {
-        let (stdin_connector, tty_echo_disabler) = Self::create_console_input_reader();
+        let (stdin_connector, tty_echo_disabler) = Self::create_console_input_reader(
+            app_config.command_script_lines.as_slice(),
+            app_config
+                .console_shell_output
+                .lock()
+                .unwrap()
+                .prompted_toggle(),
+        );
+
         Self {
             service_mgr: service_mgr.clone(),
             event_channel_sender: None,
@@ -96,19 +105,30 @@ impl ManagementController {
 
     /// Creates the input reader. Will spawn thread to handle queueing input.
     ///
+    /// # Arguments
+    ///
+    /// * `command_script_lines` - Initial command lines to execute
+    /// * `prompted_toggle` - Shell output prompt toggler
+    ///
     /// # Returns
     ///
     /// A tuple containing the [`InputTextStreamConnector`] and the TTY echo disabler
     ///
     #[cfg(not(test))]
-    fn create_console_input_reader() -> (Box<dyn InputTextStreamConnector>, Arc<Mutex<bool>>) {
-        let stdin_connector = ShellInputReader::new();
+    fn create_console_input_reader(
+        command_script_lines: &[String],
+        prompted_toggle: &Arc<AtomicBool>,
+    ) -> (Box<dyn InputTextStreamConnector>, Arc<Mutex<bool>>) {
+        let stdin_connector = ShellInputReader::new(command_script_lines, prompted_toggle);
         stdin_connector.spawn_line_reader();
         let disable_tty_echo = stdin_connector.clone_disable_tty_echo();
         (Box::new(stdin_connector), disable_tty_echo)
     }
     #[cfg(test)]
-    fn create_console_input_reader() -> (Box<dyn InputTextStreamConnector>, Arc<Mutex<bool>>) {
+    fn create_console_input_reader(
+        _command_script_lines: &[String],
+        _prompted_toggle: &Arc<AtomicBool>,
+    ) -> (Box<dyn InputTextStreamConnector>, Arc<Mutex<bool>>) {
         (
             Box::new(console::tests::MockInpTxtStreamConnector::new()),
             Arc::new(Mutex::new(false)),
