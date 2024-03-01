@@ -1,30 +1,30 @@
 use crate::repository::access_repo::AccessRepository;
 use crate::repository::diesel_orm::access_repo::DieselServiceAccessRepo;
-use crate::repository::postgres_db::db_conn;
+use crate::repository::mysql_db::db_conn;
 use trust0_common::error::AppError;
 use trust0_common::model;
 
 /// ServiceAccess Repository
-pub struct PostgresServiceAccessRepo {
+pub struct MysqlServiceAccessRepo {
     /// Access repository ORM delegate
     access_repo_delegate: Option<Box<dyn AccessRepository>>,
 }
 
-impl PostgresServiceAccessRepo {
+impl MysqlServiceAccessRepo {
     /// Creates a new access repository.
     ///
     /// # Returns
     ///
-    /// A newly constructed [`PostgresServiceAccessRepo`] object.
+    /// A newly constructed [`MysqlServiceAccessRepo`] object.
     ///
-    pub fn new() -> PostgresServiceAccessRepo {
-        PostgresServiceAccessRepo {
+    pub fn new() -> MysqlServiceAccessRepo {
+        MysqlServiceAccessRepo {
             access_repo_delegate: None,
         }
     }
 }
 
-impl AccessRepository for PostgresServiceAccessRepo {
+impl AccessRepository for MysqlServiceAccessRepo {
     fn connect_to_datasource(&mut self, connect_spec: &str) -> Result<(), AppError> {
         self.access_repo_delegate = Some(Box::new(DieselServiceAccessRepo::new(
             &db_conn::INSTANCE
@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn pgdbaccessrepo_connect_to_datasource() {
-        let mut access_repo = PostgresServiceAccessRepo::new();
+        let mut access_repo = MysqlServiceAccessRepo::new();
         if let Ok(()) = access_repo.connect_to_datasource("INVALID") {
             panic!("Unexpected successful result");
         }
@@ -117,7 +117,7 @@ mod tests {
             .with(predicate::eq(expected_access.clone()))
             .times(1)
             .return_once(|_| Ok(expected_access_copy));
-        let access_repo = PostgresServiceAccessRepo {
+        let access_repo = MysqlServiceAccessRepo {
             access_repo_delegate: Some(Box::new(access_repo_delegate)),
         };
 
@@ -144,7 +144,7 @@ mod tests {
             )
             .times(1)
             .return_once(|_, _, _| Ok(Some(expected_access_copy)));
-        let access_repo = PostgresServiceAccessRepo {
+        let access_repo = MysqlServiceAccessRepo {
             access_repo_delegate: Some(Box::new(access_repo_delegate)),
         };
 
@@ -182,7 +182,7 @@ mod tests {
             )
             .times(1)
             .return_once(|_, _| Ok(Some(expected_access_copy)));
-        let access_repo = PostgresServiceAccessRepo {
+        let access_repo = MysqlServiceAccessRepo {
             access_repo_delegate: Some(Box::new(access_repo_delegate)),
         };
 
@@ -207,7 +207,7 @@ mod tests {
             .with(predicate::eq(expected_user.clone()))
             .times(1)
             .return_once(|_| Ok(Vec::new()));
-        let access_repo = PostgresServiceAccessRepo {
+        let access_repo = MysqlServiceAccessRepo {
             access_repo_delegate: Some(Box::new(access_repo_delegate)),
         };
 
@@ -234,7 +234,7 @@ mod tests {
             )
             .times(1)
             .return_once(|_, _, _| Ok(Some(expected_access_copy)));
-        let access_repo = PostgresServiceAccessRepo {
+        let access_repo = MysqlServiceAccessRepo {
             access_repo_delegate: Some(Box::new(access_repo_delegate)),
         };
 

@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 anyhow = "1.0.76"
+chrono = { version = "0.4.34", default-features = false, features = ["clock", "std"] }
 clap = { version = "4.4.11", features = [ "derive", "env" ] }
 ctrlc = "3.4.2"
 diesel = { version = "2.1.4", optional = true }
@@ -48,3 +49,4 @@ tokio-test = "0.4.3"
 
 [features]
 postgres_db = ["diesel/postgres"]
+mysql_db = ["diesel/mysql", "diesel/chrono"]

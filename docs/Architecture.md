@@ -215,9 +215,10 @@ Currently, there are two supported DB implementations:
 | DB Type     | Description                                                                                                                                                                 |
 |-------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `in-memory` | DB based on JSON record files. At runtime, the system will periodically scan for file<br>changes and reload the corresponding DB with latest records from the changed file. |
+| `mysql`     | Repositories using diesel ORM, which connects/executes queries against a MySQL DB.                                                                                          |
 | `postgres`  | Repositories using diesel ORM, which connects/executes queries against a Postgres DB.                                                                                       |
 
-The following sections represent a pseudo-layout for the core respository tables. Actual table layout may differ.
+The following sections represent a pseudo-layout for the core repository tables. Actual table layout may differ.
 
 #### User Table
 

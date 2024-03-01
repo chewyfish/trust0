@@ -123,13 +123,13 @@ Options:
 
           Possible values:
           - in-memory-db: In-memory DB, with a simple backing persistence store. Entity store connect string is file path to directory holding JSON record files
-          - postgres-db:  Postgres DB
           - no-db:        No DB configured, used in testing (internally empty in-memory DB structures are used)
 
       --db-connect <DB_CONNECT>
           DB entity store connect specifier string. Specification format is dependent on <DATASOURCE> type.
           For 'in-memory-db' datasource: Directory holding JSON files named 'trust0-db-access.json', 'trust0-db-role.json', 'trust0-db-service.json', 'trust0-db-user.json'
-          For 'postgres-db' datasource: Standard Postgres connect string specification (https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING)
+          For 'mysql-db' datasource: Connection URL detailed in diesel documentation - https://docs.rs/diesel/2.1.4/diesel/mysql/struct.MysqlConnection.html
+          For 'postgres-db' datasource: Standard Postgres connect string specification - https://www.postgresql.org/docs/current/libpq-connect.html#LIBPQ-CONNSTRING
           
           [env: DB_CONNECT=]
 

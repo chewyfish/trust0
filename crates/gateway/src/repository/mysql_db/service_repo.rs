@@ -1,30 +1,30 @@
 use crate::repository::diesel_orm::service_repo::DieselServiceRepo;
-use crate::repository::postgres_db::db_conn;
+use crate::repository::mysql_db::db_conn;
 use crate::repository::service_repo::ServiceRepository;
 use trust0_common::error::AppError;
 use trust0_common::model::service::Service;
 
 /// Service Repository
-pub struct PostgresServiceRepo {
+pub struct MysqlServiceRepo {
     /// Service repository ORM delegate
     service_repo_delegate: Option<Box<dyn ServiceRepository>>,
 }
 
-impl PostgresServiceRepo {
+impl MysqlServiceRepo {
     /// Creates a new service repository.
     ///
     /// # Returns
     ///
-    /// A newly constructed [`PostgresServiceRepo`] object.
+    /// A newly constructed [`MysqlServiceRepo`] object.
     ///
-    pub fn new() -> PostgresServiceRepo {
-        PostgresServiceRepo {
+    pub fn new() -> MysqlServiceRepo {
+        MysqlServiceRepo {
             service_repo_delegate: None,
         }
     }
 }
 
-impl ServiceRepository for PostgresServiceRepo {
+impl ServiceRepository for MysqlServiceRepo {
     fn connect_to_datasource(&mut self, connect_spec: &str) -> Result<(), AppError> {
         self.service_repo_delegate = Some(Box::new(DieselServiceRepo::new(
             &db_conn::INSTANCE
@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn pgdbsvcrepo_connect_to_datasource() {
-        let mut service_repo = PostgresServiceRepo::new();
+        let mut service_repo = MysqlServiceRepo::new();
         if let Ok(()) = service_repo.connect_to_datasource("INVALID") {
             panic!("Unexpected successful result");
         }
@@ -87,7 +87,7 @@ mod tests {
             .with(predicate::eq(expected_service.clone()))
             .times(1)
             .return_once(|_| Ok(expected_service_copy));
-        let service_repo = PostgresServiceRepo {
+        let service_repo = MysqlServiceRepo {
             service_repo_delegate: Some(Box::new(service_repo_delegate)),
         };
 
@@ -112,7 +112,7 @@ mod tests {
             .with(predicate::eq(expected_service.service_id))
             .times(1)
             .return_once(|_| Ok(Some(expected_service_copy)));
-        let service_repo = PostgresServiceRepo {
+        let service_repo = MysqlServiceRepo {
             service_repo_delegate: Some(Box::new(service_repo_delegate)),
         };
 
@@ -128,7 +128,7 @@ mod tests {
             .expect_get_all()
             .times(1)
             .return_once(|| Ok(Vec::new()));
-        let service_repo = PostgresServiceRepo {
+        let service_repo = MysqlServiceRepo {
             service_repo_delegate: Some(Box::new(service_repo_delegate)),
         };
 
@@ -153,7 +153,7 @@ mod tests {
             .with(predicate::eq(expected_service.service_id))
             .times(1)
             .return_once(|_| Ok(Some(expected_service_copy)));
-        let service_repo = PostgresServiceRepo {
+        let service_repo = MysqlServiceRepo {
             service_repo_delegate: Some(Box::new(service_repo_delegate)),
         };
 

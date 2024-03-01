@@ -1,30 +1,30 @@
 use crate::repository::diesel_orm::user_repo::DieselUserRepo;
-use crate::repository::postgres_db::db_conn;
+use crate::repository::mysql_db::db_conn;
 use crate::repository::user_repo::UserRepository;
 use trust0_common::error::AppError;
 use trust0_common::model::user::User;
 
 /// User Repository
-pub struct PostgresUserRepo {
+pub struct MysqlUserRepo {
     /// User repository ORM delegate
     user_repo_delegate: Option<Box<dyn UserRepository>>,
 }
 
-impl PostgresUserRepo {
+impl MysqlUserRepo {
     /// Creates a new user repository.
     ///
     /// # Returns
     ///
-    /// A newly constructed [`PostgresUserRepo`] object.
+    /// A newly constructed [`MysqlUserRepo`] object.
     ///
-    pub fn new() -> PostgresUserRepo {
-        PostgresUserRepo {
+    pub fn new() -> MysqlUserRepo {
+        MysqlUserRepo {
             user_repo_delegate: None,
         }
     }
 }
 
-impl UserRepository for PostgresUserRepo {
+impl UserRepository for MysqlUserRepo {
     fn connect_to_datasource(&mut self, connect_spec: &str) -> Result<(), AppError> {
         self.user_repo_delegate = Some(Box::new(DieselUserRepo::new(
             &db_conn::INSTANCE
@@ -58,7 +58,7 @@ mod tests {
 
     #[test]
     fn pgdbuserrepo_connect_to_datasource() {
-        let mut user_repo = PostgresUserRepo::new();
+        let mut user_repo = MysqlUserRepo::new();
         if let Ok(()) = user_repo.connect_to_datasource("INVALID") {
             panic!("Unexpected successful result");
         }
@@ -81,7 +81,7 @@ mod tests {
             .with(predicate::eq(expected_user.clone()))
             .times(1)
             .return_once(|_| Ok(expected_user_copy));
-        let user_repo = PostgresUserRepo {
+        let user_repo = MysqlUserRepo {
             user_repo_delegate: Some(Box::new(user_repo_delegate)),
         };
 
@@ -107,7 +107,7 @@ mod tests {
             .with(predicate::eq(expected_user.user_id))
             .times(1)
             .return_once(|_| Ok(Some(expected_user_copy)));
-        let user_repo = PostgresUserRepo {
+        let user_repo = MysqlUserRepo {
             user_repo_delegate: Some(Box::new(user_repo_delegate)),
         };
 
@@ -133,7 +133,7 @@ mod tests {
             .with(predicate::eq(expected_user.user_id))
             .times(1)
             .return_once(|_| Ok(Some(expected_user_copy)));
-        let user_repo = PostgresUserRepo {
+        let user_repo = MysqlUserRepo {
             user_repo_delegate: Some(Box::new(user_repo_delegate)),
         };
 

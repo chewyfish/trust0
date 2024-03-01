@@ -1,3 +1,8 @@
+#[cfg(all(feature = "mysql_db", feature = "postgres_db"))]
+compile_error!(
+    "feature \"mysql_db\" and feature \"postgres_db\" cannot be enabled at the same time"
+);
+
 use std::time::Duration;
 use std::{process, thread};
 
