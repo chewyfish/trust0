@@ -20,6 +20,8 @@ DATASOURCE_INMEMDB_USER_FILE="${EXAMPLE_BUILD_DIR}/trust0-db-user.json"
 DATE_CMD=${DATE_CMD:-date}
 GMAKE_CMD=${GMAKE_CMD:-gmake}
 CARGO_CMD=${CARGO_CMD:-cargo}
+DOCKER_CMD=${DOCKER_CMD:-docker222}
+DOCKER_COMPOSE_CMD=${DOCKER_COMPOSE_CMD:-docker-compose}
 OPENSSL_CMD=${OPENSSL_CMD:-openssl}
 M4_CMD=${M4_CMD:-m4}
 TMUX_CMD=${TMUX_CMD:-tmux}
@@ -37,22 +39,29 @@ fi
 
 function check_command_exists() {
   local command="$1"
+  local required="$2"
   if ! which "${command}" 2> /dev/null > /dev/null; then
-    echo "Command '${command}' missing, please install"
-    PREREQ_MISSING=1
+    if [ "${required}" == "Y" ]; then
+      echo "Command '${command}' missing, please install"
+      PREREQ_MISSING=1
+    else
+      echo "Command '${command}' missing, please install (if needed)"
+    fi
     return 1
   fi
   return 0
 }
 
-check_command_exists "${DATE_CMD}" && DATE_CMD=$(which "${DATE_CMD}")
-check_command_exists "${GMAKE_CMD}" && GMAKE_CMD=$(which "${GMAKE_CMD}")
-check_command_exists "${CARGO_CMD}" && CARGO_CMD=$(which "${CARGO_CMD}")
-check_command_exists "${OPENSSL_CMD}" && OPENSSL_CMD=$(which "${OPENSSL_CMD}")
-check_command_exists "${M4_CMD}" && M4_CMD=$(which "${M4_CMD}")
-check_command_exists "${TMUX_CMD}" && TMUX_CMD=$(which "${TMUX_CMD}")
-check_command_exists "${NCAT_CMD}" && NCAT_CMD=$(which "${NCAT_CMD}")
-check_command_exists "${CAT_CMD}" && CAT_CMD=$(which "${CAT_CMD}")
+check_command_exists "${DATE_CMD}" "Y" && DATE_CMD=$(which "${DATE_CMD}")
+check_command_exists "${GMAKE_CMD}" "Y" && GMAKE_CMD=$(which "${GMAKE_CMD}")
+check_command_exists "${CARGO_CMD}" "Y" && CARGO_CMD=$(which "${CARGO_CMD}")
+check_command_exists "${DOCKER_CMD}" "N" && DOCKER_CMD=$(which "${DOCKER_CMD}")
+check_command_exists "${DOCKER_COMPOSE_CMD}" "N" && DOCKER_COMPOSE_CMD=$(which "${DOCKER_COMPOSE_CMD}")
+check_command_exists "${OPENSSL_CMD}" "N" && OPENSSL_CMD=$(which "${OPENSSL_CMD}")
+check_command_exists "${M4_CMD}" "Y" && M4_CMD=$(which "${M4_CMD}")
+check_command_exists "${TMUX_CMD}" "Y" && TMUX_CMD=$(which "${TMUX_CMD}")
+check_command_exists "${NCAT_CMD}" "Y" && NCAT_CMD=$(which "${NCAT_CMD}")
+check_command_exists "${CAT_CMD}" "Y" && CAT_CMD=$(which "${CAT_CMD}")
 
 if [ "${PREREQ_MISSING}" == "1" ]; then
   exit 1
