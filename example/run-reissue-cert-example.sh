@@ -44,7 +44,7 @@ fi
 
 source "${EXAMPLE_DIR}"/target/example.conf
 
-PS1='$ ' "${TMUX_CMD}" new-session -s trust0-chat-tcp-example \; \
+PS1='$ ' "${TMUX_CMD}" new-session -s trust0-reissue-cert-example \; \
   set -g mouse on \; \
   send-keys '(clear && read -p "Step 1: Hit <Enter> to run chat server (or prior to executing chat client)" && "'"${NCAT_CMD}"'" -v -k -l -p '"${CHAT_SERVICE__PORT}"' --chat)' C-m \; \
   split-window -v -l 83% \; \
@@ -57,6 +57,6 @@ PS1='$ ' "${TMUX_CMD}" new-session -s trust0-chat-tcp-example \; \
   send-keys '(clear && echo "Step 5.1: Hit <Enter> to run 2nd chat client (after service proxy has started)" && read -p "Step 5.2: Enter chat messages between chat clients" && "'"${NCAT_CMD}"'" -v 127.0.0.1 '"${CHAT_PROXY__PORT}"')' C-m \; \
   select-pane -t 0 \; \
   split-window -h -l 25% \; \
-  send-keys '(clear && read -p "Step Last: Hit <Enter> to shutdown example" && ("'"${TMUX_CMD}"'" kill-session -t trust0-chat-tcp-example))' C-m \; \
+  send-keys '(clear && read -p "Step Last: Hit <Enter> to shutdown example" && ("'"${TMUX_CMD}"'" kill-session -t trust0-reissue-cert-example))' C-m \; \
   select-pane -t 0 \;
 

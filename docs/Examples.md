@@ -81,6 +81,8 @@ In the `example` directory, you can run an example, which lets clients access a 
 
 To run this example, execute the `run-chat-tcp-example.sh` script. You will be asked for free ports to be used for the client, gateway and the chat service (script uses these ports to update the chat service DB record and also now knows how to run the gateway).
 
+Note - An analogous example script (`run-chat-tcp-docker-example.sh`) is available, which uses the project's Docker files to use the Trust0 gateway, client and tools in a containerized environment.
+
 ```
 [example] $ ./run-chat-tcp-example.sh
 If example requires secondary authentication credentials, please use "user1", "pass1"

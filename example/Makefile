@@ -7,14 +7,18 @@ EXAMPLE_BUILD_DIR=${EXAMPLE_DIR}/target
 EXAMPLE_CONFIG_FILE=${EXAMPLE_BUILD_DIR}/example.conf
 PROJECT_DIR=${EXAMPLE_DIR}/..
 PROJECT_RESOURCES_DIR=${PROJECT_DIR}/resources
+PROJECT_BINARIES_BUILD_DIR=${PROJECT_DIR}/target/debug
 
 CARGO_CMD=cargo
+DOCKER_CMD=docker
+DOCKER_COMPOSE_CMD=docker-compose
 TRUST0_ADMIN_CMD=${PROJECT_RESOURCES_DIR}/trust0-admin.sh
 
 CA_ENABLED=false
 
 PKI_PROVIDER_OPENSSL=openssl
 PKI_PROVIDER_TRUST0=trust0
+PKI_PROVIDER_DOCKER_TRUST0=docker-trust0
 PKI_PROVIDER_DEFAULT=${PKI_PROVIDER_TRUST0}
 
 ifeq ($(CA_ENABLED),false)
@@ -72,7 +76,7 @@ TRUST0_GATEWAY__PKI_HOST_IP2=127.1.0.3
 TRUST0_GATEWAY__PKI_CERT_FILE=${EXAMPLE_BUILD_DIR}/${TRUST0_GATEWAY__PKI_NAME}.crt.pem
 TRUST0_GATEWAY__PKI_KEY_FILE=${EXAMPLE_BUILD_DIR}/${TRUST0_GATEWAY__PKI_NAME}.key.pem
 TRUST0_GATEWAY__BINARY_NAME=trust0-gateway
-TRUST0_GATEWAY__BINARY_FILE=${PROJECT_DIR}/target/debug/${TRUST0_GATEWAY__BINARY_NAME}
+TRUST0_GATEWAY__BINARY_FILE=${PROJECT_BINARIES_BUILD_DIR}/${TRUST0_GATEWAY__BINARY_NAME}
 TRUST0_GATEWAY__HOST=localhost
 TRUST0_GATEWAY__BIND_HOST=[::1]
 TRUST0_GATEWAY__SERVICE_HOST=${TRUST0_GATEWAY__HOST}
@@ -103,8 +107,13 @@ TRUST0_CLIENT__PKI_EMAIL=support@example-client.local
 TRUST0_CLIENT__PKI_CERT_FILE=${EXAMPLE_BUILD_DIR}/${TRUST0_CLIENT__PKI_NAME}.crt.pem
 TRUST0_CLIENT__PKI_KEY_FILE=${EXAMPLE_BUILD_DIR}/${TRUST0_CLIENT__PKI_NAME}.key.pem
 TRUST0_CLIENT__BINARY_NAME=trust0-client
-TRUST0_CLIENT__BINARY_FILE=${PROJECT_DIR}/target/debug/${TRUST0_CLIENT__BINARY_NAME}
+TRUST0_CLIENT__BINARY_FILE=${PROJECT_BINARIES_BUILD_DIR}/${TRUST0_CLIENT__BINARY_NAME}
 TRUST0_CLIENT__BIND_HOST=127.0.0.1
+
+# Params - Docker-related
+
+TRUST0_CLIENT__DOCKER_CMD=${DOCKER_CMD} run --name trust0-client-example -it --rm --network host -v ${EXAMPLE_BUILD_DIR}:${EXAMPLE_BUILD_DIR} trust0-client:latest
+TRUST0_GATEWAY__DOCKER_CMD=${DOCKER_CMD} run --name trust0-gateway-example -it --rm --network host -v ${EXAMPLE_BUILD_DIR}:${EXAMPLE_BUILD_DIR} trust0-gateway:latest
 
 # Params - CRL
 
@@ -113,7 +122,7 @@ CRLSUPPORT__PKI_REVOKE_CLIENT_FILE=${EXAMPLE_BUILD_DIR}/revoked-${TRUST0_CLIENT_
 
 # Targets
 
-.PHONY: default clean-all trust0-common root-ca-pki generate-root-ca-pki-resources gateway-server-pki generate-gateway-pki-resources client-pki generate-client-pki-resources trust0-gateway trust0-client run-trust0-gateway run-trust0-client run-trust0-gateway-nodeps run-trust0-client-nodeps setup-crl-files
+.PHONY: default clean-all trust0-common root-ca-pki generate-root-ca-pki-resources gateway-server-pki generate-gateway-pki-resources client-pki generate-client-pki-resources trust0-gateway trust0-gateway-image trust0-client trust0-client-image run-trust0-gateway run-trust0-client run-trust0-gateway-nodeps run-trust0-gateway-image-nodeps run-trust0-client-nodeps run-trust0-client-image-nodeps setup-crl-files
 
 default:
 
@@ -141,6 +150,8 @@ trust0-common:
 
 ifeq ($(PKI_PROVIDER),$(PKI_PROVIDER_OPENSSL))
   include ${EXAMPLE_DIR}/pki-provider-openssl.mk
+else ifeq ($(PKI_PROVIDER),$(PKI_PROVIDER_DOCKER_TRUST0))
+  include ${EXAMPLE_DIR}/pki-provider-docker-trust0.mk
 else
   include ${EXAMPLE_DIR}/pki-provider-trust0.mk
 endif
@@ -156,18 +167,27 @@ gateway-server-pki: generate-gateway-pki-resources
 trust0-gateway: trust0-common
 	${CARGO_CMD} build --color=always --bin trust0-gateway --manifest-path ${PROJECT_DIR}/crates/gateway/Cargo.toml ${CARGOBUILD_GATEWAY_ARGS} ${CARGOBUILD_EXTRA_ARGS}
 
+trust0-gateway-image:
+	${DOCKER_COMPOSE_CMD} -f ${PROJECT_RESOURCES_DIR}/docker/docker-compose-build.yml build trust0-gateway
+
 ifeq ($(CA_ENABLED),false)
 run-trust0-gateway: trust0-gateway
 	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource ${TRUST0_GATEWAY__DATASOURCE} --db-connect ${TRUST0_GATEWAY__DB_CONNECT}
 
 run-trust0-gateway-nodeps:
 	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource ${TRUST0_GATEWAY__DATASOURCE} --db-connect ${TRUST0_GATEWAY__DB_CONNECT}
+
+run-trust0-gateway-image-nodeps:
+	${TRUST0_GATEWAY__DOCKER_CMD} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource ${TRUST0_GATEWAY__DATASOURCE} --db-connect ${TRUST0_GATEWAY__DB_CONNECT}
 else
 run-trust0-gateway: trust0-gateway
 	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --auth-key-file ${ROOT_CA__PKI_KEY_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource ${TRUST0_GATEWAY__DATASOURCE} --db-connect ${TRUST0_GATEWAY__DB_CONNECT} --mfa-scheme scram-sha256 --ca-enabled --ca-key-algorithm ${TRUST0_KEYALG_TYPE} --ca-validity-period-days ${TRUST0_GATEWAY__CA_VALIDITY_PERIOD_DAYS} --ca-reissuance-threshold-days ${TRUST0_GATEWAY__CA_REISSUANCE_THRESHOLD_DAYS}
 
 run-trust0-gateway-nodeps:
 	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --auth-key-file ${ROOT_CA__PKI_KEY_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource ${TRUST0_GATEWAY__DATASOURCE} --db-connect ${TRUST0_GATEWAY__DB_CONNECT} --mfa-scheme scram-sha256 --ca-enabled --ca-key-algorithm ${TRUST0_KEYALG_TYPE} --ca-validity-period-days ${TRUST0_GATEWAY__CA_VALIDITY_PERIOD_DAYS} --ca-reissuance-threshold-days ${TRUST0_GATEWAY__CA_REISSUANCE_THRESHOLD_DAYS}
+
+run-trust0-gateway-image-nodeps:
+	${TRUST0_GATEWAY__DOCKER_CMD} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --auth-cert-file ${ROOT_CA__PKI_CERT_FILE} --auth-key-file ${ROOT_CA__PKI_KEY_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource ${TRUST0_GATEWAY__DATASOURCE} --db-connect ${TRUST0_GATEWAY__DB_CONNECT} --mfa-scheme scram-sha256 --ca-enabled --ca-key-algorithm ${TRUST0_KEYALG_TYPE} --ca-validity-period-days ${TRUST0_GATEWAY__CA_VALIDITY_PERIOD_DAYS} --ca-reissuance-threshold-days ${TRUST0_GATEWAY__CA_REISSUANCE_THRESHOLD_DAYS}
 endif
 
 # Targets - Trust Client
@@ -177,8 +197,14 @@ client-pki: generate-client-pki-resources
 trust0-client: trust0-common
 	${CARGO_CMD} build --color=always --bin trust0-client --manifest-path ${PROJECT_DIR}/crates/client/Cargo.toml ${CARGOBUILD_EXTRA_ARGS}
 
+trust0-client-image:
+	${DOCKER_COMPOSE_CMD} -f ${PROJECT_RESOURCES_DIR}/docker/docker-compose-build.yml build trust0-client
+
 run-trust0-client: trust0-client
 	${TRUST0_CLIENT__BINARY_FILE} --host ${TRUST0_CLIENT__BIND_HOST} --gateway-host ${TRUST0_GATEWAY__HOST} --gateway-port ${TRUST0_GATEWAY__PORT} --auth-key-file ${TRUST0_CLIENT__PKI_KEY_FILE} --auth-cert-file ${TRUST0_CLIENT__PKI_CERT_FILE} --ca-root-cert-file ${ROOT_CA__PKI_CERT_FILE} ${EXECBIN_EXTRA_ARGS}
 
 run-trust0-client-nodeps:
 	${TRUST0_CLIENT__BINARY_FILE} --host ${TRUST0_CLIENT__BIND_HOST} --gateway-host ${TRUST0_GATEWAY__HOST} --gateway-port ${TRUST0_GATEWAY__PORT} --auth-key-file ${TRUST0_CLIENT__PKI_KEY_FILE} --auth-cert-file ${TRUST0_CLIENT__PKI_CERT_FILE} --ca-root-cert-file ${ROOT_CA__PKI_CERT_FILE} ${EXECBIN_EXTRA_ARGS}
+
+run-trust0-client-image-nodeps:
+	${TRUST0_CLIENT__DOCKER_CMD} --host ${TRUST0_CLIENT__BIND_HOST} --gateway-host ${TRUST0_GATEWAY__HOST} --gateway-port ${TRUST0_GATEWAY__PORT} --auth-key-file ${TRUST0_CLIENT__PKI_KEY_FILE} --auth-cert-file ${TRUST0_CLIENT__PKI_CERT_FILE} --ca-root-cert-file ${ROOT_CA__PKI_CERT_FILE} ${EXECBIN_EXTRA_ARGS}
