@@ -8,6 +8,10 @@
 
 ## Trust0 Invocation
 
+Below is a breakdown of the invocation details for the client and gateway binaries. These applications may be built and executed for a desired target architecture.
+
+Additionally, Docker files are available (in the `resources/docker` directory) to build and execute the binaries in a Docker container. Refer to [Chat TCP](./Examples.md#example---chat-tcp-service) for an example of how the binaries can be used in a containerized environment.
+
 -----------------
 
 ### Trust0 Gateway

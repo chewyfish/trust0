@@ -210,7 +210,7 @@ The database is used to enforce user access to Trust0 and the respective service
 
 The repository is exposed as an abstract trait, so additional DB implementations may be developed.
 
-Currently, there are two supported DB implementations:
+Currently, there are 3 supported DB implementations:
 
 | DB Type     | Description                                                                                                                                                                 |
 |-------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
