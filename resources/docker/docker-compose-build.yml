@@ -1,0 +1,57 @@
+version: "3.8"
+
+services:
+  # Trust0 Tools
+  # =============
+  # (build)
+  # docker-compose -f ./docker-compose-build.yml build trust0-tools
+  #
+  trust0-tools:
+    build:
+      context: ../..
+      dockerfile: ./resources/docker/trust0-tools.dockerfile
+    image: trust0-tools:latest
+
+  # Trust0 Client
+  # =============
+  # (build)
+  # docker-compose -f ./docker-compose-build.yml build trust0-client
+  #
+  trust0-client:
+    build:
+      context: ../..
+      dockerfile: ./resources/docker/trust0-client.dockerfile
+    image: trust0-client:latest
+
+  # Trust0 Gateway (with InMemoryDB support only)
+  # ==============
+  # (build)
+  # docker-compose -f ./docker-compose-build.yml build trust0-gateway
+  #
+  trust0-gateway:
+    build:
+      context: ../..
+      dockerfile: ./resources/docker/trust0-gateway.dockerfile
+    image: trust0-gateway:latest
+
+  # Trust0 Gateway (with InMemoryDB/MySQL support)
+  # ==============
+  # (build)
+  # docker-compose -f ./docker-compose-build.yml build trust0-gateway-with-mysql
+  #
+  trust0-gateway-with-mysql:
+    build:
+      context: ../..
+      dockerfile: ./resources/docker/trust0-gateway-with-mysql.dockerfile
+    image: trust0-gateway-with-mysql:latest
+
+  # Trust0 Gateway (with InMemoryDB/Postgres support)
+  # ==============
+  # (build)
+  # docker-compose -f ./docker-compose-build.yml build trust0-gateway-with-postgres
+  #
+  trust0-gateway-with-postgres:
+    build:
+      context: ../..
+      dockerfile: ./resources/docker/trust0-gateway-with-postgres.dockerfile
+    image: trust0-gateway-with-postgres:latest
