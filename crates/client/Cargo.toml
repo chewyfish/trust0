@@ -1,6 +1,6 @@
 [package]
 name = "trust0-client"
-version = "0.6.0-alpha"
+version = "0.7.0-alpha"
 description = "Trust0 SDP Service Proxy Client"
 repository = "https://github.com/chewyfish/trust0"
 edition = "2021"
@@ -27,7 +27,7 @@ sct = "0.7.1"
 serde = { version = "*", features = ["derive"] }
 serde_derive = "*"
 serde_json = { version = "*", features = ["arbitrary_precision"] }
-trust0-common = { version = "0.6.0-alpha", path = "../common" }
+trust0-common = { version = "0.7.0-alpha", path = "../common" }
 webpki-roots = "0.25"
 
 [dev-dependencies]
