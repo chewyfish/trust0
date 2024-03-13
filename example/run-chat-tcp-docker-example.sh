@@ -8,9 +8,10 @@ EXAMPLE_DIR=$(dirname "$0")
 
 source "${EXAMPLE_DIR}"/run-configure.sh
 
-GMAKE_CMD="${GMAKE_CMD} PKI_PROVIDER=docker-trust0"
+GMAKE_CMD="${GMAKE_CMD} UID=${UID} GID=${UID} PKI_PROVIDER=docker-trust0"
 
 ${GMAKE_CMD} clean-all
+${GMAKE_CMD} trust0-tools-image
 ${GMAKE_CMD} trust0-gateway-image
 ${GMAKE_CMD} trust0-client-image
 ${GMAKE_CMD} root-ca-pki

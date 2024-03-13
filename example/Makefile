@@ -8,6 +8,8 @@ EXAMPLE_CONFIG_FILE=${EXAMPLE_BUILD_DIR}/example.conf
 PROJECT_DIR=${EXAMPLE_DIR}/..
 PROJECT_RESOURCES_DIR=${PROJECT_DIR}/resources
 PROJECT_BINARIES_BUILD_DIR=${PROJECT_DIR}/target/debug
+UID=1000
+GID=1000
 
 CARGO_CMD=cargo
 DOCKER_CMD=docker
@@ -112,8 +114,8 @@ TRUST0_CLIENT__BIND_HOST=127.0.0.1
 
 # Params - Docker-related
 
-TRUST0_CLIENT__DOCKER_CMD=${DOCKER_CMD} run --name trust0-client-example -it --rm --network host -v ${EXAMPLE_BUILD_DIR}:${EXAMPLE_BUILD_DIR} trust0-client:latest
-TRUST0_GATEWAY__DOCKER_CMD=${DOCKER_CMD} run --name trust0-gateway-example -it --rm --network host -v ${EXAMPLE_BUILD_DIR}:${EXAMPLE_BUILD_DIR} trust0-gateway:latest
+TRUST0_CLIENT__DOCKER_CMD=${DOCKER_CMD} run --name trust0-client-example -u ${UID}:${GID} -it --rm --network host -v ${EXAMPLE_BUILD_DIR}:${EXAMPLE_BUILD_DIR} trust0-client:latest
+TRUST0_GATEWAY__DOCKER_CMD=${DOCKER_CMD} run --name trust0-gateway-example -u ${UID}:${GID} -it --rm --network host -v ${EXAMPLE_BUILD_DIR}:${EXAMPLE_BUILD_DIR} trust0-gateway:latest
 
 # Params - CRL
 
@@ -122,7 +124,7 @@ CRLSUPPORT__PKI_REVOKE_CLIENT_FILE=${EXAMPLE_BUILD_DIR}/revoked-${TRUST0_CLIENT_
 
 # Targets
 
-.PHONY: default clean-all trust0-common root-ca-pki generate-root-ca-pki-resources gateway-server-pki generate-gateway-pki-resources client-pki generate-client-pki-resources trust0-gateway trust0-gateway-image trust0-client trust0-client-image run-trust0-gateway run-trust0-client run-trust0-gateway-nodeps run-trust0-gateway-image-nodeps run-trust0-client-nodeps run-trust0-client-image-nodeps setup-crl-files
+.PHONY: default clean-all trust0-common trust0-tools-image root-ca-pki generate-root-ca-pki-resources gateway-server-pki generate-gateway-pki-resources client-pki generate-client-pki-resources trust0-gateway trust0-gateway-image trust0-client trust0-client-image run-trust0-gateway run-trust0-client run-trust0-gateway-nodeps run-trust0-gateway-image-nodeps run-trust0-client-nodeps run-trust0-client-image-nodeps setup-crl-files
 
 default:
 
@@ -155,6 +157,11 @@ else ifeq ($(PKI_PROVIDER),$(PKI_PROVIDER_DOCKER_TRUST0))
 else
   include ${EXAMPLE_DIR}/pki-provider-trust0.mk
 endif
+
+# Targets - Tools
+
+trust0-tools-image:
+	${DOCKER_COMPOSE_CMD} -f ${PROJECT_RESOURCES_DIR}/docker/docker-compose-build.yml build trust0-tools
 
 # Targets - ROOT CA
 
