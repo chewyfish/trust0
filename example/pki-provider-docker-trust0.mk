@@ -1,4 +1,4 @@
-TRUST0_PKI_MANAGER__DOCKER_CMD=${DOCKER_CMD} run --rm -v ${EXAMPLE_BUILD_DIR}:${EXAMPLE_BUILD_DIR} trust0-tools:latest /app/trust0-pki-manager
+TRUST0_PKI_MANAGER__DOCKER_CMD=${DOCKER_CMD} run -u ${UID}:${GID} --rm -v ${EXAMPLE_BUILD_DIR}:${EXAMPLE_BUILD_DIR} trust0-tools:latest /app/trust0-pki-manager
 
 # Params - CRL
 

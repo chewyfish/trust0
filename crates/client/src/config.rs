@@ -102,7 +102,10 @@ impl AppConfig {
         // Populate environment w/given config file (if provided)
         let mut config_file = env::var_os("CONFIG_FILE");
         if config_file.is_none() {
-            if (env::args_os().len() >= 3) && env::args_os().nth(1).unwrap().eq("-f") {
+            if (env::args_os().len() >= 3)
+                && (env::args_os().nth(1).unwrap().eq("-f")
+                    || env::args_os().nth(1).unwrap().eq("--config-file"))
+            {
                 config_file = env::args_os().nth(2);
             } else if AppInstallFile::ClientConfig.pathspec().exists() {
                 config_file = Some(AppInstallFile::ClientConfig.pathspec().into_os_string());

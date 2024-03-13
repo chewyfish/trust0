@@ -18,13 +18,12 @@
 
 Trust0 is a [Zero Trust](https://en.wikipedia.org/wiki/Zero_trust_security_model) security framework, whose implementation is fashioned as a [Software Defined Perimeter](https://en.wikipedia.org/wiki/Software-defined_perimeter) service gateway. The gateway ensures that users may only access services, which were authorized for their account.
 
-This is prerelease code, use with care.
+This is pre-release code, use with care.
 
 ### To-Do
 
 * Add Windows UDP support. Tested: macOS - Big Sur (TCP/UDP); Linux Fedora 39 (TCP/UDP, Windows 11 (TCP)
 * Brainstorm solution for device posture trust assessment and rules processor for security enforcement
-* Build (more) testing: integration, performance, ...
 * Strategize non-name resolution (DNS/hosts file/...) approach to handle client hostname verification for TLS-type service connections
 * Consider gateway-to-gateway service proxy routing (reasons of proximity, security, ...)
 * Consider gateway load-balancing, via client redirect (reasons of load, rollout deployment, ...)
@@ -45,7 +44,7 @@ Refer to the following for more information:
 
 ### Contributions
 
-We welcome and appreciate questions, bug issues, ideas and the like. However, code contributions are currently closed until after the first non-alpha/beta release.
+We welcome and appreciate questions, bug issues, ideas and the like. However, code contributions are currently closed until after the first release.
 
 ### License
 

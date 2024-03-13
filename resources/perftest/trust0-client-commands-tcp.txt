@@ -1,0 +1,2 @@
+login
+start -s echo-tcp -p 8501

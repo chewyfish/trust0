@@ -182,7 +182,7 @@ Password:
 
 The common crate has a PKI manager tool (`trust0-pki-manager`), which can be used to create valid Trust0 root CA PKI certificate/key resources.
 
-Additionally, you may use the legacy [Trust0 Admin - Root CA PKI Creator](../resources/README.md#create-root-ca-pki-resources) tool, which uses `openssl` to create the resources (or bring your own Trust0-compliant PKI files).
+Additionally, you may use the legacy [Trust0 Admin - Root CA PKI Creator](../resources/archived/README.md#create-root-ca-pki-resources) tool, which uses `openssl` to create the resources (or bring your own Trust0-compliant PKI files).
 
 Here is the usage description:
 
@@ -259,7 +259,7 @@ Here is a simple invocation of this tool:
 
 The common crate has a PKI manager tool (`trust0-pki-manager`), which can be used to create valid Trust0 gateway PKI certificate/key resources.
 
-Additionally, you may use the legacy [Trust0 Admin - Gateway PKI Creator](../resources/README.md#create-gateway-pki-resources) tool, which uses `openssl` to create the resources (or bring your own Trust0-compliant PKI files).
+Additionally, you may use the legacy [Trust0 Admin - Gateway PKI Creator](../resources/archived/README.md#create-gateway-pki-resources) tool, which uses `openssl` to create the resources (or bring your own Trust0-compliant PKI files).
 
 Here is the usage description:
 
@@ -349,7 +349,7 @@ Here is a simple invocation of this tool (CA certificate and key must be accessi
 
 The common crate has a PKI manager tool (`trust0-pki-manager`), which can be used to create valid Trust0 client PKI certificate/key resources.
 
-Additionally, you may use the legacy [Trust0 Admin - Client PKI Creator](../resources/README.md#create-client-pki-resources) tool, which uses `openssl` to create the resources (or bring your own Trust0-compliant PKI files).
+Additionally, you may use the legacy [Trust0 Admin - Client PKI Creator](../resources/archived/README.md#create-client-pki-resources) tool, which uses `openssl` to create the resources (or bring your own Trust0-compliant PKI files).
 
 Here is the usage description:
 
