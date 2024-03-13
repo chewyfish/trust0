@@ -15,7 +15,7 @@
 
 The `trust0-admin.sh` script can be used to create valid Trust0 root CA PKI certificate/key resources using `openssl`.
 
-Additionally, you may use the [Trust0 PKI Manager - Create Root CA PKI Resources](../docs/Utilities.md#create-root-ca-pki-resources) to create PKI resources using native Rust libraries.
+Additionally, you may use the [Trust0 PKI Manager - Create Root CA PKI Resources](../../docs/Utilities.md#create-root-ca-pki-resources) to create PKI resources using native Rust libraries.
 
 Or feel free to bring your own resources.
 
@@ -87,7 +87,7 @@ Here is a simple invocation of this tool:
 
 The `trust0-admin.sh` script can be used to create valid Trust0 gateway PKI certificate/key resources using `openssl`.
 
-Additionally, you may use the [Trust0 PKI Manager - Create Gateway PKI Resources](../docs/Utilities.md#create-gateway-pki-resources) to create PKI resources using native Rust libraries.
+Additionally, you may use the [Trust0 PKI Manager - Create Gateway PKI Resources](../../docs/Utilities.md#create-gateway-pki-resources) to create PKI resources using native Rust libraries.
 
 Or feel free to bring your own resources.
 
@@ -172,7 +172,7 @@ Here is a simple invocation of this tool (CA certificate and key must be accessi
 
 The `trust0-admin.sh` script can be used to create valid Trust0 client PKI certificate/key resources using `openssl`.
 
-Additionally, you may use the [Trust0 PKI Manager - Create Client PKI Resources](../docs/Utilities.md#create-client-pki-resources) to create PKI resources using native Rust libraries.
+Additionally, you may use the [Trust0 PKI Manager - Create Client PKI Resources](../../docs/Utilities.md#create-client-pki-resources) to create PKI resources using native Rust libraries.
 
 Or feel free to bring your own resources.
 
