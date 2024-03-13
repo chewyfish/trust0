@@ -1,0 +1,7 @@
+[
+    {"serviceId": 200, "name":  "Service200", "transport": "TCP", "host": "localhost", "port":  8200},
+    {"serviceId": 201, "name":  "Service201", "transport": "TCP", "host": "localhost", "port":  8201},
+    {"serviceId": 202, "name":  "Service202", "transport": "TCP", "host": "localhost", "port":  8202},
+    {"serviceId": 203, "name":  "echo-tcp", "transport": "TCP", "host": "t0perf-service1", "port":  8078},
+    {"serviceId": 204, "name":  "echo-udp", "transport": "UDP", "host": "t0perf-service1", "port":  8078}
+]
