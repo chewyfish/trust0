@@ -443,7 +443,6 @@ pub mod tests {
         }
     }
 
-    #[cfg(not(windows))]
     #[test]
     fn server_bind_listener_when_invalid_address() {
         let mut visitor = MockServerVisit::new();
@@ -451,7 +450,7 @@ pub mod tests {
         let mut server = Server {
             visitor: Arc::new(Mutex::new(visitor)),
             server_socket: None,
-            server_addr: "127.0.0.1:1".parse().unwrap(),
+            server_addr: "1.1.1.1:0".parse().unwrap(),
             polling: false,
             closing: false,
             closed: false,
