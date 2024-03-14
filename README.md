@@ -22,7 +22,6 @@ This is pre-release code, use with care.
 
 ### To-Do
 
-* Add Windows UDP support. Tested: macOS - Big Sur (TCP/UDP); Linux Fedora 39 (TCP/UDP, Windows 11 (TCP)
 * Brainstorm solution for device posture trust assessment and rules processor for security enforcement
 * Strategize non-name resolution (DNS/hosts file/...) approach to handle client hostname verification for TLS-type service connections
 * Consider gateway-to-gateway service proxy routing (reasons of proximity, security, ...)
