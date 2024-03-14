@@ -23,19 +23,26 @@ The following examples are provided in the `examples` directory:
 * [Reissue Certificate](#example---reissue-certificate)
 * [Revoke Certificate](#example---revoke-certificate)
 
+Platforms tested:
+
+* Linux - Fedora 39
+* macOS - Big Sur
+* Windows - 11
+
 ### Pre-requisites
 
 To run the examples, the following commands are required:
 
-| Facility       | Original tested version                   | Notes                                                                                   |
-|----------------|-------------------------------------------|-----------------------------------------------------------------------------------------|
-| Rust toolchain | Linux, macOS: `1.74.0`, Windows: `1.75.0` |                                                                                         |
-| `bash`         | Linux, macOS, Windows: `5.2.21`           | Code will assert version is 4 or higher                                                 |
-| `gmake`        | Linux, macOS, Windows: `4.4.1`            |                                                                                         |
-| `openssl`      | Linux: `3.3.1`, macOS, Windows: `3.2.0`   | This is not needed unless you change the example code to use the `OpenSSL` PKI provider |
-| `m4`           | Linux, Windows: `1.4.19` macOS: `1.4.6`   |                                                                                         |
-| `tmux`         | Linux, macOS, Windows: `3.3a`             |                                                                                         |
-| `ncat`         | Linux: `7.93`, macOS, Windows: `7.94`     | This can be found in the `nmap` package                                                 |
+| Facility       | Original tested version                                       | Notes                                                                                   |
+|----------------|---------------------------------------------------------------|-----------------------------------------------------------------------------------------|
+| Rust toolchain | Linux, macOS: `1.74.0`, Windows: `1.75.0`                     |                                                                                         |
+| `bash`         | Linux, macOS, Windows: `5.2.21`                               | Code will assert version is 4 or higher                                                 |
+| `gmake`        | Linux, macOS, Windows: `4.4.1`                                |                                                                                         |
+| `openssl`      | Linux: `3.3.1`, macOS, Windows: `3.2.0`                       | This is not needed unless you change the example code to use the `OpenSSL` PKI provider |
+| `m4`           | Linux, Windows: `1.4.19` macOS: `1.4.6`                       |                                                                                         |
+| `tmux`         | Linux, macOS, Windows: `3.3a`                                 |                                                                                         |
+| `ncat`         | Linux: `7.93`, macOS, Windows: `7.94`                         | This can be found in the `nmap` package                                                 |
+| `netcat`       | macOS: (bundled with Big Sur), Windows: `1.219_1-1` (OpenBSD) | Not used for Linux (`ncat` used instead)                                                |
 
 If you wish to override the command used by the example script, merely supply the environment variable(s) for the respective commands (refer to `run-configure.sh` for a listing of command variables).  For example:
 
@@ -68,6 +75,7 @@ The testing utilized [MSYS2](https://www.msys2.org/), using the `UCRT64` environ
 
 * `make`
 * `m4`
+* `openbsd-netcat`
 * `openssl`
 * `tmux`
 

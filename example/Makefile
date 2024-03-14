@@ -14,7 +14,6 @@ GID=1000
 CARGO_CMD=cargo
 DOCKER_CMD=docker
 DOCKER_COMPOSE_CMD=docker-compose
-TRUST0_ADMIN_CMD=${PROJECT_RESOURCES_DIR}/trust0-admin.sh
 
 CA_ENABLED=false
 

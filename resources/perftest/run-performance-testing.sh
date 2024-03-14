@@ -163,9 +163,9 @@ function validate_invocation {
 # ----------------------
 function build_container_images {
 
-	echo "Building Trust0 container images"
-	${GMAKE_CMD} trust0-tools-image
-	${GMAKE_CMD} trust0-gateway-image
+  echo "Building Trust0 container images"
+  ${GMAKE_CMD} trust0-tools-image
+  ${GMAKE_CMD} trust0-gateway-image
   ${GMAKE_CMD} trust0-client-image
 
   return 0
@@ -175,7 +175,7 @@ function build_container_images {
 # -------------------
 function build_pki_resources {
 
-	echo "Building Trust0 PKI resources"
+  echo "Building Trust0 PKI resources"
   ${GMAKE_CMD} root-ca-pki
   ${GMAKE_CMD} gateway-server-pki
   ${GMAKE_CMD} client-pki
@@ -194,10 +194,10 @@ function create_trust0_gateway_config_file {
       return 1
   fi
 
-	echo "Creating Trust0 Gateway config file: path=${config_file}"
+  echo "Creating Trust0 Gateway config file: path=${config_file}"
   ${GMAKE_CMD} $config_file
 
-	return 0
+  return 0
 }
 
 # Create Trust0 Client config file
@@ -211,10 +211,10 @@ function create_trust0_client_config_file {
       return 1
   fi
 
-	echo "Creating Trust0 Client config file: path=${config_file}"
+  echo "Creating Trust0 Client config file: path=${config_file}"
   ${GMAKE_CMD} $config_file
 
-	return 0
+  return 0
 }
 
 # Create Trust0 Client (command) script file
@@ -223,7 +223,7 @@ function stage_trust0_client_script_file {
 
   local script_file="${PERFTEST_BUILD_DIR}/t0perf-t0client-commands.txt"
 
-	echo "Staging Trust0 Client script file: path=${script_file}"
+  echo "Staging Trust0 Client script file: path=${script_file}"
   if [[ ${program_args[TRANSPORT]} == "ALL" ]]; then
     cp "${PERFTEST_DIR}/trust0-client-commands-all.txt" "${script_file}"
   elif [[ ${program_args[TRANSPORT]} == "tcp" ]]; then
@@ -232,20 +232,20 @@ function stage_trust0_client_script_file {
     cp "${PERFTEST_DIR}/trust0-client-commands-udp.txt" "${script_file}"
   fi
 
-	return 0
+  return 0
 }
 
 # Stage DB JSON files
 # -------------------
 function stage_db_files {
 
-	echo "Staging Trust0 DB files"
+  echo "Staging Trust0 DB files"
   cp "${PERFTEST_DIR}"/trust0-db-access.json "${PERFTEST_BUILD_DIR}"
   cp "${PERFTEST_DIR}"/trust0-db-role.json "${PERFTEST_BUILD_DIR}"
   cp "${PERFTEST_DIR}"/trust0-db-service.json "${PERFTEST_BUILD_DIR}"
   cp "${PERFTEST_DIR}"/trust0-db-user.json "${PERFTEST_BUILD_DIR}"
 
-	return 0
+  return 0
 }
 
 # Create Docker Compose file
@@ -261,20 +261,20 @@ function create_docker_compose_file {
     docker_compose_m4_file="$DOCKER_COMPOSE_UDP_M4_FILE"
   fi
 
-	echo "Creating Docker Compose file: path=${PERFTEST_DOCKER_COMPOSE_FILE}"
+  echo "Creating Docker Compose file: path=${PERFTEST_DOCKER_COMPOSE_FILE}"
   ${M4_CMD} -D xPERFTEST_BUILD_DIR="${PERFTEST_BUILD_DIR}" -D xUID="${UID}" -D xGID="${UID}" -D xRUNKEY="${RUNKEY}" -D xQPS_PER_TRANSPORT="${program_args[QPS_PER_TRANSPORT]}" -D xCONNECTIONS_PER_TRANSPORT="${program_args[CONNECTIONS_PER_TRANSPORT]}" -D xMAX_EXECUTION_TIME_MIN="${program_args[MAX_EXECUTION_TIME_MIN]}m" "${docker_compose_m4_file}" > "${PERFTEST_DOCKER_COMPOSE_FILE}"
 
-	return 0
+  return 0
 }
 
 # Run performance test
 # --------------------
 function run_performance_test {
 
-	echo "Running performance test: runkey=${RUNKEY}"
+  echo "Running performance test: runkey=${RUNKEY}"
   ${GMAKE_CMD} run-performance-test
 
-	return 0
+  return 0
 }
 
 # Main program

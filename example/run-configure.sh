@@ -20,12 +20,13 @@ DATASOURCE_INMEMDB_USER_FILE="${EXAMPLE_BUILD_DIR}/trust0-db-user.json"
 DATE_CMD=${DATE_CMD:-date}
 GMAKE_CMD=${GMAKE_CMD:-gmake}
 CARGO_CMD=${CARGO_CMD:-cargo}
-DOCKER_CMD=${DOCKER_CMD:-docker222}
+DOCKER_CMD=${DOCKER_CMD:-docker}
 DOCKER_COMPOSE_CMD=${DOCKER_COMPOSE_CMD:-docker-compose}
 OPENSSL_CMD=${OPENSSL_CMD:-openssl}
 M4_CMD=${M4_CMD:-m4}
 TMUX_CMD=${TMUX_CMD:-tmux}
 NCAT_CMD=${NCAT_CMD:-ncat}
+NETCAT_CMD=${NETCAT_CMD:-nc}
 CAT_CMD=${CAT_CMD:-cat}
 
 # Check pre-requisites
@@ -61,6 +62,7 @@ check_command_exists "${OPENSSL_CMD}" "N" && OPENSSL_CMD=$(which "${OPENSSL_CMD}
 check_command_exists "${M4_CMD}" "Y" && M4_CMD=$(which "${M4_CMD}")
 check_command_exists "${TMUX_CMD}" "Y" && TMUX_CMD=$(which "${TMUX_CMD}")
 check_command_exists "${NCAT_CMD}" "Y" && NCAT_CMD=$(which "${NCAT_CMD}")
+check_command_exists "${NETCAT_CMD}" "Y" && NETCAT_CMD=$(which "${NETCAT_CMD}")
 check_command_exists "${CAT_CMD}" "Y" && CAT_CMD=$(which "${CAT_CMD}")
 
 if [ "${PREREQ_MISSING}" == "1" ]; then
