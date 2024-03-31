@@ -20,7 +20,7 @@ use trust0_common::control::signaling::event::{EventType, SignalEvent};
 use trust0_common::error::AppError;
 use trust0_common::logging::error;
 use trust0_common::net::tls_client::conn_std;
-use trust0_common::target;
+use trust0_common::{sync, target};
 
 const EVENT_LOOP_CYCLE_DELAY_MSECS: u64 = 6_000;
 
@@ -122,16 +122,13 @@ impl SignalingController {
 
                         *loop_processing.lock().unwrap() = false;
 
-                        if let Err(err) = event_channel_sender
-                            .as_ref()
-                            .unwrap()
-                            .send(conn_std::ConnectionEvent::Closing)
-                        {
-                            println!("Error sending closing event: err={:?}", &err);
-                            error(
-                                &target!(),
-                                &format!("Error sending closing event: err={:?}", &err),
-                            );
+                        if let Err(err) = sync::send_mpsc_channel_message(
+                            event_channel_sender.as_ref().unwrap(),
+                            conn_std::ConnectionEvent::Closing,
+                            Box::new(|| "Error sending closing event:".to_string()),
+                        ) {
+                            println!("{:?}", &err);
+                            error(&target!(), &format!("{:?}", &err));
                         }
                     }
                 }

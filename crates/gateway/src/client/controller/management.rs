@@ -23,7 +23,7 @@ use trust0_common::control::tls::message::ConnectionAddrs;
 use trust0_common::error::AppError;
 use trust0_common::logging::error;
 use trust0_common::net::tls_server::conn_std;
-use trust0_common::{control, model, target};
+use trust0_common::{control, model, sync, target};
 
 /// (MFA) Authentication context
 struct AuthnContext {
@@ -475,11 +475,11 @@ impl ManagementController {
     /// A [`Result`] containing the [`management::response::Response`] object for the Quit request.
     ///
     fn process_cmd_quit(&self) -> Result<management::response::Response, AppError> {
-        self.event_channel_sender
-            .send(conn_std::ConnectionEvent::Closing)
-            .map_err(|err| {
-                AppError::GenWithMsgAndErr("Error sending closing event".to_string(), Box::new(err))
-            })?;
+        sync::send_mpsc_channel_message(
+            &self.event_channel_sender,
+            conn_std::ConnectionEvent::Closing,
+            Box::new(|| "Error sending closing event:".to_string()),
+        )?;
 
         Ok(management::response::Response::new(
             control::pdu::CODE_OK,

@@ -34,9 +34,7 @@ fn process_runner() -> Result<(), AppError> {
         thread::sleep(Duration::from_millis(3000));
         process::exit(0);
     })
-    .map_err(|err| {
-        AppError::GenWithMsgAndErr("Error setting Ctrl-C handler".to_string(), Box::new(err))
-    })?;
+    .map_err(|err| AppError::General(format!("Error setting Ctrl-C handler: err={:?}", &err)))?;
 
     processor.start()
 }

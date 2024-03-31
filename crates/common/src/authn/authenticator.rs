@@ -70,10 +70,10 @@ impl AuthnMessage {
     ///
     pub fn parse_json_str(message_str: &str) -> Result<AuthnMessage, AppError> {
         serde_json::from_str(message_str).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!("Failed to parse AuthnMessage JSON: val={}", message_str),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Failed to parse AuthnMessage JSON: val={}, err={:?}",
+                message_str, &err
+            ))
         })
     }
 
@@ -84,12 +84,7 @@ impl AuthnMessage {
     /// A [`Result`] containing the String-serialized JSON for this object.
     ///
     pub fn to_json_str(&self) -> Result<String, AppError> {
-        serde_json::to_string(self).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Failed to create AuthnMessage JSON".to_string(),
-                Box::new(err),
-            )
-        })
+        Ok(serde_json::to_string(self).unwrap())
     }
 }
 

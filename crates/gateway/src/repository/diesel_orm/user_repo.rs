@@ -312,9 +312,7 @@ impl UserRepository for DieselUserRepo {
 
                 Ok(upserted_user.unwrap())
             })
-            .map_err(|err| {
-                AppError::GenWithMsgAndErr("Error putting User".to_string(), Box::new(err))
-            })
+            .map_err(|err| AppError::General(format!("Error putting User: err={:?}", &err)))
     }
 
     fn get(&self, user_id: i64) -> Result<Option<model::user::User>, AppError> {
@@ -322,10 +320,10 @@ impl UserRepository for DieselUserRepo {
         let user_roles = self
             .get_all_user_records(self.connection.lock().unwrap().deref_mut(), user_id)
             .map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    format!("Error getting user roles: user_id={}", user_id),
-                    Box::new(err),
-                )
+                AppError::General(format!(
+                    "Error getting user roles: user_id={}, err={:?}",
+                    user_id, &err
+                ))
             })?;
 
         // Get user
@@ -340,10 +338,10 @@ impl UserRepository for DieselUserRepo {
                 Ok(Some(user))
             }
             Err(diesel::NotFound) => Ok(None),
-            Err(err) => Err(AppError::GenWithMsgAndErr(
-                format!("Error getting User: id={}", user_id),
-                Box::new(err),
-            )),
+            Err(err) => Err(AppError::General(format!(
+                "Error getting User: id={}, err={:?}",
+                user_id, &err
+            ))),
         }
     }
 
@@ -370,9 +368,7 @@ impl UserRepository for DieselUserRepo {
                     Err(err) => Err(err),
                 }
             })
-            .map_err(|err| {
-                AppError::GenWithMsgAndErr("Error putting User".to_string(), Box::new(err))
-            })?;
+            .map_err(|err| AppError::General(format!("Error putting User: err={:?}", &err)))?;
 
         Ok(curr_user)
     }

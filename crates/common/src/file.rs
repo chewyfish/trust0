@@ -27,16 +27,16 @@ pub fn file_mtime(filepath: &Path) -> Result<SystemTime, AppError> {
     match filepath.metadata() {
         Ok(meta) => match meta.modified() {
             Ok(mtime) => Ok(mtime),
-            Err(err) => Err(AppError::GenWithMsgAndErr(
-                format!("Error acquiring file metadata mtime: file={:?}", filepath),
-                Box::new(err),
-            )),
+            Err(err) => Err(AppError::General(format!(
+                "Error acquiring file metadata mtime: file={:?}, err={:?}",
+                filepath, &err
+            ))),
         },
 
-        Err(err) => Err(AppError::GenWithMsgAndErr(
-            format!("Error acquiring file metadata: file={:?}", filepath),
-            Box::new(err),
-        )),
+        Err(err) => Err(AppError::General(format!(
+            "Error acquiring file metadata: file={:?}, err={:?}",
+            filepath, &err
+        ))),
     }
 }
 
@@ -52,10 +52,10 @@ pub fn file_mtime(filepath: &Path) -> Result<SystemTime, AppError> {
 ///
 pub fn load_text_data(filepath_str: &str) -> Result<String, AppError> {
     fs::read_to_string(filepath_str).map_err(|err| {
-        AppError::GenWithMsgAndErr(
-            format!("Failed to read file: path={}", filepath_str),
-            Box::new(err),
-        )
+        AppError::General(format!(
+            "Failed to read file: path={}, err={:?}",
+            filepath_str, &err
+        ))
     })
 }
 
@@ -217,13 +217,10 @@ impl ReloadableTextFile {
         reloading: &Arc<Mutex<bool>>,
     ) -> Result<Self, AppError> {
         let filepath = PathBuf::from_str(filepath_str).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!(
-                    "Error converting string to file path: file={}",
-                    filepath_str
-                ),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Error converting string to file path: file={}, err={:?}",
+                filepath_str, &err
+            ))
         })?;
         Ok(ReloadableTextFile {
             path: filepath,
@@ -254,10 +251,10 @@ impl ReloadableFile for ReloadableTextFile {
                 *self.text_data.lock().unwrap().deref_mut() = text_data;
                 Ok(())
             }
-            Err(err) => Err(AppError::GenWithMsgAndErr(
-                format!("Error loading file: file={:?}", &self.path),
-                Box::new(err),
-            )),
+            Err(err) => Err(AppError::General(format!(
+                "Error loading file: file={:?}, err={:?}",
+                &self.path, &err
+            ))),
         }
     }
 
@@ -536,9 +533,10 @@ mod reload_tests {
         };
 
         <ReloadFileImpl as ReloadableFile>::spawn_reloader(file, Some(Duration::from_millis(50)));
-        *reloading.lock().unwrap() = false;
 
-        thread::sleep(Duration::from_millis(60));
+        thread::sleep(Duration::from_millis(50));
+        *reloading.lock().unwrap() = false;
+        thread::sleep(Duration::from_millis(75));
     }
 
     #[test]
@@ -555,9 +553,10 @@ mod reload_tests {
         };
 
         <ReloadFileImpl as ReloadableFile>::spawn_reloader(file, Some(Duration::from_millis(50)));
-        *reloading.lock().unwrap() = false;
 
-        thread::sleep(Duration::from_millis(60));
+        thread::sleep(Duration::from_millis(50));
+        *reloading.lock().unwrap() = false;
+        thread::sleep(Duration::from_millis(75));
     }
 
     #[test]

@@ -37,13 +37,10 @@ impl PostgresDbConn {
 
         let connection = Arc::new(Mutex::new(PgConnection::establish(database_url).map_err(
             |err| {
-                AppError::GenWithMsgAndErr(
-                    format!(
-                        "Error establishing postgres connection: url={}",
-                        database_url
-                    ),
-                    Box::new(err),
-                )
+                AppError::General(format!(
+                    "Error establishing postgres connection: url={}, err={:?}",
+                    &database_url, &err
+                ))
             },
         )?));
 

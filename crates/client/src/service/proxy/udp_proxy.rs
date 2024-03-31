@@ -14,13 +14,14 @@ use trust0_common::crypto::alpn;
 use trust0_common::error::AppError;
 use trust0_common::logging::error;
 use trust0_common::model::service::Service;
+use trust0_common::net::stream_utils;
 use trust0_common::net::tls_client::client_std;
 use trust0_common::net::tls_client::conn_std::TlsClientConnection;
 use trust0_common::net::udp_server::server_std;
 use trust0_common::proxy::event::ProxyEvent;
 use trust0_common::proxy::executor::{ProxyExecutorEvent, ProxyKey};
 use trust0_common::proxy::proxy_base::ProxyType;
-use trust0_common::target;
+use trust0_common::{sync, target};
 
 /// Client service proxy (UDP service client <-> TCP trust0 client)
 pub struct UdpClientProxy {
@@ -183,15 +184,10 @@ impl server_std::ServerVisitor for UdpClientProxyServerVisitor {
 
             let tls_client_conn = tls_client.get_connection().as_ref().unwrap();
 
-            let gateway_stream = tls_client_conn
-                .get_tcp_stream()
-                .try_clone()
-                .map_err(|err| {
-                    AppError::GenWithMsgAndErr(
-                        "Error trying to clone gateway proxy TLS stream".to_string(),
-                        Box::new(err),
-                    )
-                })?;
+            let gateway_stream = stream_utils::clone_std_tcp_stream(
+                tls_client_conn.get_tcp_stream(),
+                "udp-proxy-server",
+            )?;
 
             let proxy_conn_addrs = tls_client_conn.get_session_addrs().clone();
 
@@ -210,14 +206,17 @@ impl server_std::ServerVisitor for UdpClientProxyServerVisitor {
                 ),
             );
 
-            self.proxy_tasks_sender
-                .send(open_proxy_request)
-                .map_err(|err| {
-                    AppError::General(format!(
-                        "Error while sending request for new UDP proxy: proxy_key={}, err={:?}",
-                        &proxy_key, &err
-                    ))
-                })?;
+            let proxy_key_copy = proxy_key.clone();
+            sync::send_mpsc_channel_message(
+                &self.proxy_tasks_sender,
+                open_proxy_request,
+                Box::new(move || {
+                    format!(
+                        "Error while sending request for new UDP proxy: proxy_key={},",
+                        &proxy_key_copy
+                    )
+                }),
+            )?;
 
             // Setup proxy maps
             self.socket_channel_senders_by_proxy_key
@@ -235,22 +234,20 @@ impl server_std::ServerVisitor for UdpClientProxyServerVisitor {
         if let Some(socket_channel_sender) =
             self.socket_channel_senders_by_proxy_key.get(&proxy_key)
         {
-            return match socket_channel_sender.send(ProxyEvent::Message(
-                proxy_key.clone(),
-                *peer_addr,
-                data,
-            )) {
-                Ok(()) => Ok(()),
-                Err(err) => Err(AppError::GenWithMsgAndErr(
+            let proxy_key_copy = proxy_key.clone();
+            sync::send_mpsc_channel_message(
+                socket_channel_sender,
+                ProxyEvent::Message(proxy_key.clone(), *peer_addr, data),
+                Box::new(move || {
                     format!(
-                        "Error while sending message to socket channel: proxy_stream={}",
-                        &proxy_key
-                    ),
-                    Box::new(err),
-                )),
-            };
+                        "Error while sending message to socket channel: proxy_stream={},",
+                        &proxy_key_copy
+                    )
+                }),
+            )
+        } else {
+            Ok(())
         }
-        Ok(())
     }
 
     fn get_shutdown_requested(&self) -> bool {
@@ -287,16 +284,14 @@ impl ClientServiceProxyVisitor for UdpClientProxyServerVisitor {
         self.shutdown_requested = true;
 
         // Shutdown client-bound message poller
-        if let Err(err) = self.server_socket_channel_sender.send(ProxyEvent::Closed(
-            "Service proxy shutting down".to_string(),
-        )) {
-            error(
-                &target!(),
-                &format!(
-                    "Error sending proxy closed event to client-bound message poller: err={:?}",
-                    &err
-                ),
-            );
+        if let Err(err) = sync::send_mpsc_channel_message(
+            &self.server_socket_channel_sender,
+            ProxyEvent::Closed("Service proxy shutting down".to_string()),
+            Box::new(|| {
+                "Error sending proxy closed event to client-bound message poller:".to_string()
+            }),
+        ) {
+            error(&target!(), &format!("{:?}", &err));
         }
     }
 
@@ -307,9 +302,15 @@ impl ClientServiceProxyVisitor for UdpClientProxyServerVisitor {
         let mut errors: Vec<String> = vec![];
 
         for proxy_key in self.proxy_addrs_by_proxy_key.keys() {
-            if let Err(err) = proxy_tasks_sender.send(ProxyExecutorEvent::Close(proxy_key.clone()))
-            {
-                errors.push(format!("Error while sending request to close a UDP proxy connection: proxy_stream={}, err={:?}", &proxy_key, err));
+            let proxy_key_copy = proxy_key.clone();
+            if let Err(err) = sync::send_mpsc_channel_message(
+                proxy_tasks_sender,
+                ProxyExecutorEvent::Close(proxy_key.clone()),
+                Box::new(move || {
+                    format!("Error while sending request to close a UDP proxy connection: proxy_stream={},", &proxy_key_copy)
+                }),
+            ) {
+                errors.push(format!("{:?}", &err));
             }
 
             self.services_by_proxy_key.lock().unwrap().remove(proxy_key);
@@ -332,14 +333,19 @@ impl ClientServiceProxyVisitor for UdpClientProxyServerVisitor {
         proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
         proxy_key: &str,
     ) -> Result<(), AppError> {
-        if let Err(err) = proxy_tasks_sender.send(ProxyExecutorEvent::Close(proxy_key.to_string()))
-        {
-            Err(AppError::General(
-                format!("Error while sending request to close a UDP proxy connection: proxy_stream={}, err={:?}", &proxy_key, &err)))
-        } else {
-            self.remove_proxy_for_key(proxy_key);
-            Ok(())
-        }
+        let proxy_key_copy = proxy_key.to_string();
+        sync::send_mpsc_channel_message(
+            proxy_tasks_sender,
+            ProxyExecutorEvent::Close(proxy_key.to_string()),
+            Box::new(move || {
+                format!(
+                    "Error while sending request to close a UDP proxy connection: proxy_stream={},",
+                    &proxy_key_copy
+                )
+            }),
+        )?;
+        self.remove_proxy_for_key(proxy_key);
+        Ok(())
     }
 
     fn remove_proxy_for_key(&mut self, proxy_key: &str) -> bool {

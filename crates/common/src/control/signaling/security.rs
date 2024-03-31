@@ -55,10 +55,10 @@ impl CertificateReissueEvent {
     ///
     pub fn from_serde_value(value: &Value) -> Result<CertificateReissueEvent, AppError> {
         serde_json::from_value(value.clone()).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Error converting serde Value to CertificateReissueEvent".to_string(),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Error converting serde Value to CertificateReissueEvent: err={:?}",
+                &err
+            ))
         })
     }
 }
@@ -77,12 +77,7 @@ impl TryInto<Value> for &CertificateReissueEvent {
     type Error = AppError;
 
     fn try_into(self) -> Result<Value, Self::Error> {
-        serde_json::to_value(self).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Error converting Connection to serde Value".to_string(),
-                Box::new(err),
-            )
-        })
+        Ok(serde_json::to_value(self).unwrap())
     }
 }
 

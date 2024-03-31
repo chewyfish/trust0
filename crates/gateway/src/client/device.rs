@@ -68,10 +68,10 @@ impl Device {
         let mut cert_access_context = CertAccessContext::default();
 
         if let Some(cert_alt_subj_ext) = x509_cert.subject_alternative_name().map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Failed to parse subject alternative name".to_string(),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Failed to parse subject alternative name: err={:?}",
+                &err
+            ))
         })? {
             cert_alt_subj = cert_alt_subj_ext
                 .value
@@ -86,10 +86,10 @@ impl Device {
             if let Some(uri_value) = cert_alt_subj.get("URI") {
                 cert_access_context = serde_json::from_str(uri_value.first().unwrap().as_str())
                     .map_err(|err| {
-                        AppError::GenWithMsgAndErr(
-                            "Invalid Certificate Context JSON".to_string(),
-                            Box::new(err),
-                        )
+                        AppError::General(format!(
+                            "Invalid Certificate Context JSON: err={:?}",
+                            &err
+                        ))
                     })?;
             }
         }
@@ -165,10 +165,10 @@ impl Device {
         match cert_chain.first() {
             Some(cert) => Ok(parse_x509_certificate(cert.as_bytes())
                 .map_err(|err| {
-                    AppError::GenWithMsgAndErr(
-                        "Failed to parse client certificate".to_string(),
-                        Box::new(err),
-                    )
+                    AppError::General(format!(
+                        "Failed to parse client certificate: err={:?}",
+                        &err
+                    ))
                 })?
                 .1),
             None => Err(AppError::General(

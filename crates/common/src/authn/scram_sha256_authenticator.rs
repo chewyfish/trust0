@@ -1,6 +1,6 @@
 use crate::authn::authenticator::{AuthenticatorClient, AuthenticatorServer, AuthnMessage};
 use crate::error::AppError;
-use crate::model;
+use crate::{model, sync};
 use base64::prelude::*;
 use log::error;
 use scram::AuthenticationStatus;
@@ -41,6 +41,17 @@ pub fn hash_password(username: &str, password: &str, base64_encode: bool) -> Vec
 }
 
 /// Handle processing error
+///
+/// # Arguments
+///
+/// * `response_sender` - channel sender to send error message
+/// * `app_error` - A non-SCRAM protocol error
+/// * `scram_error` - A SCRAM protocol error
+///
+/// # Returns
+///
+/// A [`Result`] containing the corresponding [`AuthnMessage`] for the error.
+///
 fn process_error(
     response_sender: &Option<mpsc::Sender<AuthnMessage>>,
     app_error: &Option<AppError>,
@@ -69,16 +80,11 @@ fn process_error(
     };
 
     if response_sender.is_some() {
-        response_sender
-            .as_ref()
-            .unwrap()
-            .send(authn_msg.clone())
-            .map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    "Error sending SCRAM SHA256 error message".to_string(),
-                    Box::new(err),
-                )
-            })?;
+        sync::send_mpsc_channel_message(
+            response_sender.as_ref().unwrap(),
+            authn_msg.clone(),
+            Box::new(|| "Error sending SCRAM SHA256 error message:".to_string()),
+        )?;
     }
 
     Ok(authn_msg)
@@ -178,19 +184,18 @@ impl AuthenticatorClient for ScramSha256AuthenticatorClient {
             scram::ScramClient::new(&self.username, &self.password, None);
         let (server_response_handler, client_first_msg) = client_request_processor.client_first();
 
-        self.client_response_sender
-            .as_ref()
-            .unwrap()
-            .send(AuthnMessage::Payload(client_first_msg.clone()))
-            .map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    format!(
-                        "Error sending SCRAM SHA256 client first message: user={}, msg={}",
-                        self.username, &client_first_msg
-                    ),
-                    Box::new(err),
+        let username_copy = self.username.clone();
+        let msg_copy = client_first_msg.clone();
+        sync::send_mpsc_channel_message(
+            self.client_response_sender.as_ref().unwrap(),
+            AuthnMessage::Payload(client_first_msg.clone()),
+            Box::new(move || {
+                format!(
+                    "Error sending SCRAM SHA256 client first message: user={}, msg={}",
+                    &username_copy, &msg_copy
                 )
-            })?;
+            }),
+        )?;
 
         #[cfg(test)]
         {
@@ -216,13 +221,10 @@ impl AuthenticatorClient for ScramSha256AuthenticatorClient {
             Err(err) => {
                 return process_error(
                     &self.client_response_sender,
-                    &Some(AppError::GenWithMsgAndErr(
-                        format!(
-                            "Error receiving SCRAM SHA256 server first message: user={}",
-                            self.username
-                        ),
-                        Box::new(err),
-                    )),
+                    &Some(AppError::General(format!(
+                        "Error receiving SCRAM SHA256 server first message: user={}, err={:?}",
+                        &self.username, &err
+                    ))),
                     &None,
                 )
             }
@@ -242,19 +244,18 @@ impl AuthenticatorClient for ScramSha256AuthenticatorClient {
         // Process (build/send) client final auth message
         let (server_response_handler, client_final_msg) = client_response_processor.client_final();
 
-        self.client_response_sender
-            .as_ref()
-            .unwrap()
-            .send(AuthnMessage::Payload(client_final_msg.clone()))
-            .map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    format!(
-                        "Error sending SCRAM SHA256 client final message: user={}, msg={}",
-                        self.username, &client_final_msg
-                    ),
-                    Box::new(err),
+        let username_copy = self.username.clone();
+        let msg_copy = client_final_msg.clone();
+        sync::send_mpsc_channel_message(
+            self.client_response_sender.as_ref().unwrap(),
+            AuthnMessage::Payload(client_final_msg.clone()),
+            Box::new(move || {
+                format!(
+                    "Error sending SCRAM SHA256 client final message: user={}, msg={}",
+                    &username_copy, &msg_copy
                 )
-            })?;
+            }),
+        )?;
 
         #[cfg(test)]
         {
@@ -280,13 +281,10 @@ impl AuthenticatorClient for ScramSha256AuthenticatorClient {
             Err(err) => {
                 return process_error(
                     &None,
-                    &Some(AppError::GenWithMsgAndErr(
-                        format!(
-                            "Error receiving SCRAM SHA256 server final message: user={}",
-                            self.username
-                        ),
-                        Box::new(err),
-                    )),
+                    &Some(AppError::General(format!(
+                        "Error receiving SCRAM SHA256 server final message: user={}, err={:?}",
+                        &self.username, &err
+                    ))),
                     &None,
                 )
             }
@@ -311,16 +309,11 @@ impl AuthenticatorClient for ScramSha256AuthenticatorClient {
         inbound_msg: Option<AuthnMessage>,
     ) -> Result<Option<AuthnMessage>, AppError> {
         if inbound_msg.is_some() {
-            self.server_response_sender
-                .as_ref()
-                .unwrap()
-                .send(inbound_msg.unwrap())
-                .map_err(|err| {
-                    AppError::GenWithMsgAndErr(
-                        "Error sending SCRAM SHA256 client inbound message".to_string(),
-                        Box::new(err),
-                    )
-                })?;
+            sync::send_mpsc_channel_message(
+                self.server_response_sender.as_ref().unwrap(),
+                inbound_msg.unwrap(),
+                Box::new(|| "Error sending SCRAM SHA256 client inbound message:".to_string()),
+            )?;
         }
 
         match self
@@ -458,10 +451,10 @@ where
             Err(err) => {
                 return process_error(
                     &self.server_response_sender,
-                    &Some(AppError::GenWithMsgAndErr(
-                        "Error receiving SCRAM SHA256 client first message".to_string(),
-                        Box::new(err),
-                    )),
+                    &Some(AppError::General(format!(
+                        "Error receiving SCRAM SHA256 client first message: err={:?}",
+                        &err
+                    ))),
                     &None,
                 )
             }
@@ -482,19 +475,17 @@ where
         // Process (build/send) server first (challenge) message
         let (client_response_handler, server_first_msg) = server_response_processor.server_first();
 
-        self.server_response_sender
-            .as_ref()
-            .unwrap()
-            .send(AuthnMessage::Payload(server_first_msg.clone()))
-            .map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    format!(
-                        "Error sending SCRAM SHA256 server first message: msg={}",
-                        &server_first_msg
-                    ),
-                    Box::new(err),
+        let msg_copy = server_first_msg.clone();
+        sync::send_mpsc_channel_message(
+            self.server_response_sender.as_ref().unwrap(),
+            AuthnMessage::Payload(server_first_msg.clone()),
+            Box::new(move || {
+                format!(
+                    "Error sending SCRAM SHA256 server first message: msg={}",
+                    &msg_copy
                 )
-            })?;
+            }),
+        )?;
 
         #[cfg(test)]
         {
@@ -524,10 +515,10 @@ where
             Err(err) => {
                 return process_error(
                     &self.server_response_sender,
-                    &Some(AppError::GenWithMsgAndErr(
-                        "Error receiving SCRAM SHA256 client final message".to_string(),
-                        Box::new(err),
-                    )),
+                    &Some(AppError::General(format!(
+                        "Error receiving SCRAM SHA256 client final message: err={:?}",
+                        &err
+                    ))),
                     &None,
                 )
             }
@@ -547,19 +538,17 @@ where
         // Process (build/send) server final message
         let (auth_status, server_final_msg) = server_response_processor.server_final();
 
-        self.server_response_sender
-            .as_ref()
-            .unwrap()
-            .send(AuthnMessage::Payload(server_final_msg.clone()))
-            .map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    format!(
-                        "Error sending SCRAM SHA256 server final message: msg={}",
-                        &server_final_msg
-                    ),
-                    Box::new(err),
+        let msg_copy = server_final_msg.clone();
+        sync::send_mpsc_channel_message(
+            self.server_response_sender.as_ref().unwrap(),
+            AuthnMessage::Payload(server_final_msg.clone()),
+            Box::new(move || {
+                format!(
+                    "Error sending SCRAM SHA256 server final message: msg={}",
+                    &msg_copy
                 )
-            })?;
+            }),
+        )?;
 
         #[cfg(test)]
         {
@@ -585,16 +574,11 @@ where
         inbound_msg: Option<AuthnMessage>,
     ) -> Result<Option<AuthnMessage>, AppError> {
         if inbound_msg.is_some() {
-            self.client_response_sender
-                .as_ref()
-                .unwrap()
-                .send(inbound_msg.unwrap())
-                .map_err(|err| {
-                    AppError::GenWithMsgAndErr(
-                        "Error sending SCRAM SHA256 server inbound message".to_string(),
-                        Box::new(err),
-                    )
-                })?;
+            sync::send_mpsc_channel_message(
+                self.client_response_sender.as_ref().unwrap(),
+                inbound_msg.unwrap(),
+                Box::new(|| "Error sending SCRAM SHA256 server inbound message:".to_string()),
+            )?;
         }
 
         match self
@@ -825,7 +809,7 @@ pub mod test {
     }
 
     #[test]
-    fn scramsha256_process_error_when_has_sender_and_scram_error() {
+    fn scramsha256_process_error_when_has_sender_and_known_scram_error() {
         let channel = mpsc::channel();
 
         let result = process_error(
@@ -850,6 +834,25 @@ pub mod test {
                 AuthnMessage::Unauthenticated("InvalidServer".to_string())
             ),
             Err(err) => panic!("Unexpected channel result: err={:?}", &err),
+        }
+    }
+
+    #[test]
+    fn scramsha256_process_error_when_other_scram_error() {
+        let result = process_error(
+            &None,
+            &None,
+            &Some(scram::Error::Protocol(scram::Kind::InvalidNonce)),
+        );
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+        let authn_msg = result.unwrap();
+
+        match authn_msg {
+            AuthnMessage::Error(_) => {}
+            _ => panic!("Unexpected msg: msg={:?}", &authn_msg),
         }
     }
 

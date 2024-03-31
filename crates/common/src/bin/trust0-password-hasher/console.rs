@@ -48,13 +48,11 @@ impl ConsoleIO for Console {
     }
 
     fn write_data(&mut self, data: &[u8], flush_output: bool) -> Result<(), AppError> {
-        self.write_all(data).map_err(|err| {
-            AppError::GenWithMsgAndErr("Error writing data".to_string(), Box::new(err))
-        })?;
+        self.write_all(data)
+            .map_err(|err| AppError::General(format!("Error writing data: err={:?}", &err)))?;
         if flush_output {
-            self.flush().map_err(|err| {
-                AppError::GenWithMsgAndErr("Error flushing data".to_string(), Box::new(err))
-            })
+            self.flush()
+                .map_err(|err| AppError::General(format!("Error flushing data: err={:?}", &err)))
         } else {
             Ok(())
         }
@@ -64,19 +62,19 @@ impl ConsoleIO for Console {
         match is_password_input {
             true => match rpassword::read_password() {
                 Ok(line) => Ok(line.trim_end().to_string()),
-                Err(err) => Err(AppError::GenWithMsgAndErr(
-                    "Error reading console (pwd) line".to_string(),
-                    Box::new(err),
-                )),
+                Err(err) => Err(AppError::General(format!(
+                    "Error reading console (pwd) line: err={:?}",
+                    &err
+                ))),
             },
             false => {
                 let mut line: String = String::new();
                 match self.reader.read_line(&mut line) {
                     Ok(_) => Ok(line.trim_end().to_string()),
-                    Err(err) => Err(AppError::GenWithMsgAndErr(
-                        "Error reading console line".to_string(),
-                        Box::new(err),
-                    )),
+                    Err(err) => Err(AppError::General(format!(
+                        "Error reading console line: err={:?}",
+                        &err
+                    ))),
                 }
             }
         }
@@ -180,6 +178,64 @@ pub mod tests {
         let expected_output = format!("{} v{}{}", APP_TITLE, APP_VERSION, LINE_ENDING).into_bytes();
 
         assert_eq!(output_data, expected_output);
+    }
+
+    #[test]
+    fn console_write_data_with_flushing() {
+        let output_channel = mpsc::channel();
+        let reader: Box<dyn BufRead> = Box::new(Cursor::new(vec![]));
+        let writer: Box<dyn Write> = Box::new(ChannelWriter {
+            channel_sender: output_channel.0,
+        });
+        let mut console = Console { reader, writer };
+
+        if let Err(err) = console.write_data("hello".as_bytes(), true) {
+            panic!("Unexpected function result: err={:?}", &err);
+        }
+
+        let mut output_data: Vec<u8> = vec![];
+
+        loop {
+            let output_result = output_channel.1.try_recv();
+            if let Err(err) = output_result {
+                if let TryRecvError::Empty = err {
+                    break;
+                }
+                panic!("Unexpected output result: err={:?}", &err);
+            }
+            output_data.append(&mut output_result.unwrap());
+        }
+
+        assert_eq!(output_data, "hello".as_bytes().to_vec());
+    }
+
+    #[test]
+    fn console_write_data_without_flushing() {
+        let output_channel = mpsc::channel();
+        let reader: Box<dyn BufRead> = Box::new(Cursor::new(vec![]));
+        let writer: Box<dyn Write> = Box::new(ChannelWriter {
+            channel_sender: output_channel.0,
+        });
+        let mut console = Console { reader, writer };
+
+        if let Err(err) = console.write_data("hello".as_bytes(), false) {
+            panic!("Unexpected function result: err={:?}", &err);
+        }
+
+        let mut output_data: Vec<u8> = vec![];
+
+        loop {
+            let output_result = output_channel.1.try_recv();
+            if let Err(err) = output_result {
+                if let TryRecvError::Empty = err {
+                    break;
+                }
+                panic!("Unexpected output result: err={:?}", &err);
+            }
+            output_data.append(&mut output_result.unwrap());
+        }
+
+        assert_eq!(output_data, "hello".as_bytes().to_vec());
     }
 
     #[test]

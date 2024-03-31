@@ -11,6 +11,7 @@ use crate::service::manager::ServiceMgr;
 use trust0_common::control::pdu::{ControlChannel, MessageFrame};
 use trust0_common::error::AppError;
 use trust0_common::net::tls_client::conn_std;
+use trust0_common::sync;
 
 /// Control plane processor. Handles management and signaling channel messages
 pub struct ControlPlane {
@@ -97,11 +98,12 @@ impl ControlPlane {
     ) -> Result<(), AppError> {
         let event_sender = self.event_channel_sender.as_ref().unwrap();
 
-        if let Err(err) = event_sender.send(message).map_err(|err| {
-            AppError::GenWithMsgAndErr("Error sending connection event".to_string(), Box::new(err))
-        }) {
+        if let Err(err) = sync::send_mpsc_channel_message(
+            event_sender,
+            message,
+            Box::new(|| "Error sending connection event:".to_string()),
+        ) {
             let _ = event_sender.send(conn_std::ConnectionEvent::Closing);
-
             return Err(err);
         }
 

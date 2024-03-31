@@ -3,10 +3,8 @@
 <!-- TOC -->
   * [Trust0 SDP Service Access Framework](#trust0-sdp-service-access-framework)
     * [Summary](#summary)
-    * [To-Do](#to-do)
     * [Change History](#change-history)
     * [Documentation](#documentation)
-    * [Contributions](#contributions)
     * [License](#license)
 <!-- TOC -->
 
@@ -20,14 +18,6 @@ Trust0 is a [Zero Trust](https://en.wikipedia.org/wiki/Zero_trust_security_model
 
 This is pre-release code, use with care.
 
-### To-Do
-
-* Brainstorm solution for device posture trust assessment and rules processor for security enforcement
-* Strategize non-name resolution (DNS/hosts file/...) approach to handle client hostname verification for TLS-type service connections
-* Consider gateway-to-gateway service proxy routing (reasons of proximity, security, ...)
-* Consider gateway load-balancing, via client redirect (reasons of load, rollout deployment, ...)
-* Accommodate integration to well-known identity provider (IdP) systems/protocols for user authentication and 2FA purposes
-
 ### Change History
 
 Refer to [Trust0 Releases](https://github.com/chewyfish/trust0/releases)
@@ -40,10 +30,6 @@ Refer to the following for more information:
 * [docs/Invocation.md](./docs/Invocation.md) : Presents a brief synopsis on how to run the main Trust0 binaries
 * [docs/Utilities.md](./docs/Utilities.md) : Details several handy utilities, which facilitate various Trust0 chores
 * [docs/Examples.md](./docs/Examples.md) : Showcases the provided examples, that'll let you see Trust0 in action
-
-### Contributions
-
-We welcome and appreciate questions, bug issues, ideas and the like. However, code contributions are currently closed until after the first release.
 
 ### License
 

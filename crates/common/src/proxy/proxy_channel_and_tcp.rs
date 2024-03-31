@@ -65,16 +65,13 @@ impl ChannelAndTcpStreamProxy {
         proxy_channel_sender: &sync::mpsc::Sender<ProxyEvent>,
     ) -> Result<Self, AppError> {
         // Convert tcp stream to non-blocking
-        let tcp_stream = stream_utils::clone_std_tcp_stream(&tcp_stream)?;
+        let tcp_stream = stream_utils::clone_std_tcp_stream(&tcp_stream, "tcpchannel-proxy")?;
 
         tcp_stream.set_nonblocking(true).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!(
-                    "Failed making tcp stream non-blocking: stream_addr={}",
-                    &proxy_key
-                ),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Failed making tcp stream non-blocking: stream_addr={}, err={:?}",
+                &proxy_key, &err
+            ))
         })?;
 
         // Instantiate TcpStreamProxy
@@ -112,6 +109,7 @@ impl ChannelAndTcpStreamProxy {
             let socket_channel_receiver = self.socket_channel_receiver.clone();
             let tcp_stream = mio::net::TcpStream::from_std(stream_utils::clone_std_tcp_stream(
                 &self.tcp_stream,
+                "tcpchannel-proxy",
             )?);
             let mut tcp_stream_reader_writer = self.tcp_stream_reader_writer.clone();
             let proxy_key = self.proxy_key.clone();
@@ -127,10 +125,10 @@ impl ChannelAndTcpStreamProxy {
                         match socket_channel_receiver.lock().unwrap().recv() {
                             Ok(_socket_event) => _socket_event,
                             Err(err) => {
-                                proxy_error = Some(AppError::GenWithMsgAndErr(
-                                    "Error receiving proxy socket channel event".to_string(),
-                                    Box::new(err),
-                                ));
+                                proxy_error = Some(AppError::General(format!(
+                                    "Error receiving proxy socket channel event: err={:?}",
+                                    &err
+                                )));
                                 *closing.lock().unwrap() = true;
                                 continue 'EVENTS;
                             }
@@ -174,6 +172,7 @@ impl ChannelAndTcpStreamProxy {
             let server_socket_channel_sender = self.server_socket_channel_sender.clone();
             let mut tcp_stream = mio::net::TcpStream::from_std(stream_utils::clone_std_tcp_stream(
                 &self.tcp_stream,
+                "tcpchannel-proxy",
             )?);
             let mut tcp_stream_reader_writer = self.tcp_stream_reader_writer.clone();
             let proxy_key = self.proxy_key.clone();
@@ -192,10 +191,10 @@ impl ChannelAndTcpStreamProxy {
                             &proxy_channel_sender,
                             &closed,
                         );
-                        return Err(AppError::GenWithMsgAndErr(
-                            "Error creating new MIO poller".to_string(),
-                            Box::new(err),
-                        ));
+                        return Err(AppError::General(format!(
+                            "Error creating new MIO poller: err={:?}",
+                            &err
+                        )));
                     }
                 }
 
@@ -205,10 +204,10 @@ impl ChannelAndTcpStreamProxy {
                     mio::Interest::READABLE,
                 ) {
                     Self::perform_shutdown(&proxy_key, &tcp_stream, &proxy_channel_sender, &closed);
-                    return Err(AppError::GenWithMsgAndErr(
-                        "Error registering tcp stream in MIO registry".to_string(),
-                        Box::new(err),
-                    ));
+                    return Err(AppError::General(format!(
+                        "Error registering tcp stream in MIO registry: err={:?}",
+                        &err
+                    )));
                 }
 
                 let mut events = mio::Events::with_capacity(256);
@@ -222,10 +221,10 @@ impl ChannelAndTcpStreamProxy {
                     ) {
                         Err(err) if err.kind() == io::ErrorKind::WouldBlock => continue,
                         Err(err) => {
-                            proxy_error = Some(AppError::GenWithMsgAndErr(
-                                "Error while polling for IO events".to_string(),
-                                Box::new(err),
-                            ));
+                            proxy_error = Some(AppError::General(format!(
+                                "Error while polling for IO events: err={:?}",
+                                &err
+                            )));
                             *closing.lock().unwrap() = true;
                             continue 'EVENTS;
                         }
@@ -237,18 +236,21 @@ impl ChannelAndTcpStreamProxy {
                             match stream_utils::read_tcp_stream(&mut tcp_stream_reader_writer) {
                                 Ok(data) => {
                                     if !data.is_empty() {
-                                        match server_socket_channel_sender.send(
+                                        let proxy_key_copy = proxy_key.clone();
+                                        match crate::sync::send_mpsc_channel_message(
+                                            &server_socket_channel_sender,
                                             ProxyEvent::Message(
                                                 proxy_key.clone(),
                                                 socket_channel_addr,
                                                 data,
                                             ),
+                                            Box::new(move || {
+                                                format!("Error sending socket message to channel: proxy_stream={},", &proxy_key_copy)
+                                            }),
                                         ) {
                                             Ok(()) => {}
                                             Err(err) => {
-                                                proxy_error = Some(AppError::GenWithMsgAndErr(
-                                                    format!("Error sending socket message to channel: proxy_stream={}", &proxy_key),
-                                                    Box::new(err)));
+                                                proxy_error = Some(err);
                                                 *closing.lock().unwrap() = true;
                                                 continue 'EVENTS;
                                             }
@@ -267,10 +269,10 @@ impl ChannelAndTcpStreamProxy {
                                 TCP_STREAM_TOKEN,
                                 mio::Interest::READABLE,
                             ) {
-                                proxy_error = Some(AppError::GenWithMsgAndErr(
-                                    "Error registering tcp stream in MIO registry".to_string(),
-                                    Box::new(err),
-                                ));
+                                proxy_error = Some(AppError::General(format!(
+                                    "Error registering tcp stream in MIO registry: err={:?}",
+                                    &err
+                                )));
                                 *closing.lock().unwrap() = true;
                                 continue 'EVENTS;
                             }
@@ -357,14 +359,18 @@ impl ChannelAndTcpStreamProxy {
             ),
         }
 
-        if let Err(err) = proxy_channel_sender.send(ProxyEvent::Closed(proxy_key.to_string())) {
-            error(
-                &target!(),
-                &format!(
-                    "Error sending proxy closed message: proxy_stream={}, err={:?}",
-                    &proxy_key, err
-                ),
-            );
+        let proxy_key_copy = proxy_key.to_string();
+        if let Err(err) = crate::sync::send_mpsc_channel_message(
+            proxy_channel_sender,
+            ProxyEvent::Closed(proxy_key.to_string()),
+            Box::new(move || {
+                format!(
+                    "Error sending proxy closed message: proxy_stream={},",
+                    &proxy_key_copy
+                )
+            }),
+        ) {
+            error(&target!(), &format!("{:?}", &err));
         }
 
         *closed_state.lock().unwrap() = true;
@@ -419,10 +425,13 @@ pub mod tests {
         let socket_channel = sync::mpsc::channel();
         let server_socket_channel = sync::mpsc::channel();
         let connected_tcp_stream = ConnectedTcpStream::new()?;
-        let client_tcp_stream =
-            stream_utils::clone_std_tcp_stream(&connected_tcp_stream.client_stream.0)?;
-        let client_reader_writer: Box<dyn StreamReaderWriter> =
-            Box::new(stream_utils::clone_std_tcp_stream(&client_tcp_stream)?);
+        let client_tcp_stream = stream_utils::clone_std_tcp_stream(
+            &connected_tcp_stream.client_stream.0,
+            "test-tcpchannel-proxy",
+        )?;
+        let client_reader_writer: Box<dyn StreamReaderWriter> = Box::new(
+            stream_utils::clone_std_tcp_stream(&client_tcp_stream, "test-tcpchannel-proxy")?,
+        );
         let proxy_channel = sync::mpsc::channel();
         let proxy = ChannelAndTcpStreamProxy::new(
             proxy_key,
@@ -597,7 +606,11 @@ pub mod tests {
         let closed = Arc::new(Mutex::new(false));
 
         let tcp_stream = mio::net::TcpStream::from_std(
-            stream_utils::clone_std_tcp_stream(&proxy_result.3.client_stream.0).unwrap(),
+            stream_utils::clone_std_tcp_stream(
+                &proxy_result.3.client_stream.0,
+                "test-tcpchannel-proxy",
+            )
+            .unwrap(),
         );
 
         ChannelAndTcpStreamProxy::perform_shutdown(

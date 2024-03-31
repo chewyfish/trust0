@@ -14,10 +14,10 @@ use crate::error::AppError;
 ///
 pub fn stringify_asn_value(asn_attr: &Any<'_>) -> Result<String, AppError> {
     let convert_err_fn = |err| {
-        Err(AppError::GenWithMsgAndErr(
-            "Failed ASN value conversion".to_string(),
-            Box::new(err),
-        ))
+        Err(AppError::General(format!(
+            "Failed ASN value conversion: err={:?}",
+            &err
+        )))
     };
 
     match asn_attr.header.tag() {

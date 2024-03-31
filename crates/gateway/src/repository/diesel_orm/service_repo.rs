@@ -128,10 +128,10 @@ impl ServiceRepository for DieselServiceRepo {
                 Ok(_) => {}
                 Err(diesel::NotFound) => {}
                 Err(err) => {
-                    return Err(AppError::GenWithMsgAndErr(
-                        "Error putting Service".to_string(),
-                        Box::new(err),
-                    ))
+                    return Err(AppError::General(format!(
+                        "Error putting Service: err={:?}",
+                        &err
+                    )));
                 }
             }
         }
@@ -181,10 +181,10 @@ impl ServiceRepository for DieselServiceRepo {
                 service.service_id = service_id;
                 Ok(service)
             }
-            Err(err) => Err(AppError::GenWithMsgAndErr(
-                "Error putting Service".to_string(),
-                Box::new(err),
-            )),
+            Err(err) => Err(AppError::General(format!(
+                "Error putting Service: err={:?}",
+                &err
+            ))),
         }
     }
 
@@ -196,10 +196,10 @@ impl ServiceRepository for DieselServiceRepo {
         {
             Ok(service) => Ok(Some(service.into())),
             Err(diesel::NotFound) => Ok(None),
-            Err(err) => Err(AppError::GenWithMsgAndErr(
-                format!("Error getting Service: id={}", service_id),
-                Box::new(err),
-            )),
+            Err(err) => Err(AppError::General(format!(
+                "Error getting Service: id={}, err={:?}",
+                service_id, &err
+            ))),
         }
     }
 
@@ -208,7 +208,7 @@ impl ServiceRepository for DieselServiceRepo {
             .select(Service::as_select())
             .load(self.connection.lock().unwrap().deref_mut())
             .map_err(|err| {
-                AppError::GenWithMsgAndErr("Error getting all Services".to_string(), Box::new(err))
+                AppError::General(format!("Error getting all Services: err={:?}", &err))
             })?;
 
         Ok(services_list
@@ -228,10 +228,10 @@ impl ServiceRepository for DieselServiceRepo {
         {
             Ok(_) => Ok(Some(curr_service.unwrap())),
             Err(diesel::NotFound) => Ok(None),
-            Err(err) => Err(AppError::GenWithMsgAndErr(
-                format!("Error deleting Service: id={}", service_id),
-                Box::new(err),
-            )),
+            Err(err) => Err(AppError::General(format!(
+                "Error deleting Service: id={}, err={:?}",
+                service_id, &err
+            ))),
         }
     }
 }

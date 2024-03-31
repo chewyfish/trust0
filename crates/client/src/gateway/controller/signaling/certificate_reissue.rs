@@ -111,20 +111,13 @@ impl CertReissuanceProcessor {
     /// A [`Result`] indicating success/failure of write operation.
     ///
     fn write_console_line(&self, output_text: &str) -> Result<(), AppError> {
-        self.console_shell_output
-            .lock()
-            .unwrap()
+        let mut console_shell_output = self.console_shell_output.lock().unwrap();
+        console_shell_output
             .write_all(format!("{}{}", output_text, console::LINE_ENDING).as_bytes())
-            .map_err(|err| {
-                AppError::GenWithMsgAndErr("Error writing to STDOUT".to_string(), Box::new(err))
-            })?;
-        self.console_shell_output
-            .lock()
-            .unwrap()
+            .map_err(|err| AppError::General(format!("Error writing to STDOUT: err={:?}", &err)))?;
+        console_shell_output
             .flush()
-            .map_err(|err| {
-                AppError::GenWithMsgAndErr("Error flushing STDOUT".to_string(), Box::new(err))
-            })
+            .map_err(|err| AppError::General(format!("Error flushing STDOUT: err={:?}", &err)))
     }
 }
 
@@ -214,6 +207,33 @@ pub mod tests {
 
         let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
         assert!(output_data.is_empty());
+    }
+
+    #[test]
+    fn certreissueproc_on_loop_cycle_when_missing_event_data() {
+        let output_channel = mpsc::channel();
+        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+            channel_sender: output_channel.0,
+        })));
+        let mut processor = CertReissuanceProcessor::new(&Arc::new(Mutex::new(output_writer)));
+
+        let result = processor.on_loop_cycle(VecDeque::from(vec![SignalEvent::new(
+            control::pdu::CODE_OK,
+            &None,
+            &EventType::CertificateReissue,
+            &None,
+        )]));
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        let output_data = String::from_utf8(testutils::gather_rcvd_bytearr_channel_data(
+            &output_channel.1,
+        ))
+        .unwrap()
+        .replace("\\", "");
+        assert_eq!(output_data, console::SHELL_PROMPT.to_string());
     }
 
     #[test]

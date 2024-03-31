@@ -69,12 +69,7 @@ impl TryInto<MessageFrame> for &SignalEvent {
     type Error = AppError;
 
     fn try_into(self) -> Result<MessageFrame, Self::Error> {
-        let event_type = serde_json::to_value(self.event_type.clone()).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Error converting EventType to Value".to_string(),
-                Box::new(err),
-            )
-        })?;
+        let event_type = serde_json::to_value(self.event_type.clone()).unwrap();
         Ok(MessageFrame::new(
             ControlChannel::Signaling,
             self.code,

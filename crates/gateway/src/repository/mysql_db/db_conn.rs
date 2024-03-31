@@ -37,10 +37,10 @@ impl MysqlDbConn {
 
         let connection = Arc::new(Mutex::new(
             MysqlConnection::establish(database_url).map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    format!("Error establishing mysql connection: url={}", database_url),
-                    Box::new(err),
-                )
+                AppError::General(format!(
+                    "Error establishing mysql connection: url={}, err={:?}",
+                    database_url, &err
+                ))
             })?,
         ));
 

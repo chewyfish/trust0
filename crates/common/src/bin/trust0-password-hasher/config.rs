@@ -94,6 +94,29 @@ pub mod tests {
     }
 
     #[test]
+    fn authntype_display() {
+        assert_eq!(format!("{:?}", AuthnType::ScramSha256), "ScramSha256");
+        assert_eq!(format!("{}", AuthnType::ScramSha256), "scram-sha256");
+    }
+
+    #[test]
+    fn authntype_from_when_valid() {
+        assert_eq!(
+            <&str as Into<AuthnType>>::into("scram-sha256"),
+            AuthnType::ScramSha256
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn authntype_from_when_invalid() {
+        assert_eq!(
+            <&str as Into<AuthnType>>::into("INVALID"),
+            AuthnType::ScramSha256
+        );
+    }
+
+    #[test]
     fn appcfg_new_when_scramsha256_authn_supplied() {
         let result;
         {

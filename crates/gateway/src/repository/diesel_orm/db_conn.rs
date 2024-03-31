@@ -72,13 +72,10 @@ pub mod tests {
             // set up current schema
             let migrations_path: PathBuf = MIGRATION_DIR_PATHPARTS.iter().collect();
             let migrations = FileBasedMigrations::from_path(&migrations_path).map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    format!(
-                        "Failed building postgres migrations object: path={:?}",
-                        &migrations_path
-                    ),
-                    Box::new(err),
-                )
+                AppError::General(format!(
+                    "Failed building postgres migrations object: path={:?}, err={:?}",
+                    &migrations_path, &err
+                ))
             })?;
 
             let db_url = pg_embed.lock().unwrap().full_db_uri(DB_NAME).clone();
@@ -158,23 +155,17 @@ pub mod tests {
             // Set up new DB
             if database_dir.exists() {
                 fs::remove_dir_all(&database_dir).map_err(|err| {
-                    AppError::GenWithMsgAndErr(
-                        format!(
-                            "Error removing embedded Postgres DB directory: path={:?}",
-                            &database_dir
-                        ),
-                        Box::new(err),
-                    )
+                    AppError::General(format!(
+                        "Error removing embedded Postgres DB directory: path={:?}, err={:?}",
+                        &database_dir, &err
+                    ))
                 })?;
             }
             fs::create_dir_all(&database_dir).map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    format!(
-                        "Error creating embedded Postgres DB directory: path={:?}",
-                        &database_dir
-                    ),
-                    Box::new(err),
-                )
+                AppError::General(format!(
+                    "Error creating embedded Postgres DB directory: path={:?}, err={:?}",
+                    &database_dir, &err
+                ))
             })?;
 
             let database_dir_copy = database_dir.clone();

@@ -102,10 +102,10 @@ impl RoleRepository for DieselRoleRepo {
                 Ok(_) => {}
                 Err(diesel::NotFound) => {}
                 Err(err) => {
-                    return Err(AppError::GenWithMsgAndErr(
-                        "Error putting Role".to_string(),
-                        Box::new(err),
-                    ))
+                    return Err(AppError::General(format!(
+                        "Error putting Role: err={:?}",
+                        &err
+                    )))
                 }
             }
         }
@@ -139,10 +139,10 @@ impl RoleRepository for DieselRoleRepo {
                 role.role_id = role_id;
                 Ok(role)
             }
-            Err(err) => Err(AppError::GenWithMsgAndErr(
-                "Error putting Role".to_string(),
-                Box::new(err),
-            )),
+            Err(err) => Err(AppError::General(format!(
+                "Error putting Role: err={:?}",
+                &err
+            ))),
         }
     }
 
@@ -154,10 +154,10 @@ impl RoleRepository for DieselRoleRepo {
         {
             Ok(role) => Ok(Some(role.into())),
             Err(diesel::NotFound) => Ok(None),
-            Err(err) => Err(AppError::GenWithMsgAndErr(
-                format!("Error getting Role: id={}", role_id),
-                Box::new(err),
-            )),
+            Err(err) => Err(AppError::General(format!(
+                "Error getting Role: id={}, err={:?}",
+                role_id, &err
+            ))),
         }
     }
 
@@ -165,9 +165,7 @@ impl RoleRepository for DieselRoleRepo {
         let roles_list: Vec<Role> = roles
             .select(Role::as_select())
             .load(self.connection.lock().unwrap().deref_mut())
-            .map_err(|err| {
-                AppError::GenWithMsgAndErr("Error getting all Roles".to_string(), Box::new(err))
-            })?;
+            .map_err(|err| AppError::General(format!("Error getting all Roles: err={:?}", &err)))?;
 
         Ok(roles_list
             .iter()
@@ -186,10 +184,10 @@ impl RoleRepository for DieselRoleRepo {
         {
             Ok(_) => Ok(Some(curr_role.unwrap())),
             Err(diesel::NotFound) => Ok(None),
-            Err(err) => Err(AppError::GenWithMsgAndErr(
-                format!("Error deleting Role: id={}", role_id),
-                Box::new(err),
-            )),
+            Err(err) => Err(AppError::General(format!(
+                "Error deleting Role: id={}, err={:?}",
+                role_id, &err
+            ))),
         }
     }
 }
