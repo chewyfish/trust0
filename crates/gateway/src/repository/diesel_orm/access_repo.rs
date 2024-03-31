@@ -131,10 +131,10 @@ impl AccessRepository for DieselServiceAccessRepo {
                 "Error putting ServiceAccess: val={:?}",
                 &access
             ))),
-            Err(err) => Err(AppError::GenWithMsgAndErr(
-                "Error putting ServiceAccess".to_string(),
-                Box::new(err),
-            )),
+            Err(err) => Err(AppError::General(format!(
+                "Error putting ServiceAccess: err={:?}",
+                &err
+            ))),
         }
     }
 
@@ -155,13 +155,10 @@ impl AccessRepository for DieselServiceAccessRepo {
                 Ok(Some(access))
             }
             Err(diesel::NotFound) => Ok(None),
-            Err(err) => Err(AppError::GenWithMsgAndErr(
-                format!(
-                    "Error getting ServiceAccess: svc_id={}, type={:?}, ent_id={}",
-                    service_id, entity_type, entity_id
-                ),
-                Box::new(err),
-            )),
+            Err(err) => Err(AppError::General(format!(
+                "Error getting ServiceAccess: svc_id={}, type={:?}, ent_id={}, err{:?}",
+                service_id, &entity_type, entity_id, &err
+            ))),
         }
     }
 
@@ -185,13 +182,10 @@ impl AccessRepository for DieselServiceAccessRepo {
             .select(ServiceAccess::as_select())
             .load(self.connection.lock().unwrap().deref_mut())
             .map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    format!(
-                        "Error getting ServiceAccess: svc_id={}, user_id={}",
-                        service_id, user.user_id
-                    ),
-                    Box::new(err),
-                )
+                AppError::General(format!(
+                    "Error getting ServiceAccess: svc_id={}, user_id={}, err={:?}",
+                    service_id, user.user_id, &err
+                ))
             })?;
 
         Ok(access_list.first().map(|access| {
@@ -217,10 +211,10 @@ impl AccessRepository for DieselServiceAccessRepo {
             .select(ServiceAccess::as_select())
             .load(self.connection.lock().unwrap().deref_mut())
             .map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    format!("Error getting ServiceAccess: user_id={}", user.user_id),
-                    Box::new(err),
-                )
+                AppError::General(format!(
+                    "Error getting ServiceAccess: user_id={}: err={:?}",
+                    user.user_id, &err
+                ))
             })?;
 
         Ok(access_list
@@ -253,13 +247,10 @@ impl AccessRepository for DieselServiceAccessRepo {
         {
             Ok(_) => Ok(curr_access),
             Err(diesel::NotFound) => Ok(None),
-            Err(err) => Err(AppError::GenWithMsgAndErr(
-                format!(
-                    "Error getting ServiceAccess: svc_id={}, type={:?}, ent_id={}",
-                    service_id, entity_type, entity_id
-                ),
-                Box::new(err),
-            )),
+            Err(err) => Err(AppError::General(format!(
+                "Error getting ServiceAccess: svc_id={}, type={:?}, ent_id={}, err={:?}",
+                service_id, &entity_type, entity_id, &err
+            ))),
         }
     }
 }

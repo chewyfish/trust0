@@ -138,7 +138,7 @@ impl GatewayServiceMgr {
         loop {
             // Get next request task
             let proxy_event = proxy_events_receiver.recv().map_err(|err| {
-                AppError::GenWithMsgAndErr("Error receiving proxy event".to_string(), Box::new(err))
+                AppError::General(format!("Error receiving proxy event: err={:?}", &err))
             })?;
 
             // Process event
@@ -379,13 +379,11 @@ impl ServiceMgr for GatewayServiceMgr {
                     ),
                 ),
                 Err(err) => {
-                    return Err(AppError::GenWithMsgAndErr(
+                    return Err(AppError::General(
                         format!(
-                        "Failed shutting down service proxy connection: svc_id={}, proxy_stream={}",
-                        service_id, proxy_key
-                    ),
-                        Box::new(err),
-                    ))
+                            "Failed shutting down service proxy connection: svc_id={}, proxy_stream={}, err={:?}",
+                        service_id, &proxy_key, &err
+                    )));
                 }
             }
         }

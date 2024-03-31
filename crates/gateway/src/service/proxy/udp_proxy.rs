@@ -18,11 +18,13 @@ use trust0_common::error::AppError;
 use trust0_common::model::service::Service;
 #[cfg(test)]
 use trust0_common::model::user;
+use trust0_common::net::stream_utils;
 use trust0_common::net::tls_server::conn_std::TlsServerConnection;
 use trust0_common::net::tls_server::{conn_std, server_std};
 use trust0_common::proxy::event::ProxyEvent;
 use trust0_common::proxy::executor::ProxyExecutorEvent;
 use trust0_common::proxy::proxy_base::ProxyType;
+use trust0_common::sync;
 
 /// Gateway service proxy (TCP trust0 gateway <-> UDP service)
 pub struct UdpGatewayProxy {
@@ -231,22 +233,19 @@ impl server_std::ServerVisitor for UdpGatewayProxyServerVisitor {
             .dns_client
             .lookup_ip(self.service.host.as_str())
             .map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    format!("Failed resolving host: host={}", &self.service.host),
-                    Box::new(err),
-                )
+                AppError::General(format!(
+                    "Failed resolving host: host={}, err={:?}",
+                    &self.service.host, &err
+                ))
             })?;
 
         let udp_socket =
             UdpSocket::bind(format!("{}:0", &self.app_config.gateway_service_reply_host)).map_err(
                 |err| {
-                    AppError::GenWithMsgAndErr(
-                        format!(
-                            "Error binding service reply UDP socket: reply_host={}",
-                            &self.app_config.gateway_service_reply_host
-                        ),
-                        Box::new(err),
-                    )
+                    AppError::General(format!(
+                        "Error binding service reply UDP socket: reply_host={}, err={:?}",
+                        &self.app_config.gateway_service_reply_host, &err
+                    ))
                 },
             )?;
 
@@ -256,25 +255,24 @@ impl server_std::ServerVisitor for UdpGatewayProxyServerVisitor {
             match udp_socket.connect(remote_addr) {
                 Ok(()) => {
                     service_addr = Some(remote_addr);
-                    udp_socket.set_nonblocking(true).map_err(|err| {
-                        AppError::GenWithMsgAndErr(
+                    let udp_socket_str = format!("{:?}", &udp_socket);
+                    stream_utils::set_std_udp_socket_blocking(
+                        &udp_socket,
+                        false,
+                        Box::new(move || {
                             format!(
                                 "Failed making socket non-blocking: socket={:?}",
-                                &udp_socket
-                            ),
-                            Box::new(err),
-                        )
-                    })?;
+                                &udp_socket_str
+                            )
+                        }),
+                    )?;
                     break;
                 }
                 Err(err) => {
-                    response_err = Some(AppError::GenWithMsgAndErr(
-                        format!(
-                            "Failed connect to service endpoint(s): addr={:?}, svc={:?}",
-                            &remote_addr, &self.service
-                        ),
-                        Box::new(err),
-                    ))
+                    response_err = Some(AppError::General(format!(
+                        "Failed connect to service endpoint(s): addr={:?}, svc={:?}, err={:?}",
+                        &remote_addr, &self.service, &err
+                    )));
                 }
             }
         }
@@ -300,15 +298,7 @@ impl server_std::ServerVisitor for UdpGatewayProxyServerVisitor {
             &udp_socket.local_addr().ok(),
             &Some(service_addr),
         );
-        let client_stream = tcp_stream.try_clone().map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!(
-                    "Unable to clone client service proxy stream: client_stream={:?}",
-                    tcp_stream
-                ),
-                Box::new(err),
-            )
-        })?;
+        let client_stream = stream_utils::clone_std_tcp_stream(tcp_stream, "udp-proxy-server")?;
 
         let open_proxy_request = ProxyExecutorEvent::OpenTcpAndUdpProxy(
             proxy_key.clone(),
@@ -322,14 +312,17 @@ impl server_std::ServerVisitor for UdpGatewayProxyServerVisitor {
             ),
         );
 
-        self.proxy_tasks_sender
-            .send(open_proxy_request)
-            .map_err(|err| {
-                AppError::General(format!(
-                    "Error while sending request for new UDP proxy: proxy_key={}, err={:?}",
-                    &proxy_key, &err
-                ))
-            })?;
+        let proxy_key_copy = proxy_key.clone();
+        sync::send_mpsc_channel_message(
+            &self.proxy_tasks_sender,
+            open_proxy_request,
+            Box::new(move || {
+                format!(
+                    "Error while sending request for new UDP proxy: proxy_key={},",
+                    &proxy_key_copy
+                )
+            }),
+        )?;
 
         // Set up proxy maps
 
@@ -397,10 +390,15 @@ impl GatewayServiceProxyVisitor for UdpGatewayProxyServerVisitor {
 
         for proxy_keys in proxy_keys_lists {
             for proxy_key in proxy_keys {
-                if let Err(err) =
-                    proxy_tasks_sender.send(ProxyExecutorEvent::Close(proxy_key.0.clone()))
-                {
-                    errors.push(format!("Error while sending request to close a UDP proxy connection: proxy_stream={}, err={:?}", &proxy_key.0, err));
+                let proxy_key_copy = proxy_key.0.clone();
+                if let Err(err) = sync::send_mpsc_channel_message(
+                    proxy_tasks_sender,
+                    ProxyExecutorEvent::Close(proxy_key.0.clone()),
+                    Box::new(move || {
+                        format!("Error while sending request to close a UDP proxy connection: proxy_stream={},", &proxy_key_copy)
+                    }),
+                ) {
+                    errors.push(format!("{:?}", &err));
                 } else {
                     self.remove_proxy_for_key(&proxy_key.0);
                 }
@@ -422,14 +420,19 @@ impl GatewayServiceProxyVisitor for UdpGatewayProxyServerVisitor {
         proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
         proxy_key: &str,
     ) -> Result<(), AppError> {
-        if let Err(err) = proxy_tasks_sender.send(ProxyExecutorEvent::Close(proxy_key.to_string()))
-        {
-            Err(AppError::General(
-            format!("Error while sending request to close a UDP proxy connection: proxy_stream={}, err={:?}", &proxy_key, &err)))
-        } else {
-            self.remove_proxy_for_key(proxy_key);
-            Ok(())
-        }
+        let proxy_key_copy = proxy_key.to_string();
+        sync::send_mpsc_channel_message(
+            proxy_tasks_sender,
+            ProxyExecutorEvent::Close(proxy_key.to_string()),
+            Box::new(move || {
+                format!(
+                    "Error while sending request to close a UDP proxy connection: proxy_stream={},",
+                    &proxy_key_copy
+                )
+            }),
+        )?;
+        self.remove_proxy_for_key(proxy_key);
+        Ok(())
     }
 
     fn remove_proxy_for_key(&mut self, proxy_key: &str) -> bool {
@@ -590,7 +593,11 @@ pub mod tests {
                 .unwrap(),
             ))
             .unwrap(),
-            stream_utils::clone_std_tcp_stream(&connected_tcp_stream.server_stream.0).unwrap(),
+            stream_utils::clone_std_tcp_stream(
+                &connected_tcp_stream.server_stream.0,
+                "test-udp-proxy-server",
+            )
+            .unwrap(),
         )) {
             panic!("Unexpected result: err={:?}", &err);
         }
@@ -723,7 +730,11 @@ pub mod tests {
                     .unwrap(),
                 ))
                 .unwrap(),
-                stream_utils::clone_std_tcp_stream(&connected_tcp_stream.server_stream.0).unwrap(),
+                stream_utils::clone_std_tcp_stream(
+                    &connected_tcp_stream.server_stream.0,
+                    "test-udp-proxy-server",
+                )
+                .unwrap(),
             ))
             .unwrap();
 
@@ -794,7 +805,11 @@ pub mod tests {
                     .unwrap(),
                 ))
                 .unwrap(),
-                stream_utils::clone_std_tcp_stream(&connected_tcp_stream.server_stream.0).unwrap(),
+                stream_utils::clone_std_tcp_stream(
+                    &connected_tcp_stream.server_stream.0,
+                    "test-udp-proxy-server",
+                )
+                .unwrap(),
             ))
             .unwrap();
 

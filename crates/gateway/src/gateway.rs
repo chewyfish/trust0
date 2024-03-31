@@ -410,7 +410,11 @@ pub mod tests {
                 proxy_base::tests::create_tls_server_config(vec![alpn_protocol]).unwrap(),
             ))
             .unwrap(),
-            stream_utils::clone_std_tcp_stream(&connected_tcp_stream.server_stream.0).unwrap(),
+            stream_utils::clone_std_tcp_stream(
+                &connected_tcp_stream.server_stream.0,
+                "test-t0g-conn",
+            )
+            .unwrap(),
         ));
 
         if let Err(err) = &client_conn_result {
@@ -465,7 +469,11 @@ pub mod tests {
                 proxy_base::tests::create_tls_server_config(vec![alpn_protocol]).unwrap(),
             ))
             .unwrap(),
-            stream_utils::clone_std_tcp_stream(&connected_tcp_stream.server_stream.0).unwrap(),
+            stream_utils::clone_std_tcp_stream(
+                &connected_tcp_stream.server_stream.0,
+                "test-t0g-conn",
+            )
+            .unwrap(),
         ));
 
         if let Err(err) = &client_conn_result {

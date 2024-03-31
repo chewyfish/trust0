@@ -512,10 +512,7 @@ impl AppConfig {
 
         // Miscellaneous
         let dns_client = Resolver::from_system_conf().map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Error instantiating DNS resolver".to_string(),
-                Box::new(err),
-            )
+            AppError::General(format!("Error instantiating DNS resolver: err={:?}", &err))
         })?;
 
         // Instantiate AppConfig
@@ -740,10 +737,7 @@ pub mod tests {
         };
 
         let dns_client = Resolver::from_system_conf().map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Error instantiating DNS resolver".to_string(),
-                Box::new(err),
-            )
+            AppError::General(format!("Error instantiating DNS resolver: err={:?}", &err))
         })?;
 
         Ok(AppConfig {

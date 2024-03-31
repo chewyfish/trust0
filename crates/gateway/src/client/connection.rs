@@ -17,7 +17,7 @@ use trust0_common::error::AppError;
 use trust0_common::logging::{error, info};
 use trust0_common::model::user::{Status, User};
 use trust0_common::net::tls_server::conn_std::{self, TlsConnection};
-use trust0_common::{crypto, target};
+use trust0_common::{crypto, sync, target};
 
 /// tls_server::std_conn::Connection strategy visitor pattern implementation
 pub struct ClientConnVisitor {
@@ -402,18 +402,22 @@ impl conn_std::ConnectionVisitor for ClientConnVisitor {
 
         let event_sender = self.event_channel_sender.as_ref().unwrap();
 
-        if let Err(err) = event_sender.send(conn_std::ConnectionEvent::Write(
-            format!("{}{}", msg, config::LINE_ENDING).into_bytes(),
-        )) {
+        let msg_copy = msg.clone();
+        if let Err(err) = sync::send_mpsc_channel_message(
+            event_sender,
+            conn_std::ConnectionEvent::Write(
+                format!("{}{}", msg, config::LINE_ENDING).into_bytes(),
+            ),
+            Box::new(move || {
+                format!(
+                    "Error sending error message response: respmsg={}",
+                    &msg_copy
+                )
+            }),
+        ) {
             let _ = event_sender.send(conn_std::ConnectionEvent::Closing);
 
-            error(
-                &target!(),
-                &format!(
-                    "Error sending error message response: err={:?}, respmsg={}",
-                    err, msg
-                ),
-            );
+            error(&target!(), &format!("{:?}", &err));
         }
     }
 }

@@ -66,13 +66,11 @@ impl InMemRoleRepo {
             self.reloader_new_data.lock().unwrap().as_str(),
         )
         .map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!(
-                    "Failed to parse JSON: path={}",
-                    &self.source_file.as_ref().unwrap()
-                ),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Failed to parse JSON: path={}, err={:?}",
+                &self.source_file.as_ref().unwrap(),
+                &err
+            ))
         })?;
 
         // Update database
@@ -101,16 +99,16 @@ impl RoleRepository for InMemRoleRepo {
         self.source_file = Some(connect_spec.to_string());
 
         let data = fs::read_to_string(connect_spec).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!("Failed to read file: path={}", connect_spec),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Failed to read file: path={}, err={:?}",
+                connect_spec, &err
+            ))
         })?;
         let roles: Vec<Role> = serde_json::from_str(&data).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!("Failed to parse JSON: path={}", connect_spec),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Failed to parse JSON: path={}, err={:?}",
+                connect_spec, &err
+            ))
         })?;
 
         for role in roles.iter().as_ref() {
