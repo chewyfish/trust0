@@ -64,19 +64,16 @@ impl Server {
         let server_addr: SocketAddr = self.listen_addr.parse()?;
 
         let tcp_listener = TcpListener::bind(server_addr).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!("Error setting up listener: server_addr={:?}", &server_addr),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Error setting up listener: server_addr={:?}, err={:?}",
+                &server_addr, &err
+            ))
         })?;
         tcp_listener.set_nonblocking(true).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!(
-                    "Failed making listener non-blocking: server_addr={:?}",
-                    &server_addr
-                ),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Failed making listener non-blocking: server_addr={:?}, err={:?}",
+                &server_addr, &err
+            ))
         })?;
 
         self.tcp_listener = Some(tcp_listener);
@@ -198,24 +195,18 @@ impl Server {
                     if err.kind() == io::ErrorKind::WouldBlock {
                         AppError::WouldBlock
                     } else {
-                        AppError::GenWithMsgAndErr(
-                            format!(
-                                "Error accepting connection: server_addr={:?}",
-                                &self.listen_addr
-                            ),
-                            Box::new(err),
-                        )
+                        AppError::General(format!(
+                            "Error accepting connection: server_addr={:?}, err={:?}",
+                            &self.listen_addr, &err
+                        ))
                     }
                 })?;
 
         tcp_stream.set_nonblocking(true).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!(
-                    "Failed making socket non-blocking: server_addr={:?}, peer_addr={:?}",
-                    &self.listen_addr, &peer_addr
-                ),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Failed making socket non-blocking: server_addr={:?}, peer_addr={:?}, err={:?}",
+                &self.listen_addr, &peer_addr, &err
+            ))
         })?;
 
         let connection = self
@@ -341,6 +332,7 @@ pub mod tests {
     use crate::net::stream_utils;
     use crate::net::tcp_server::conn_std::tests::MockConnVisit;
     use mockall::{mock, predicate};
+    use std::io::Write;
     use std::sync::mpsc;
 
     // mocks
@@ -443,18 +435,45 @@ pub mod tests {
     }
 
     #[test]
-    fn server_poll_new_connections_when_2nd_iteration_shutdown_request() {
+    fn server_poll_new_connections_when_1_message_and_then_shutdown() {
         let tcp_listener = TcpListener::bind("127.0.0.1:0").unwrap();
         tcp_listener.set_nonblocking(true).unwrap();
+        let mut client_stream = TcpStream::connect(tcp_listener.local_addr().unwrap()).unwrap();
+
         let mut visitor = MockServerVisit::new();
         visitor
             .expect_get_shutdown_requested()
             .times(1)
-            .return_once(|| false);
+            .return_once(move || {
+                if let Err(err) = client_stream.write_all("hello".as_bytes()) {
+                    panic!("Error writing TCP socket message: err={:?}", &err);
+                }
+                false
+            });
         visitor
             .expect_get_shutdown_requested()
             .times(1)
             .return_once(|| true);
+        visitor
+            .expect_create_client_conn()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|_| {
+                Ok(conn_std::tests::create_connection(
+                    Box::new(MockConnVisit::new()),
+                    None,
+                    Box::new(stream_utils::tests::MockStreamReader::new()),
+                    Box::new(stream_utils::tests::MockStreamWriter::new()),
+                    mpsc::channel(),
+                    false,
+                ))
+            });
+        visitor
+            .expect_on_conn_accepted()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|_| Ok(()));
+
         let mut server = Server {
             visitor: Arc::new(Mutex::new(visitor)),
             tcp_listener: Some(tcp_listener),
@@ -571,7 +590,11 @@ pub mod tests {
         let conn = conn_std::tests::create_connection(
             Box::new(conn_visitor),
             Some(
-                stream_utils::clone_std_tcp_stream(&connected_tcp_stream.server_stream.0).unwrap(),
+                stream_utils::clone_std_tcp_stream(
+                    &connected_tcp_stream.server_stream.0,
+                    "test-net-tcp-server",
+                )
+                .unwrap(),
             ),
             Box::new(stream_reader),
             Box::new(stream_utils::tests::MockStreamWriter::new()),

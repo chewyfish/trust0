@@ -76,19 +76,16 @@ impl Server {
         let server_addr: SocketAddr = self.listen_addr.parse()?;
 
         let tcp_listener = TcpListener::bind(server_addr).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!("Error setting up listener: server_addr={:?}", &server_addr),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Error setting up listener: server_addr={:?}, err={:?}",
+                &server_addr, &err
+            ))
         })?;
         tcp_listener.set_nonblocking(true).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!(
-                    "Failed making listener non-blocking: server_addr={:?}",
-                    &server_addr
-                ),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Failed making listener non-blocking: server_addr={:?}, err={:?}",
+                &server_addr, &err
+            ))
         })?;
 
         self.tcp_listener = Some(tcp_listener);
@@ -253,13 +250,10 @@ impl Server {
                     if err.kind() == io::ErrorKind::WouldBlock {
                         AppError::WouldBlock
                     } else {
-                        AppError::GenWithMsgAndErr(
-                            format!(
-                                "Error accepting connection: server_addr={:?}",
-                                &self.listen_addr
-                            ),
-                            Box::new(err),
-                        )
+                        AppError::General(format!(
+                            "Error accepting connection: server_addr={:?}, err={:?}",
+                            &self.listen_addr, &err
+                        ))
                     }
                 })?;
 
@@ -268,13 +262,10 @@ impl Server {
         let accepted = loop {
             acceptor.read_tls(&mut tcp_stream).unwrap();
             if let Some(accepted) = acceptor.accept().map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    format!(
-                        "Error reading TLS client hello: server_addr={:?}, peer_addr={:?}",
-                        &self.listen_addr, &peer_addr
-                    ),
-                    Box::new(err.clone()),
-                )
+                AppError::General(format!(
+                    "Error reading TLS client hello: server_addr={:?}, peer_addr={:?}, err={:?}",
+                    &self.listen_addr, &peer_addr, &err
+                ))
             })? {
                 break accepted;
             }
@@ -284,23 +275,17 @@ impl Server {
             Arc::new(self.visitor.lock().unwrap().on_tls_handshaking(&accepted)?);
 
         let mut tls_srv_conn = accepted.into_connection(tls_server_config).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!(
-                    "Error creating TLS server connection: server_addr={:?}, peer_addr={:?}",
-                    &self.listen_addr, &peer_addr
-                ),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Error creating TLS server connection: server_addr={:?}, peer_addr={:?}, err={:?}",
+                &self.listen_addr, &peer_addr, &err
+            ))
         })?;
 
         tcp_stream.set_nonblocking(true).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!(
-                    "Failed making socket non-blocking: server_addr={:?}, peer_addr={:?}",
-                    &self.listen_addr, &peer_addr
-                ),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Failed making socket non-blocking: server_addr={:?}, peer_addr={:?}, err={:?}",
+                &self.listen_addr, &peer_addr, &err
+            ))
         })?;
 
         // Complete TLS connection in separate thread
@@ -514,6 +499,7 @@ pub mod tests {
     use crate::crypto::file::{load_certificates, load_private_key};
     use crate::net::stream_utils;
     use crate::net::tls_client::client_std;
+    use crate::net::tls_server::conn_std::ConnectionEvent;
     use log::error;
     use mockall::{mock, predicate};
     use pki_types::{
@@ -624,7 +610,7 @@ pub mod tests {
         tls_client_config: rustls::ClientConfig,
         server_host: &str,
         server_port: u16,
-    ) -> Result<(), anyhow::Error> {
+    ) -> Result<(rustls::ClientConnection, TcpStream), anyhow::Error> {
         let server_name = ServerName::try_from(server_host.to_string())?;
         let server_addr = (server_host, server_port)
             .to_socket_addrs()?
@@ -634,7 +620,7 @@ pub mod tests {
             rustls::ClientConnection::new(Arc::new(tls_client_config), server_name)?;
         let mut tcp_stream = TcpStream::connect(server_addr)?;
         let _ = tls_cli_conn.complete_io(&mut tcp_stream)?;
-        Ok(())
+        Ok((tls_cli_conn, tcp_stream))
     }
 
     // tests
@@ -776,6 +762,7 @@ pub mod tests {
             server_msg_provided: Arc<Mutex<bool>>,
             conn_accepted: Arc<Mutex<bool>>,
             shutdown: Arc<Mutex<bool>>,
+            connection_event_sender: Option<mpsc::Sender<ConnectionEvent>>,
         }
         impl ServerVisitor for TestServerVisitor {
             fn create_client_conn(
@@ -787,12 +774,28 @@ pub mod tests {
                     .expect_on_connected()
                     .with(predicate::always())
                     .return_once(|_| Ok(()));
-                let conn = conn_std::Connection::new(
+                conn_visitor.expect_on_polling_cycle().returning(|| Ok(()));
+                conn_visitor.expect_on_shutdown().return_once(|| Ok(()));
+                let tcp_stream =
+                    stream_utils::clone_std_tcp_stream(&tls_conn.sock, "net-tls-server")?;
+                let mut stream_rw = stream_utils::tests::MockStreamReadWrite::new();
+                stream_rw
+                    .expect_read()
+                    .with(predicate::always())
+                    .returning(|_| Ok(0));
+                stream_rw
+                    .expect_write_all()
+                    .with(predicate::always())
+                    .returning(|_| Ok(()));
+                let conn = conn_std::tests::create_connection(
                     Box::new(conn_visitor),
-                    tls_conn,
-                    &("addr1".to_string(), "addr2".to_string()),
-                    &alpn::Protocol::ControlPlane,
-                )?;
+                    Some(tls_conn),
+                    Some(Box::new(stream_rw)),
+                    Some(tcp_stream),
+                    mpsc::channel(),
+                    alpn::Protocol::ControlPlane,
+                    false,
+                );
                 *self.conn_created.lock().unwrap() = true;
                 Ok(conn)
             }
@@ -830,6 +833,7 @@ pub mod tests {
                 &mut self,
                 connection: conn_std::Connection,
             ) -> Result<(), AppError> {
+                self.connection_event_sender = Some(connection.clone_event_channel_sender());
                 Server::spawn_connection_processor(connection);
                 *self.conn_accepted.lock().unwrap() = true;
                 Ok(())
@@ -846,6 +850,7 @@ pub mod tests {
             server_msg_provided: server_msg_provided.clone(),
             conn_accepted: conn_accepted.clone(),
             shutdown: shutdown.clone(),
+            connection_event_sender: None,
         }));
 
         let server = Arc::new(Mutex::new(Server {
@@ -866,7 +871,7 @@ pub mod tests {
         });
 
         thread::sleep(Duration::from_millis(100));
-        connect_to_tls_server(
+        let (_cli_tls_conn, _cli_tcp_stream) = connect_to_tls_server(
             client_std::tests::create_tls_client_config().unwrap(),
             "localhost",
             server_port,
@@ -912,6 +917,14 @@ pub mod tests {
             )
         );
 
+        visitor
+            .lock()
+            .unwrap()
+            .connection_event_sender
+            .as_ref()
+            .unwrap()
+            .send(ConnectionEvent::Closing)
+            .unwrap();
         *shutdown.lock().unwrap() = true;
         thread::sleep(Duration::from_millis(100));
 

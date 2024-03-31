@@ -52,13 +52,10 @@ impl Server {
     ) -> Result<Self, AppError> {
         let server_addr_str = format!("{}:{}", server_host, server_port);
         let server_addr = SocketAddr::from_str(&server_addr_str).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!(
-                    "Failed converting server addr string: addr={}",
-                    server_addr_str
-                ),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Failed converting server addr string: addr={}, err={:?}",
+                server_addr_str, &err
+            ))
         })?;
 
         Ok(Self {
@@ -79,23 +76,22 @@ impl Server {
     ///
     pub fn bind_listener(&mut self) -> Result<(), AppError> {
         let server_socket = UdpSocket::bind(self.server_addr).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!(
-                    "Error binding UDP socket: server_addr={:?}",
-                    &self.server_addr
-                ),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Error binding UDP socket: server_addr={:?}, err={:?}",
+                &self.server_addr, &err
+            ))
         })?;
-        server_socket.set_nonblocking(true).map_err(|err| {
-            AppError::GenWithMsgAndErr(
+        let server_addr_str = self.server_addr.to_string();
+        stream_utils::set_std_udp_socket_blocking(
+            &server_socket,
+            false,
+            Box::new(move || {
                 format!(
-                    "Failed making UDP server socket non-blocking: server_addr={:?}",
-                    &self.server_addr
-                ),
-                Box::new(err),
-            )
-        })?;
+                    "Failed making UDP server socket non-blocking: server_addr={}",
+                    &server_addr_str
+                )
+            }),
+        )?;
 
         self.server_socket = Some(server_socket);
         self.closing = false;
@@ -128,12 +124,7 @@ impl Server {
     ///
     pub fn clone_server_socket(&self) -> Result<UdpSocket, AppError> {
         match &self.server_socket {
-            Some(socket) => socket.try_clone().map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    "Failed to clone UDP server socket".to_string(),
-                    Box::new(err),
-                )
-            }),
+            Some(socket) => stream_utils::clone_std_udp_socket(socket, "net-udp-server"),
 
             None => Err(AppError::General(
                 "Server socket not available for cloning".to_string(),
@@ -165,13 +156,10 @@ impl Server {
         data: &[u8],
     ) -> Result<usize, AppError> {
         server_socket.send_to(data, socket_addr).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!(
-                    "Error while sending message on UDP socket: dest={:?}",
-                    socket_addr
-                ),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Error while sending message on UDP socket: dest={:?}, err={:?}",
+                socket_addr, &err
+            ))
         })
     }
 
@@ -208,6 +196,7 @@ impl Server {
         // Setup MIO poller
         let mut server_socket = mio::net::UdpSocket::from_std(stream_utils::clone_std_udp_socket(
             self.server_socket.as_ref().unwrap(),
+            "net-udp-server",
         )?);
 
         // Setup MIO poller registry
@@ -216,10 +205,10 @@ impl Server {
         match mio::Poll::new() {
             Ok(_poll) => poll = _poll,
             Err(err) => {
-                return Err(AppError::GenWithMsgAndErr(
-                    "Error creating new MIO poller".to_string(),
-                    Box::new(err),
-                ));
+                return Err(AppError::General(format!(
+                    "Error creating new MIO poller: err={:?}",
+                    &err
+                )));
             }
         }
 
@@ -228,10 +217,10 @@ impl Server {
             POLL_SERVER_SOCKET_TOKEN,
             mio::Interest::READABLE,
         ) {
-            return Err(AppError::GenWithMsgAndErr(
-                "Error registering udp server socket in MIO registry".to_string(),
-                Box::new(err),
-            ));
+            return Err(AppError::General(format!(
+                "Error registering udp server socket in MIO registry: err={:?}",
+                &err
+            )));
         }
 
         let mut events = mio::Events::with_capacity(256);
@@ -257,10 +246,10 @@ impl Server {
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {}
 
                 Err(err) => {
-                    polling_error = Some(AppError::GenWithMsgAndErr(
-                        "Error while polling for IO events".to_string(),
-                        Box::new(err),
-                    ));
+                    polling_error = Some(AppError::General(format!(
+                        "Error while polling for IO events: err={:?}",
+                        &err
+                    )));
                     self.polling = false;
                 }
 
@@ -314,13 +303,10 @@ impl Server {
                 if err.kind() == io::ErrorKind::WouldBlock {
                     AppError::WouldBlock
                 } else {
-                    AppError::GenWithMsgAndErr(
-                        format!(
-                            "Error receiving message: server_addr={:?}",
-                            &self.server_addr
-                        ),
-                        Box::new(err),
-                    )
+                    AppError::General(format!(
+                        "Error receiving message: server_addr={:?}, err={:?}",
+                        &self.server_addr, &err
+                    ))
                 }
             })?;
 
@@ -388,7 +374,7 @@ pub trait ServerVisitor: Send {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use mockall::mock;
+    use mockall::{mock, predicate};
     use std::net::{Ipv4Addr, SocketAddrV4};
 
     // mocks
@@ -562,19 +548,41 @@ pub mod tests {
     }
 
     #[test]
-    fn server_poll_new_messages_when_2nd_loop_iteration_shutdown_request() {
+    fn server_poll_new_messages_when_1_message_and_then_shutdown() {
+        let server_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let server_socket = UdpSocket::bind(server_addr.clone()).unwrap();
+        server_socket.set_nonblocking(true).unwrap();
+
+        let client_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let client_socket = UdpSocket::bind(client_addr.clone()).unwrap();
+        client_socket
+            .connect(server_socket.local_addr().unwrap())
+            .unwrap();
+
         let mut visitor = MockServerVisit::new();
         visitor
             .expect_get_shutdown_requested()
             .times(1)
-            .return_once(|| false);
+            .return_once(move || {
+                if let Err(err) = client_socket.send("hello".as_bytes()) {
+                    panic!("Error sending UDP socket message: err={:?}", &err);
+                }
+                false
+            });
         visitor
             .expect_get_shutdown_requested()
             .times(1)
             .return_once(|| true);
-        let server_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let server_socket = UdpSocket::bind(server_addr.clone()).unwrap();
-        server_socket.set_nonblocking(true).unwrap();
+        visitor
+            .expect_on_message_received()
+            .with(
+                predicate::always(),
+                predicate::always(),
+                predicate::eq("hello".as_bytes().to_vec()),
+            )
+            .times(1)
+            .return_once(|_, _, _| Ok(()));
+
         let mut server = Server {
             visitor: Arc::new(Mutex::new(visitor)),
             server_socket: Some(server_socket),

@@ -11,4 +11,5 @@ pub mod logging;
 pub mod model;
 pub mod net;
 pub mod proxy;
+pub mod sync;
 pub mod testutils;

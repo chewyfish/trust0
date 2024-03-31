@@ -35,10 +35,10 @@ pub fn verify_certificates(filepath: &str) -> Result<String, AppError> {
 ///
 pub fn load_certificates(filepath: &str) -> Result<Vec<CertificateDer<'static>>, AppError> {
     match fs::File::open(filepath).map_err(|err| {
-        AppError::GenWithMsgAndErr(
-            format!("failed to open certificates file: file={}", &filepath),
-            Box::new(err),
-        )
+        AppError::General(format!(
+            "Failed to open certificates file: file={}, err={:?}",
+            &filepath, &err
+        ))
     }) {
         Ok(cert_file) => {
             let mut reader = BufReader::new(cert_file);
@@ -47,10 +47,10 @@ pub fn load_certificates(filepath: &str) -> Result<Vec<CertificateDer<'static>>,
                 certs.into_iter().collect();
             match certs_result {
                 Ok(certs) => Ok(certs),
-                Err(err) => Err(AppError::GenWithMsgAndErr(
-                    format!("Failed parsing certificates: file={}", &filepath),
-                    Box::new(err),
-                )),
+                Err(err) => Err(AppError::General(format!(
+                    "Failed parsing certificates: file={}, err={:?}",
+                    filepath, &err
+                ))),
             }
         }
         Err(err) => Err(err),

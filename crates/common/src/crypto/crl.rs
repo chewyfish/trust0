@@ -349,13 +349,11 @@ impl CertificateRevocationListBuilder {
         };
 
         CertificateRevocationList::from_params(crl_params).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!(
-                    "Error creating certificate revocation list: num={:?}",
-                    self.crl_number.as_ref().unwrap()
-                ),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Error creating certificate revocation list: num={:?}, err={:?}",
+                self.crl_number.as_ref().unwrap(),
+                &err
+            ))
         })
     }
 }
@@ -399,13 +397,10 @@ impl CRLFile {
         reloading: &Arc<Mutex<bool>>,
     ) -> anyhow::Result<Self, AppError> {
         let filepath = PathBuf::from_str(filepath_str).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!(
-                    "Error converting string to file path: file={}",
-                    filepath_str
-                ),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Error converting string to file path: file={}, err={:?}",
+                filepath_str, &err
+            ))
         })?;
         Ok(CRLFile {
             path: filepath,
@@ -443,20 +438,20 @@ impl file::ReloadableFile for CRLFile {
                 )
                 .map(|result| {
                     result.map_err(|err| {
-                        AppError::GenWithMsgAndErr(
-                            format!("Error reading CRL entries: file={:?}", &self.path),
-                            Box::new(err),
-                        )
+                        AppError::General(format!(
+                            "Error reading CRL entries: file={:?}, err={:?}",
+                            &self.path, &err
+                        ))
                     })
                 })
                 .collect::<anyhow::Result<Vec<CertificateRevocationListDer<'static>>, AppError>>(
                 )?;
                 Ok(())
             }
-            Err(err) => Err(AppError::GenWithMsgAndErr(
-                format!("Error loading CRL file: file={:?}", &self.path),
-                Box::new(err),
-            )),
+            Err(err) => Err(AppError::General(format!(
+                "Error loading CRL file: file={:?}, err={:?}",
+                &self.path, &err
+            ))),
         }
     }
 

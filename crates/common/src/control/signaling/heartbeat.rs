@@ -50,20 +50,20 @@ impl ProxyConnectionEvent {
                 .iter()
                 .map(|v| {
                     serde_json::from_value(v.clone()).map_err(|err| {
-                        AppError::GenWithMsgAndErr(
-                            "Error converting serde Value to ProxyConnectionEvent".to_string(),
-                            Box::new(err),
-                        )
+                        AppError::General(format!(
+                            "Error converting serde Value to ProxyConnectionEvent: err={:?}",
+                            &err
+                        ))
                     })
                 })
                 .collect::<Result<Vec<ProxyConnectionEvent>, AppError>>()?)
         } else {
             Ok(vec![serde_json::from_value(value.clone()).map_err(
                 |err| {
-                    AppError::GenWithMsgAndErr(
-                        "Error converting serde Value to ProxyConnectionEvent".to_string(),
-                        Box::new(err),
-                    )
+                    AppError::General(format!(
+                        "Error converting serde Value to ProxyConnectionEvent: err={:?}",
+                        &err
+                    ))
                 },
             )?])
         }
@@ -84,12 +84,7 @@ impl TryInto<Value> for &ProxyConnectionEvent {
     type Error = AppError;
 
     fn try_into(self) -> Result<Value, Self::Error> {
-        serde_json::to_value(self).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Error converting Connection to serde Value".to_string(),
-                Box::new(err),
-            )
-        })
+        Ok(serde_json::to_value(self).unwrap())
     }
 }
 
@@ -121,7 +116,7 @@ mod tests {
         );
     }
     #[test]
-    fn proxyconnevt_from_serde_value_when_invalid() {
+    fn proxyconnevt_from_serde_value_when_invalid_object() {
         let conn_json = json!({"serviceNameINVALID": "svc1", "binds": [["b0","b1"],["b2","b3"]]});
 
         match ProxyConnectionEvent::from_serde_value(&conn_json) {
@@ -131,8 +126,8 @@ mod tests {
     }
 
     #[test]
-    fn proxyconnevt_from_serde_value_when_valid_connections_list() {
-        let proxy_conns_json = json!([{"serviceName": "svc1", "binds": [["b0","b1"],["b2","b3"]]}]);
+    fn proxyconnevt_from_serde_value_when_valid_connections_object() {
+        let proxy_conns_json = json!({"serviceName": "svc1", "binds": [["b0","b1"],["b2","b3"]]});
 
         match ProxyConnectionEvent::from_serde_value(&proxy_conns_json) {
             Ok(proxy_conns) => {
@@ -151,8 +146,18 @@ mod tests {
     }
 
     #[test]
-    fn proxyconnevt_from_serde_value_when_valid_connections_object() {
-        let proxy_conns_json = json!({"serviceName": "svc1", "binds": [["b0","b1"],["b2","b3"]]});
+    fn proxyconnevt_from_serde_value_when_invalid_list() {
+        let conn_json = json!([{"serviceNameINVALID": "svc1", "binds": [["b0","b1"],["b2","b3"]]}]);
+
+        match ProxyConnectionEvent::from_serde_value(&conn_json) {
+            Ok(proxies) => panic!("Unexpected successful result: conns={:?}", proxies),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn proxyconnevt_from_serde_value_when_valid_connections_list() {
+        let proxy_conns_json = json!([{"serviceName": "svc1", "binds": [["b0","b1"],["b2","b3"]]}]);
 
         match ProxyConnectionEvent::from_serde_value(&proxy_conns_json) {
             Ok(proxy_conns) => {

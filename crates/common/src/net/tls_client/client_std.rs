@@ -85,10 +85,10 @@ impl Client {
     pub fn connect(&mut self) -> Result<(), AppError> {
         // Connect to TLS server
         let server_host = ServerName::try_from(self.server_host.to_string()).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!("Failed to resolve server host: host={}", &self.server_host),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Failed to resolve server host: host={}, err={:?}",
+                &self.server_host, &err
+            ))
         })?;
 
         let server_addr = (self.server_host.clone(), self.server_port)
@@ -102,38 +102,35 @@ impl Client {
         let mut tls_client_conn =
             rustls::ClientConnection::new(self.tls_client_config.clone(), server_host.clone())
                 .map_err(|err| {
-                    AppError::GenWithMsgAndErr(
-                        format!(
-                            "Error setting up TLS client connection: server={:?}",
-                            &server_host
-                        ),
-                        Box::new(err),
-                    )
+                    AppError::General(format!(
+                        "Error setting up TLS client connection: server={:?}, err={:?}",
+                        &server_host, &err
+                    ))
                 })?;
 
         let mut tcp_stream = TcpStream::connect(server_addr).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!("Error establishing TCP connection: addr={:?}", &server_addr),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Error establishing TCP connection: addr={:?}, err={:?}",
+                &server_addr, &err
+            ))
         })?;
 
         // TLS handshaking
         let _ = tls_client_conn
             .complete_io(&mut tcp_stream)
             .map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    "Error completing TLS client connection".to_string(),
-                    Box::new(err),
-                )
+                AppError::General(format!(
+                    "Error completing TLS client connection: err={:?}",
+                    &err
+                ))
             })?;
 
         // Post TLS-established connection processing
         tcp_stream.set_nonblocking(true).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!("Failed making socket non-blocking: addr={}", &server_addr),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Failed making socket non-blocking: addr={}, err={:?}",
+                &server_addr, &err
+            ))
         })?;
 
         let mut tls_conn = rustls::StreamOwned::new(tls_client_conn, tcp_stream);
@@ -197,10 +194,10 @@ impl Client {
                         thread::sleep(Duration::from_millis(SERVERMSG_READ_LOOP_READ_DELAY_MSECS));
                     }
                     Err(err) => {
-                        return Err(AppError::GenWithMsgAndErr(
-                            "Error reading server message".to_string(),
-                            Box::new(err),
-                        ))
+                        return Err(AppError::General(format!(
+                            "Error reading server message: err={:?}",
+                            &err
+                        )))
                     }
                 }
             }
@@ -329,10 +326,7 @@ pub mod tests {
 
         for ca_root_cert in rootca_cert {
             ca_root_store.add(ca_root_cert).map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    "Error adding CA root cert".to_string(),
-                    Box::new(err.clone()),
-                )
+                AppError::General(format!("Error adding CA root cert: err={:?}", &err))
             })?;
         }
 

@@ -45,10 +45,10 @@ pub fn read_tcp_stream(
                 return Err(AppError::StreamEOF)
             }
             Err(err) => {
-                return Err(AppError::GenWithMsgAndErr(
-                    "Error reading from stream".to_string(),
-                    Box::new(err),
-                ))
+                return Err(AppError::General(format!(
+                    "Error reading from stream: err={:?}",
+                    &err
+                )));
             }
         };
 
@@ -83,10 +83,10 @@ pub fn write_tcp_stream(
         Err(err) if err.kind() == io::ErrorKind::BrokenPipe => Err(AppError::StreamEOF),
         Err(err) if err.kind() == io::ErrorKind::NotConnected => Err(AppError::StreamEOF),
         Err(err) if err.kind() == io::ErrorKind::WouldBlock => Err(AppError::WouldBlock),
-        Err(err) => Err(AppError::GenWithMsgAndErr(
-            "Error writing to stream".to_string(),
-            Box::new(err),
-        )),
+        Err(err) => Err(AppError::General(format!(
+            "Error writing to stream: err={:?}",
+            &err
+        ))),
     }
 }
 
@@ -112,10 +112,10 @@ pub fn read_mio_udp_socket(
         Err(err) if err.kind() == io::ErrorKind::BrokenPipe => Err(AppError::StreamEOF),
         Err(err) if err.kind() == io::ErrorKind::NotConnected => Err(AppError::StreamEOF),
         Err(err) if err.kind() == io::ErrorKind::WouldBlock => Err(AppError::WouldBlock),
-        Err(err) => Err(AppError::GenWithMsgAndErr(
-            format!("Error reading from udp socket: socket={:?}", &udp_socket),
-            Box::new(err),
-        )),
+        Err(err) => Err(AppError::General(format!(
+            "Error reading from udp socket: socket={:?}, err={:?}",
+            &udp_socket, &err
+        ))),
     }
 }
 
@@ -140,10 +140,10 @@ pub fn write_mio_udp_socket(
         Err(err) if err.kind() == io::ErrorKind::BrokenPipe => Err(AppError::StreamEOF),
         Err(err) if err.kind() == io::ErrorKind::NotConnected => Err(AppError::StreamEOF),
         Err(err) if err.kind() == io::ErrorKind::WouldBlock => Err(AppError::WouldBlock),
-        Err(err) => Err(AppError::GenWithMsgAndErr(
-            format!("Error writing to udp socket: socket={:?}", &udp_socket),
-            Box::new(err),
-        )),
+        Err(err) => Err(AppError::General(format!(
+            "Error writing to udp socket: socket={:?}, err={:?}",
+            &udp_socket, &err
+        ))),
     }
 }
 
@@ -152,6 +152,7 @@ pub fn write_mio_udp_socket(
 /// # Arguments
 ///
 /// * `tcp_stream` - TCP stream to clone
+/// * `socket_label` - Text to use on errors describing socket
 ///
 /// # Returns
 ///
@@ -159,12 +160,13 @@ pub fn write_mio_udp_socket(
 ///
 pub fn clone_std_tcp_stream(
     tcp_stream: &std::net::TcpStream,
+    socket_label: &str,
 ) -> Result<std::net::TcpStream, AppError> {
     tcp_stream.try_clone().map_err(|err| {
-        AppError::GenWithMsgAndErr(
-            format!("Error trying to clone tcp stream: stream={:?}", &tcp_stream),
-            Box::new(err),
-        )
+        AppError::General(format!(
+            "Error trying to clone TCP stream: label={}, stream={:?}, err={:?}",
+            socket_label, &tcp_stream, &err
+        ))
     })
 }
 
@@ -173,6 +175,7 @@ pub fn clone_std_tcp_stream(
 /// # Arguments
 ///
 /// * `udp_stream` - UDP socket to clone
+/// * `socket_label` - Text to use on errors describing socket
 ///
 /// # Returns
 ///
@@ -180,13 +183,58 @@ pub fn clone_std_tcp_stream(
 ///
 pub fn clone_std_udp_socket(
     udp_socket: &std::net::UdpSocket,
+    socket_label: &str,
 ) -> Result<std::net::UdpSocket, AppError> {
     udp_socket.try_clone().map_err(|err| {
-        AppError::GenWithMsgAndErr(
-            format!("Error trying to clone udp socket: socket={:?}", &udp_socket),
-            Box::new(err),
-        )
+        AppError::General(format!(
+            "Error trying to clone UDP socket: label={}, socket={:?}, err={:?}",
+            socket_label, &udp_socket, &err
+        ))
     })
+}
+
+/// Set TCP stream socket blocking value
+///
+/// # Arguments
+///
+/// * `tcp_stream` - TCP stream socket
+/// * `blocking_value` - Whether blocking or non-blocking is requested
+/// * `err_msg_fn` - Function, which will return an error string (used on failure)
+///
+/// # Returns
+///
+/// A [`Result`] indicating success/failure of the socket modification operation.
+///
+pub fn set_std_tcp_stream_blocking(
+    tcp_stream: &std::net::TcpStream,
+    blocking_value: bool,
+    err_msg_fn: Box<dyn Fn() -> String>,
+) -> Result<(), AppError> {
+    tcp_stream
+        .set_nonblocking(!blocking_value)
+        .map_err(|err| AppError::General(format!("{} err={:?}", err_msg_fn(), &err)))
+}
+
+/// Set UDP socket blocking value
+///
+/// # Arguments
+///
+/// * `udp_socket` - UDP socket
+/// * `blocking_value` - Whether blocking or non-blocking is requested
+/// * `err_msg_fn` - Function, which will return an error string (used on failure)
+///
+/// # Returns
+///
+/// A [`Result`] indicating success/failure of the socket modification operation.
+///
+pub fn set_std_udp_socket_blocking(
+    udp_socket: &std::net::UdpSocket,
+    blocking_value: bool,
+    err_msg_fn: Box<dyn Fn() -> String>,
+) -> Result<(), AppError> {
+    udp_socket
+        .set_nonblocking(!blocking_value)
+        .map_err(|err| AppError::General(format!("{} err={:?}", err_msg_fn(), &err)))
 }
 
 /// Connected TCP stream pair creator
@@ -605,6 +653,54 @@ pub mod tests {
         let udp_socket = mio::net::UdpSocket::from_std(udp_socket);
 
         if let Err(err) = write_mio_udp_socket(&udp_socket, vec![0x01u8].as_slice()) {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn streamutl_clone_std_tcp_stream() {
+        let connected_tcp_stream = ConnectedTcpStream::new().unwrap();
+
+        if let Err(err) =
+            clone_std_tcp_stream(&connected_tcp_stream.client_stream.0, "test-clone-tcp")
+        {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn streamutl_clone_std_udp_socket() {
+        let connected_udp_stream = ConnectedUdpSocket::new().unwrap();
+
+        if let Err(err) =
+            clone_std_udp_socket(&connected_udp_stream.client_socket.0, "test-clone-udp")
+        {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn streamutl_set_std_tcp_stream_blocking() {
+        let connected_tcp_stream = ConnectedTcpStream::new().unwrap();
+
+        if let Err(err) = set_std_tcp_stream_blocking(
+            &connected_tcp_stream.client_stream.0,
+            false,
+            Box::new(|| "error".to_string()),
+        ) {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn streamutl_set_std_udp_socket_blocking() {
+        let connected_udp_socket = ConnectedUdpSocket::new().unwrap();
+
+        if let Err(err) = set_std_udp_socket_blocking(
+            &connected_udp_socket.client_socket.0,
+            false,
+            Box::new(|| "error".to_string()),
+        ) {
             panic!("Unexpected result: err={:?}", &err);
         }
     }

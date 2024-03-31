@@ -58,27 +58,26 @@ impl TcpAndUdpStreamProxy {
         proxy_channel_sender: &sync::mpsc::Sender<ProxyEvent>,
     ) -> Result<Self, AppError> {
         // Convert streams to non-blocking
-        let tcp_stream = stream_utils::clone_std_tcp_stream(&tcp_stream)?;
-        let udp_socket = stream_utils::clone_std_udp_socket(&udp_socket)?;
+        let tcp_stream = stream_utils::clone_std_tcp_stream(&tcp_stream, "tcpudp-proxy")?;
+        let udp_socket = stream_utils::clone_std_udp_socket(&udp_socket, "tcpudp-proxy")?;
 
         tcp_stream.set_nonblocking(true).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!(
-                    "Failed making tcp socket non-blocking: proxy_stream={}",
-                    &proxy_key
-                ),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Failed making tcp socket non-blocking: proxy_stream={}, err={:?}",
+                &proxy_key, &err
+            ))
         })?;
-        udp_socket.set_nonblocking(true).map_err(|err| {
-            AppError::GenWithMsgAndErr(
+        let proxy_key_copy = proxy_key.to_string();
+        stream_utils::set_std_udp_socket_blocking(
+            &udp_socket,
+            false,
+            Box::new(move || {
                 format!(
                     "Failed making udp socket non-blocking: proxy_stream={}",
-                    &proxy_key
-                ),
-                Box::new(err),
-            )
-        })?;
+                    &proxy_key_copy
+                )
+            }),
+        )?;
 
         // Instantiate TcpStreamProxy
         Ok(TcpAndUdpStreamProxy {
@@ -109,8 +108,8 @@ impl TcpAndUdpStreamProxy {
         // Spawn bidirectional stream IO copy task
         let closing = self.closing.clone();
         let closed = self.closed.clone();
-        let tcp_stream = stream_utils::clone_std_tcp_stream(&self.tcp_stream)?;
-        let udp_socket = stream_utils::clone_std_udp_socket(&self.udp_socket)?;
+        let tcp_stream = stream_utils::clone_std_tcp_stream(&self.tcp_stream, "tcpudp-proxy")?;
+        let udp_socket = stream_utils::clone_std_udp_socket(&self.udp_socket, "tcpudp-proxy")?;
         let mut tcp_stream_reader_writer = self.tcp_stream_reader_writer.clone();
         let proxy_key = self.proxy_key.clone();
         let proxy_channel_sender = self.proxy_channel_sender.clone();
@@ -132,10 +131,10 @@ impl TcpAndUdpStreamProxy {
                         &proxy_channel_sender,
                         &closed,
                     );
-                    return Err(AppError::GenWithMsgAndErr(
-                        "Error creating new MIO poller".to_string(),
-                        Box::new(err),
-                    ));
+                    return Err(AppError::General(format!(
+                        "Error creating new MIO poller: err={:?}",
+                        &err
+                    )));
                 }
             }
 
@@ -150,10 +149,10 @@ impl TcpAndUdpStreamProxy {
                     &proxy_channel_sender,
                     &closed,
                 );
-                return Err(AppError::GenWithMsgAndErr(
-                    "Error registering tcp stream in MIO registry".to_string(),
-                    Box::new(err),
-                ));
+                return Err(AppError::General(format!(
+                    "Error registering tcp stream in MIO registry: err={:?}",
+                    &err
+                )));
             }
 
             if let Err(err) =
@@ -167,10 +166,10 @@ impl TcpAndUdpStreamProxy {
                     &proxy_channel_sender,
                     &closed,
                 );
-                return Err(AppError::GenWithMsgAndErr(
-                    "Error registering udp socket in MIO registry".to_string(),
-                    Box::new(err),
-                ));
+                return Err(AppError::General(format!(
+                    "Error registering udp socket in MIO registry: err={:?}",
+                    &err
+                )));
             }
 
             let mut events = mio::Events::with_capacity(256);
@@ -184,10 +183,10 @@ impl TcpAndUdpStreamProxy {
                 ) {
                     Err(err) if err.kind() == io::ErrorKind::WouldBlock => continue,
                     Err(err) => {
-                        proxy_error = Some(AppError::GenWithMsgAndErr(
-                            "Error while polling for IO events".to_string(),
-                            Box::new(err),
-                        ));
+                        proxy_error = Some(AppError::General(format!(
+                            "Error while polling for IO events: err={:?}",
+                            &err
+                        )));
                         *closing.lock().unwrap() = true;
                         continue 'EVENTS;
                     }
@@ -227,10 +226,10 @@ impl TcpAndUdpStreamProxy {
                                 TCP_STREAM_TOKEN,
                                 mio::Interest::READABLE,
                             ) {
-                                proxy_error = Some(AppError::GenWithMsgAndErr(
-                                    "Error registering tcp stream in MIO registry".to_string(),
-                                    Box::new(err),
-                                ));
+                                proxy_error = Some(AppError::General(format!(
+                                    "Error registering tcp stream in MIO registry: err={:?}",
+                                    &err
+                                )));
                                 *closing.lock().unwrap() = true;
                                 continue 'EVENTS;
                             }
@@ -267,10 +266,10 @@ impl TcpAndUdpStreamProxy {
                                 UDP_SOCKET_TOKEN,
                                 mio::Interest::READABLE,
                             ) {
-                                proxy_error = Some(AppError::GenWithMsgAndErr(
-                                    "Error registering udp socket in MIO registry".to_string(),
-                                    Box::new(err),
-                                ));
+                                proxy_error = Some(AppError::General(format!(
+                                    "Error registering udp socket in MIO registry: err={:?}",
+                                    &err
+                                )));
                                 *closing.lock().unwrap() = true;
                                 continue 'EVENTS;
                             }
@@ -349,14 +348,18 @@ impl TcpAndUdpStreamProxy {
             ),
         }
 
-        if let Err(err) = proxy_channel_sender.send(ProxyEvent::Closed(proxy_key.to_string())) {
-            error(
-                &target!(),
-                &format!(
-                    "Error sending proxy closed message: proxy_stream={}, err={:?}",
-                    &proxy_key, err
-                ),
-            );
+        let proxy_key_copy = proxy_key.to_string();
+        if let Err(err) = crate::sync::send_mpsc_channel_message(
+            proxy_channel_sender,
+            ProxyEvent::Closed(proxy_key.to_string()),
+            Box::new(move || {
+                format!(
+                    "Error sending proxy closed message: proxy_stream={},",
+                    &proxy_key_copy
+                )
+            }),
+        ) {
+            error(&target!(), &format!("{:?}", &err));
         }
 
         *closed_state.lock().unwrap() = true;
@@ -407,12 +410,17 @@ pub mod tests {
     )> {
         let connected_tcp_stream = ConnectedTcpStream::new()?;
         let connected_udp_socket = ConnectedUdpSocket::new()?;
-        let client_tcp_stream =
-            stream_utils::clone_std_tcp_stream(&connected_tcp_stream.server_stream.0)?;
-        let client_reader_writer: Box<dyn StreamReaderWriter> =
-            Box::new(stream_utils::clone_std_tcp_stream(&client_tcp_stream)?);
-        let server_udp_socket =
-            stream_utils::clone_std_udp_socket(&connected_udp_socket.client_socket.0)?;
+        let client_tcp_stream = stream_utils::clone_std_tcp_stream(
+            &connected_tcp_stream.server_stream.0,
+            "test-tcpudp-proxy",
+        )?;
+        let client_reader_writer: Box<dyn StreamReaderWriter> = Box::new(
+            stream_utils::clone_std_tcp_stream(&client_tcp_stream, "test-tcpudp-proxy")?,
+        );
+        let server_udp_socket = stream_utils::clone_std_udp_socket(
+            &connected_udp_socket.client_socket.0,
+            "test-tcpudp-proxy-client",
+        )?;
         let proxy_channel = sync::mpsc::channel();
         let proxy = TcpAndUdpStreamProxy::new(
             proxy_key,
@@ -579,10 +587,18 @@ pub mod tests {
         let closed = Arc::new(Mutex::new(false));
 
         let tcp_stream = mio::net::TcpStream::from_std(
-            stream_utils::clone_std_tcp_stream(&proxy_result.1.server_stream.0).unwrap(),
+            stream_utils::clone_std_tcp_stream(
+                &proxy_result.1.server_stream.0,
+                "test-tcpudp-proxy",
+            )
+            .unwrap(),
         );
         let udp_socket = mio::net::UdpSocket::from_std(
-            stream_utils::clone_std_udp_socket(&proxy_result.2.client_socket.0).unwrap(),
+            stream_utils::clone_std_udp_socket(
+                &proxy_result.2.client_socket.0,
+                "test-tcpudp-proxy-client",
+            )
+            .unwrap(),
         );
 
         TcpAndUdpStreamProxy::perform_shutdown(

@@ -308,13 +308,10 @@ fn process_certificate_revocation_list_creator(app_config: &AppConfig) -> Result
             create_parent_directories(file)?;
 
             fs::write(file, crl_pem).map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    format!(
-                        "Error writing certificate revocation list file: file={}",
-                        file
-                    ),
-                    Box::new(err),
-                )
+                AppError::General(format!(
+                    "Error writing certificate revocation list file: file={}, err={:?}",
+                    &file, &err
+                ))
             })
         }
 
@@ -367,10 +364,10 @@ fn create_certificate_pem_file(
 ) -> Result<(), AppError> {
     create_parent_directories(file)?;
     fs::write(file, certificate.serialize_certificate(signer_certificate)?).map_err(|err| {
-        AppError::GenWithMsgAndErr(
-            format!("Error writing certificate file: file={}", file),
-            Box::new(err),
-        )
+        AppError::General(format!(
+            "Error writing certificate file: file={}, err={:?}",
+            file, &err
+        ))
     })
 }
 
@@ -388,10 +385,10 @@ fn create_certificate_pem_file(
 fn create_private_key_pem_file(certificate: &Certificate, file: &str) -> Result<(), AppError> {
     create_parent_directories(file)?;
     fs::write(file, certificate.serialize_private_key()).map_err(|err| {
-        AppError::GenWithMsgAndErr(
-            format!("Error writing certificate file: file={}", file),
-            Box::new(err),
-        )
+        AppError::General(format!(
+            "Error writing certificate file: file={}, err={:?}",
+            file, &err
+        ))
     })
 }
 
@@ -520,8 +517,8 @@ mod tests {
                     validity_not_after: datetime!(2025-01-01 0:00 UTC),
                     validity_not_before: None,
                     subject_common_name: "name1".to_string(),
-                    subject_organization: None,
-                    subject_country: None,
+                    subject_organization: Some("org1".to_string()),
+                    subject_country: Some("country1".to_string()),
                     san_dns_names: Some(vec!["host1.com".to_string()]),
                 },
             },
@@ -595,7 +592,7 @@ mod tests {
     }
 
     #[test]
-    fn main_process_runner_when_cert_revoke_list_creator_and_all_valid() {
+    fn main_process_runner_when_cert_revoke_list_creator_and_ecdsap256_and_all_valid() {
         let rootca_cert_filepath: PathBuf = CERTFILE_ROOTCAT_PATHPARTS.iter().collect();
         let rootca_cert_filepath_str = rootca_cert_filepath.to_str().unwrap();
         let rootca_key_filepath: PathBuf = KEYFILE_ROOTCAT_PATHPARTS.iter().collect();
@@ -613,6 +610,90 @@ mod tests {
                     update_datetime: datetime!(2024-01-01 0:00 UTC),
                     next_update_datetime: datetime!(2024-02-01 0:00 UTC),
                     signature_algorithm: config::KeyAlgorithm::EcdsaP256,
+                    cert_revocation_datetime: datetime!(2024-01-01 0:00 UTC),
+                    cert_revocation_reason: Some(RevokedCertReason::KeyCompromise),
+                    cert_revocation_serial_nums: Some(vec![
+                        vec![0x00u8, 0xa1u8, 0xffu8, 0x50u8],
+                        vec![0x00u8, 0xa1u8, 0xffu8, 0x51u8],
+                    ]),
+                },
+            },
+        };
+
+        let result = process_runner(&app_config);
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        let crl_verify_result = verify_crl_list(expected_file.as_str());
+
+        if let Err(err) = crl_verify_result {
+            panic!("Unexpected crl verification: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn main_process_runner_when_cert_revoke_list_creator_and_ecdsap384_and_all_valid() {
+        let rootca_cert_filepath: PathBuf = CERTFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_cert_filepath_str = rootca_cert_filepath.to_str().unwrap();
+        let rootca_key_filepath: PathBuf = KEYFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_key_filepath_str = rootca_key_filepath.to_str().unwrap();
+        let expected_file = setup_new_file_path("crl.pem");
+
+        let app_config = AppConfig {
+            args: AppConfigArgs {
+                command: CertRevocationListCreator {
+                    file: expected_file.clone(),
+                    rootca_cert_file: rootca_cert_filepath_str.to_string(),
+                    rootca_key_file: rootca_key_filepath_str.to_string(),
+                    crl_number: vec![0x00u8, 0xa1u8, 0xffu8, 0x47u8],
+                    key_algorithm: config::KeyAlgorithm::EcdsaP384,
+                    update_datetime: datetime!(2024-01-01 0:00 UTC),
+                    next_update_datetime: datetime!(2024-02-01 0:00 UTC),
+                    signature_algorithm: config::KeyAlgorithm::EcdsaP384,
+                    cert_revocation_datetime: datetime!(2024-01-01 0:00 UTC),
+                    cert_revocation_reason: Some(RevokedCertReason::KeyCompromise),
+                    cert_revocation_serial_nums: Some(vec![
+                        vec![0x00u8, 0xa1u8, 0xffu8, 0x50u8],
+                        vec![0x00u8, 0xa1u8, 0xffu8, 0x51u8],
+                    ]),
+                },
+            },
+        };
+
+        let result = process_runner(&app_config);
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        let crl_verify_result = verify_crl_list(expected_file.as_str());
+
+        if let Err(err) = crl_verify_result {
+            panic!("Unexpected crl verification: err={:?}", &err);
+        }
+    }
+
+    #[test]
+    fn main_process_runner_when_cert_revoke_list_creator_and_ed25519_and_all_valid() {
+        let rootca_cert_filepath: PathBuf = CERTFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_cert_filepath_str = rootca_cert_filepath.to_str().unwrap();
+        let rootca_key_filepath: PathBuf = KEYFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_key_filepath_str = rootca_key_filepath.to_str().unwrap();
+        let expected_file = setup_new_file_path("crl.pem");
+
+        let app_config = AppConfig {
+            args: AppConfigArgs {
+                command: CertRevocationListCreator {
+                    file: expected_file.clone(),
+                    rootca_cert_file: rootca_cert_filepath_str.to_string(),
+                    rootca_key_file: rootca_key_filepath_str.to_string(),
+                    crl_number: vec![0x00u8, 0xa1u8, 0xffu8, 0x47u8],
+                    key_algorithm: config::KeyAlgorithm::Ed25519,
+                    update_datetime: datetime!(2024-01-01 0:00 UTC),
+                    next_update_datetime: datetime!(2024-02-01 0:00 UTC),
+                    signature_algorithm: config::KeyAlgorithm::Ed25519,
                     cert_revocation_datetime: datetime!(2024-01-01 0:00 UTC),
                     cert_revocation_reason: Some(RevokedCertReason::KeyCompromise),
                     cert_revocation_serial_nums: Some(vec![

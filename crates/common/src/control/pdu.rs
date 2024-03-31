@@ -88,17 +88,8 @@ impl MessageFrame {
     /// preceded by a `u16`, which denotes its length.
     ///
     pub fn build_pdu(&self) -> Result<Vec<u8>, AppError> {
-        let data_frame = serde_json::to_string(self).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!(
-                    "Error serializing MessageFrame to JSON string: frame={:?}",
-                    self
-                ),
-                Box::new(err),
-            )
-        })?;
+        let data_frame = serde_json::to_string(self).unwrap();
         let data_frame_len = data_frame.len() as u16;
-
         Ok([&data_frame_len.to_be_bytes(), data_frame.as_bytes()].concat())
     }
 
@@ -136,9 +127,7 @@ impl MessageFrame {
 
         // Parse PDU data frame
         let data_frame_json = String::from_utf8(buffer.drain(..pdu_len).collect::<Vec<u8>>())
-            .map_err(|err| {
-                AppError::GenWithMsgAndErr("Error parsing UTF8 data".to_string(), Box::new(err))
-            })?;
+            .map_err(|err| AppError::General(format!("Error parsing UTF8 data: err={:?}", &err)))?;
 
         Ok(Some(Self::deserialize(&data_frame_json)?))
     }
@@ -155,10 +144,10 @@ impl MessageFrame {
     ///
     pub fn deserialize(value: &str) -> Result<MessageFrame, AppError> {
         serde_json::from_str(value).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!("Failed to parse data frame value JSON: val={}", value),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Failed to parse data frame value JSON: val={}, err={:?}",
+                value, &err
+            ))
         })
     }
 }
@@ -182,10 +171,10 @@ impl TryInto<management::request::Request> for &MessageFrame {
         }
         let request_command_line: String =
             serde_json::from_value(self.data.as_ref().unwrap().clone()).map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    "Error converting PDU data Value to request command line".to_string(),
-                    Box::new(err),
-                )
+                AppError::General(format!(
+                    "Error converting PDU data Value to request command line: err={:?}",
+                    &err
+                ))
             })?;
         management::request::RequestProcessor::new().parse(&request_command_line)
     }
@@ -210,10 +199,10 @@ impl TryInto<management::response::Response> for &MessageFrame {
         }
         let request: management::request::Request =
             serde_json::from_value(self.context.as_ref().unwrap().clone()).map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    "Error converting PDU context Value to management Request".to_string(),
-                    Box::new(err),
-                )
+                AppError::General(format!(
+                    "Error converting PDU context Value to management Request: err={:?}",
+                    &err
+                ))
             })?;
         Ok(management::response::Response::new(
             self.code,
@@ -243,10 +232,10 @@ impl TryInto<signaling::event::SignalEvent> for &MessageFrame {
         }
         let event_type: signaling::event::EventType =
             serde_json::from_value(self.context.as_ref().unwrap().clone()).map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    "Error converting PDU context Value to signaling EventType".to_string(),
-                    Box::new(err),
-                )
+                AppError::General(format!(
+                    "Error converting PDU context Value to signaling EventType, err={:?}",
+                    &err
+                ))
             })?;
         Ok(signaling::event::SignalEvent::new(
             self.code,
@@ -276,10 +265,10 @@ impl TryInto<tls::message::SessionMessage> for &MessageFrame {
         }
         let data_type: tls::message::DataType =
             serde_json::from_value(self.context.as_ref().unwrap().clone()).map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    "Error converting PDU context Value to TLS DataType".to_string(),
-                    Box::new(err),
-                )
+                AppError::General(format!(
+                    "Error converting PDU context Value to TLS DataType: err={:?}",
+                    &err
+                ))
             })?;
         Ok(tls::message::SessionMessage::new(&data_type, &self.data))
     }
@@ -288,7 +277,6 @@ impl TryInto<tls::message::SessionMessage> for &MessageFrame {
 /// Unit tests
 #[cfg(test)]
 mod tests {
-
     use super::*;
     use serde_json::json;
 
@@ -380,6 +368,20 @@ mod tests {
     }
 
     #[test]
+    fn msgframe_consume_next_pdu_when_insufficient_buffer() {
+        let mut expected_pdu: Vec<u8> = vec![];
+        expected_pdu.append(&mut (123u16).to_be_bytes().to_vec());
+
+        let mut buffer = VecDeque::from(expected_pdu);
+
+        match MessageFrame::consume_next_pdu(&mut buffer) {
+            Ok(None) => {}
+            Ok(Some(msg_frame)) => panic!("Unexpected found pdu: msg={:?}", &msg_frame),
+            Err(err) => panic!("Unexepcted result: err={:?}", &err),
+        }
+    }
+
+    #[test]
     fn msgframe_deserialize_when_invalid_json() {
         let json_str = r#"{
             "channel": "INVALID",
@@ -444,6 +446,22 @@ mod tests {
     }
 
     #[test]
+    fn msgframe_try_into_mgmt_request_when_missing_data() {
+        let msg_frame = MessageFrame {
+            channel: ControlChannel::Management,
+            code: CODE_OK,
+            message: None,
+            context: None,
+            data: None,
+        };
+
+        let result: Result<management::request::Request, AppError> = msg_frame.try_into();
+        if let Ok(value) = result {
+            panic!("Unexpected successful result: val={:?}", &value);
+        }
+    }
+
+    #[test]
     fn msgframe_try_into_mgmt_request_when_invalid() {
         let msg_frame = MessageFrame {
             channel: ControlChannel::Management,
@@ -484,6 +502,23 @@ mod tests {
                 );
             }
             Err(err) => panic!("Unexpected result: err={:?}", err),
+        }
+    }
+
+    #[test]
+    fn msgframe_try_into_mgmt_response_when_invalid_request() {
+        let msg_frame = MessageFrame {
+            channel: ControlChannel::Management,
+            code: CODE_OK,
+            message: None,
+            context: Some(Value::String("INVALID".to_string())),
+            data: Some(Value::String("pong".to_string())),
+        };
+
+        let result: Result<management::response::Response, AppError> = msg_frame.try_into();
+
+        if let Ok(value) = result {
+            panic!("Unexpected successful result: val={:?}", &value);
         }
     }
 
@@ -551,7 +586,7 @@ mod tests {
     }
 
     #[test]
-    fn msgframe_try_into_tls_rtt_data_when_valid_connection() {
+    fn msgframe_try_into_tls_sessmsg_when_valid_connection() {
         let msg_frame = MessageFrame {
             channel: ControlChannel::TLS,
             code: CODE_OK,
@@ -576,7 +611,24 @@ mod tests {
     }
 
     #[test]
-    fn msgframe_try_into_tls_rtt_data_when_missing_context() {
+    fn msgframe_try_into_tls_sessmsg_when_invalid_data_type() {
+        let msg_frame = MessageFrame {
+            channel: ControlChannel::TLS,
+            code: CODE_OK,
+            message: None,
+            context: Some(Value::String("INVALID".to_string())),
+            data: Some(json!([])),
+        };
+
+        let result: Result<tls::message::SessionMessage, AppError> = msg_frame.try_into();
+
+        if let Ok(value) = result {
+            panic!("Unexpected successful result: val={:?}", &value);
+        }
+    }
+
+    #[test]
+    fn msgframe_try_into_tls_sessmsg_when_missing_context() {
         let msg_frame = MessageFrame {
             channel: ControlChannel::TLS,
             code: CODE_OK,

@@ -104,10 +104,10 @@ impl KeyAlgorithm {
         })?;
 
         rcgen::KeyPair::from_der_and_sign_algo(pkcs8.as_ref(), sig_alg).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Error preparing key pair for signature".to_string(),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Error preparing key pair for signature: err={:?}",
+                &err
+            ))
         })
     }
 }
@@ -182,22 +182,16 @@ impl Certificate {
                 .certificate
                 .serialize_pem_with_signer(&signing_cert.certificate)
                 .map_err(|err| {
-                    AppError::GenWithMsgAndErr(
-                        format!(
-                            "Error serializing signed certificate: type={:?}",
-                            &self.entity_type
-                        ),
-                        Box::new(err),
-                    )
+                    AppError::General(format!(
+                        "Error serializing signed certificate: type={:?}, err={:?}",
+                        &self.entity_type, &err
+                    ))
                 }),
             None => self.certificate.serialize_pem().map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    format!(
-                        "Error serializing certificate: type={:?}",
-                        &self.entity_type
-                    ),
-                    Box::new(err),
-                )
+                AppError::General(format!(
+                    "Error serializing certificate: type={:?}, err={:?}",
+                    &self.entity_type, &err
+                ))
             }),
         }
     }
@@ -228,10 +222,10 @@ impl Certificate {
     ) -> Result<String, AppError> {
         crl.serialize_pem_with_signer(&self.certificate)
             .map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    "Error serializing certificate revocation list".to_string(),
-                    Box::new(err),
-                )
+                AppError::General(format!(
+                    "Error serializing certificate revocation list: err={:?}",
+                    &err
+                ))
             })
     }
 }
@@ -658,13 +652,10 @@ impl RootCaCertificateBuilder {
             entity_type: EntityType::RootCa,
             _key_algorithm: key_algorithm.clone(),
             certificate: rcgen::Certificate::from_params(cert_params).map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    format!(
-                        "Error creating root CA certificate: alg={:?}",
-                        &key_algorithm
-                    ),
-                    Box::new(err),
-                )
+                AppError::General(format!(
+                    "Error creating root CA certificate: alg={:?}, err={:?}",
+                    &key_algorithm, &err
+                ))
             })?,
         })
     }
@@ -842,13 +833,10 @@ impl GatewayCertificateBuilder {
             entity_type: EntityType::Gateway,
             _key_algorithm: key_algorithm.clone(),
             certificate: rcgen::Certificate::from_params(cert_params).map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    format!(
-                        "Error creating gateway certificate: alg={:?}",
-                        &key_algorithm
-                    ),
-                    Box::new(err),
-                )
+                AppError::General(format!(
+                    "Error creating gateway certificate: alg={:?}, err={:?}",
+                    &key_algorithm, &err
+                ))
             })?,
         })
     }
@@ -1044,13 +1032,10 @@ impl ClientCertificateBuilder {
             };
             cert_params.subject_alt_names.push(rcgen::SanType::URI(
                 serde_json::to_string(&access_context).map_err(|err| {
-                    AppError::GenWithMsgAndErr(
-                        format!(
-                            "Error serializing client auth context: val={:?}",
-                            &access_context
-                        ),
-                        Box::new(err),
-                    )
+                    AppError::General(format!(
+                        "Error serializing client auth context: val={:?}, err={:?}",
+                        &access_context, &err
+                    ))
                 })?,
             ));
         }
@@ -1059,13 +1044,10 @@ impl ClientCertificateBuilder {
             entity_type: EntityType::Client,
             _key_algorithm: key_algorithm.clone(),
             certificate: rcgen::Certificate::from_params(cert_params).map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    format!(
-                        "Error creating client certificate: alg={:?}",
-                        &key_algorithm
-                    ),
-                    Box::new(err),
-                )
+                AppError::General(format!(
+                    "Error creating client certificate: alg={:?}, err={:?}",
+                    &key_algorithm, &err
+                ))
             })?,
         })
     }

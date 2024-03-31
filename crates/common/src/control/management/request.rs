@@ -168,13 +168,10 @@ impl RequestProcessor {
 
         match AuthnMessage::parse_json_str(message.unwrap()) {
             Ok(authn_msg) => Ok(Request::LoginData { message: authn_msg }),
-            Err(err) => Err(AppError::GenWithMsgAndErr(
-                format!(
-                    "Invalid authentication message for the \"{}\" command",
-                    PROTOCOL_REQUEST_LOGIN_DATA
-                ),
-                Box::new(err),
-            )),
+            Err(err) => Err(AppError::General(format!(
+                "Invalid authentication message for the \"{}\" command: err={:?}",
+                PROTOCOL_REQUEST_LOGIN_DATA, &err
+            ))),
         }
     }
 
@@ -306,7 +303,7 @@ mod tests {
 
     #[test]
     fn reqproc_new() {
-        let _ = RequestProcessor::new();
+        let _ = RequestProcessor::default();
     }
 
     #[test]
@@ -409,6 +406,37 @@ mod tests {
                 _ => panic!("Unexpected successful result: req={:?}", request),
             },
             Err(err) => panic!("Unexpected result: err={:?}", err),
+        }
+    }
+
+    #[test]
+    fn reqproc_parse_when_login_data_request_and_missing_msg_arg() {
+        let request_processor = RequestProcessor::new();
+
+        let request = format!(r#"{}"#, PROTOCOL_REQUEST_LOGIN_DATA,);
+
+        let result = request_processor.parse(&request);
+
+        if let Ok(request) = result {
+            panic!("Unexpected successful result: req={:?}", request);
+        }
+    }
+
+    #[test]
+    fn reqproc_parse_when_login_data_request_and_invalid_msg_arg() {
+        let request_processor = RequestProcessor::new();
+
+        let request = format!(
+            r#"{} --{} "{}""#,
+            PROTOCOL_REQUEST_LOGIN_DATA,
+            PROTOCOL_REQUEST_LOGIN_DATA_ARG_MESSAGE,
+            "{\"invalid\": 123}",
+        );
+
+        let result = request_processor.parse(&request);
+
+        if let Ok(request) = result {
+            panic!("Unexpected successful result: req={:?}", request);
         }
     }
 

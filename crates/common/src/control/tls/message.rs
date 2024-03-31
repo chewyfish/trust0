@@ -58,12 +58,7 @@ impl TryInto<MessageFrame> for &SessionMessage {
     type Error = AppError;
 
     fn try_into(self) -> Result<MessageFrame, Self::Error> {
-        let data_type = serde_json::to_value(self.data_type.clone()).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Error converting DataType to Value".to_string(),
-                Box::new(err),
-            )
-        })?;
+        let data_type = serde_json::to_value(self.data_type.clone()).unwrap();
         Ok(MessageFrame::new(
             ControlChannel::TLS,
             pdu::CODE_OK,
@@ -110,10 +105,10 @@ impl Trust0Connection {
     ///
     pub fn from_serde_value(value: &Value) -> Result<Trust0Connection, AppError> {
         serde_json::from_value(value.clone()).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Error converting serde Value to Trust0Connection".to_string(),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Error converting serde Value to Trust0Connection: err={:?}",
+                &err
+            ))
         })
     }
 
@@ -155,12 +150,7 @@ impl TryInto<Value> for &Trust0Connection {
     type Error = AppError;
 
     fn try_into(self) -> Result<Value, Self::Error> {
-        serde_json::to_value(self).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Error converting Trust0Connection to serde Value".to_string(),
-                Box::new(err),
-            )
-        })
+        Ok(serde_json::to_value(self).unwrap())
     }
 }
 

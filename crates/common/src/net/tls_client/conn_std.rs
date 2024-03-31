@@ -11,7 +11,7 @@ use crate::error::AppError;
 use crate::logging::error;
 use crate::net::stream_utils;
 use crate::net::stream_utils::StreamReaderWriter;
-use crate::{control, target};
+use crate::{control, sync, target};
 
 pub const READ_BLOCK_SIZE: usize = 1024;
 
@@ -77,7 +77,7 @@ impl Connection {
         let event_channel = ConnectionEvent::create_channel();
         visitor.on_connected(&event_channel.0)?;
 
-        let tcp_stream = stream_utils::clone_std_tcp_stream(&tls_conn.sock)?;
+        let tcp_stream = stream_utils::clone_std_tcp_stream(&tls_conn.sock, "net-tcp-client")?;
 
         Ok(Self {
             visitor,
@@ -228,15 +228,11 @@ impl Connection {
 
         // Handle connection error
         if error.is_some() {
-            self.event_channel
-                .0
-                .send(ConnectionEvent::Closing)
-                .map_err(|err| {
-                    AppError::GenWithMsgAndErr(
-                        "Error sending closing event".to_string(),
-                        Box::new(err),
-                    )
-                })?;
+            sync::send_mpsc_channel_message(
+                &self.event_channel.0,
+                ConnectionEvent::Closing,
+                Box::new(|| "Error sending closing event:".to_string()),
+            )?;
             return Err(error.unwrap());
         }
 
@@ -264,15 +260,11 @@ impl Connection {
 
         // Handle connection error
         if error.is_some() {
-            self.event_channel
-                .0
-                .send(ConnectionEvent::Closing)
-                .map_err(|err| {
-                    AppError::GenWithMsgAndErr(
-                        "Error sending closing event".to_string(),
-                        Box::new(err),
-                    )
-                })?;
+            sync::send_mpsc_channel_message(
+                &self.event_channel.0,
+                ConnectionEvent::Closing,
+                Box::new(|| "Error sending closing event:".to_string()),
+            )?;
             return Err(error.unwrap());
         }
 
@@ -292,25 +284,22 @@ impl Connection {
 
         match self.tcp_stream.as_ref().unwrap().shutdown(Shutdown::Both) {
             Err(err) if io::ErrorKind::NotConnected != err.kind() => {
-                return Err(AppError::GenWithMsgAndErr(
-                    "Error shutting down TLS connection".to_string(),
-                    Box::new(err),
-                ))
+                return Err(AppError::General(format!(
+                    "Error shutting down TLS connection: err={:?}",
+                    &err
+                )));
             }
             _ => {}
         }
 
         self.closed = true;
 
-        if let Err(err) = self
-            .event_channel
-            .0
-            .send(ConnectionEvent::Closed)
-            .map_err(|err| {
-                AppError::GenWithMsgAndErr("Error sending closed event".to_string(), Box::new(err))
-            })
-        {
-            error(&target!(), &format!("{:?}", err));
+        if let Err(err) = sync::send_mpsc_channel_message(
+            &self.event_channel.0,
+            ConnectionEvent::Closed,
+            Box::new(|| "Error sending closed event:".to_string()),
+        ) {
+            error(&target!(), &format!("{:?}", &err));
         }
 
         self.visitor.on_shutdown()
@@ -325,25 +314,21 @@ impl Connection {
                 Ok(bytes_read) => bytes_read,
 
                 Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
-                    self.event_channel
-                        .0
-                        .send(ConnectionEvent::Closing)
-                        .map_err(|err| {
-                            AppError::GenWithMsgAndErr(
-                                "Error sending closing event".to_string(),
-                                Box::new(err),
-                            )
-                        })?;
+                    sync::send_mpsc_channel_message(
+                        &self.event_channel.0,
+                        ConnectionEvent::Closing,
+                        Box::new(|| "Error sending closing event:".to_string()),
+                    )?;
                     break;
                 }
 
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => break,
 
                 Err(err) => {
-                    return Err(AppError::GenWithMsgAndErr(
-                        "Error reading from TLS connection".to_string(),
-                        Box::new(err),
-                    ))
+                    return Err(AppError::General(format!(
+                        "Error reading from TLS connection: err={:?}",
+                        &err
+                    )));
                 }
             };
             if bytes_read < READ_BLOCK_SIZE {
@@ -373,33 +358,25 @@ impl Connection {
         match self.write_stream(buffer) {
             Ok(()) => {}
 
-            Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => self
-                .event_channel
-                .0
-                .send(ConnectionEvent::Closing)
-                .map_err(|err| {
-                    AppError::GenWithMsgAndErr(
-                        "Error sending closing event".to_string(),
-                        Box::new(err),
-                    )
-                })?,
+            Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                sync::send_mpsc_channel_message(
+                    &self.event_channel.0,
+                    ConnectionEvent::Closing,
+                    Box::new(|| "Error sending closing event:".to_string()),
+                )?
+            }
 
-            Err(err) if err.kind() == io::ErrorKind::WouldBlock => self
-                .event_channel
-                .0
-                .send(ConnectionEvent::Write(buffer.to_vec()))
-                .map_err(|err| {
-                    AppError::GenWithMsgAndErr(
-                        "Error sending write event".to_string(),
-                        Box::new(err),
-                    )
-                })?,
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => sync::send_mpsc_channel_message(
+                &self.event_channel.0,
+                ConnectionEvent::Write(buffer.to_vec()),
+                Box::new(|| "Error sending write event:".to_string()),
+            )?,
 
             Err(err) => {
-                return Err(AppError::GenWithMsgAndErr(
-                    "Error writing to TLS connection".to_string(),
-                    Box::new(err),
-                ))
+                return Err(AppError::General(format!(
+                    "Error writing to TLS connection: err={:?}",
+                    &err
+                )));
             }
         }
 
@@ -552,7 +529,11 @@ pub mod tests {
                     ServerName::try_from("localhost".to_string()).unwrap(),
                 )
                 .unwrap(),
-                stream_utils::clone_std_tcp_stream(&connected_tcp_stream.client_stream.0).unwrap(),
+                stream_utils::clone_std_tcp_stream(
+                    &connected_tcp_stream.client_stream.0,
+                    "test-net-tcp-client",
+                )
+                .unwrap(),
             ),
             &session_addrs,
         );
@@ -616,7 +597,11 @@ pub mod tests {
             tls_conn: None,
             tls_conn_alt: Some(Box::new(stream_rw)),
             tcp_stream: Some(
-                stream_utils::clone_std_tcp_stream(&connected_tcp_stream.server_stream.0).unwrap(),
+                stream_utils::clone_std_tcp_stream(
+                    &connected_tcp_stream.server_stream.0,
+                    "test-net-tcp-client",
+                )
+                .unwrap(),
             ),
             session_addrs: ("addr1".to_string(), "addr2".to_string()),
             event_channel,
@@ -681,7 +666,11 @@ pub mod tests {
             tls_conn: None,
             tls_conn_alt: Some(Box::new(stream_rw)),
             tcp_stream: Some(
-                stream_utils::clone_std_tcp_stream(&connected_tcp_stream.server_stream.0).unwrap(),
+                stream_utils::clone_std_tcp_stream(
+                    &connected_tcp_stream.server_stream.0,
+                    "test-net-tcp-client",
+                )
+                .unwrap(),
             ),
             session_addrs: ("addr1".to_string(), "addr2".to_string()),
             event_channel,

@@ -62,10 +62,10 @@ impl Response {
     ///
     pub fn parse(data: &str) -> Result<Response, AppError> {
         serde_json::from_str(data).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                format!("Failed to parse response JSON: val={}", data),
-                Box::new(err),
-            )
+            AppError::General(format!(
+                "Failed to parse response JSON: val={}, err={:?}",
+                data, &err
+            ))
         })
     }
 }
@@ -82,12 +82,7 @@ impl TryInto<MessageFrame> for &Response {
     type Error = AppError;
 
     fn try_into(self) -> Result<MessageFrame, Self::Error> {
-        let request = serde_json::to_value(self.request.clone()).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Error converting Request to Value".to_string(),
-                Box::new(err),
-            )
-        })?;
+        let request = serde_json::to_value(self.request.clone()).unwrap();
         Ok(MessageFrame::new(
             ControlChannel::Management,
             self.code,
@@ -145,12 +140,7 @@ impl TryInto<Value> for &User {
     type Error = AppError;
 
     fn try_into(self) -> Result<Value, Self::Error> {
-        serde_json::to_value(self).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Error converting User to serde Value".to_string(),
-                Box::new(err),
-            )
-        })
+        Ok(serde_json::to_value(self).unwrap())
     }
 }
 
@@ -210,12 +200,7 @@ impl TryInto<Value> for &About {
     type Error = AppError;
 
     fn try_into(self) -> Result<Value, Self::Error> {
-        serde_json::to_value(self).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Error converting About to serde Value".to_string(),
-                Box::new(err),
-            )
-        })
+        Ok(serde_json::to_value(self).unwrap())
     }
 }
 
@@ -276,20 +261,20 @@ impl Proxy {
                 .iter()
                 .map(|v| {
                     serde_json::from_value(v.clone()).map_err(|err| {
-                        AppError::GenWithMsgAndErr(
-                            "Error converting serde Value::Array to Proxy".to_string(),
-                            Box::new(err),
-                        )
+                        AppError::General(format!(
+                            "Error converting serde Value::Array to Proxy: err={:?}",
+                            &err
+                        ))
                     })
                 })
                 .collect::<Result<Vec<Proxy>, AppError>>()?)
         } else {
             Ok(vec![serde_json::from_value(value.clone()).map_err(
                 |err| {
-                    AppError::GenWithMsgAndErr(
-                        "Error converting serde Value to Proxy".to_string(),
-                        Box::new(err),
-                    )
+                    AppError::General(format!(
+                        "Error converting serde Value to Proxy: err={:?}",
+                        &err
+                    ))
                 },
             )?])
         }
@@ -310,12 +295,7 @@ impl TryInto<Value> for &Proxy {
     type Error = AppError;
 
     fn try_into(self) -> Result<Value, Self::Error> {
-        serde_json::to_value(self).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Error converting Proxy to serde Value".to_string(),
-                Box::new(err),
-            )
-        })
+        Ok(serde_json::to_value(self).unwrap())
     }
 }
 
@@ -376,20 +356,20 @@ impl Service {
                 .iter()
                 .map(|v| {
                     serde_json::from_value(v.clone()).map_err(|err| {
-                        AppError::GenWithMsgAndErr(
-                            "Error converting serde Value to Service".to_string(),
-                            Box::new(err),
-                        )
+                        AppError::General(format!(
+                            "Error converting serde Value to Service: err={:?}",
+                            &err
+                        ))
                     })
                 })
                 .collect::<Result<Vec<Service>, AppError>>()?)
         } else {
             Ok(vec![serde_json::from_value(value.clone()).map_err(
                 |err| {
-                    AppError::GenWithMsgAndErr(
-                        "Error converting serde Value to Service".to_string(),
-                        Box::new(err),
-                    )
+                    AppError::General(format!(
+                        "Error converting serde Value to Service: err={:?}",
+                        &err
+                    ))
                 },
             )?])
         }
@@ -447,12 +427,7 @@ impl TryInto<Value> for &Service {
     type Error = AppError;
 
     fn try_into(self) -> Result<Value, Self::Error> {
-        serde_json::to_value(self).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Error converting Service to serde Value".to_string(),
-                Box::new(err),
-            )
-        })
+        Ok(serde_json::to_value(self).unwrap())
     }
 }
 
@@ -504,20 +479,20 @@ impl LoginData {
                 .iter()
                 .map(|v| {
                     serde_json::from_value(v.clone()).map_err(|err| {
-                        AppError::GenWithMsgAndErr(
-                            "Error converting serde Value::Array to LoginData".to_string(),
-                            Box::new(err),
-                        )
+                        AppError::General(format!(
+                            "Error converting serde Value::Array to LoginData: err={:?}",
+                            &err
+                        ))
                     })
                 })
                 .collect::<Result<Vec<LoginData>, AppError>>()?)
         } else {
             Ok(vec![serde_json::from_value(value.clone()).map_err(
                 |err| {
-                    AppError::GenWithMsgAndErr(
-                        "Error converting serde Value to LoginData".to_string(),
-                        Box::new(err),
-                    )
+                    AppError::General(format!(
+                        "Error converting serde Value to LoginData: err={:?}",
+                        &err
+                    ))
                 },
             )?])
         }
@@ -538,12 +513,7 @@ impl TryInto<Value> for &LoginData {
     type Error = AppError;
 
     fn try_into(self) -> Result<Value, Self::Error> {
-        serde_json::to_value(self).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Error converting LoginData to serde Value".to_string(),
-                Box::new(err),
-            )
-        })
+        Ok(serde_json::to_value(self).unwrap())
     }
 }
 
@@ -591,20 +561,20 @@ impl Connection {
                 .iter()
                 .map(|v| {
                     serde_json::from_value(v.clone()).map_err(|err| {
-                        AppError::GenWithMsgAndErr(
-                            "Error converting serde Value to Connection".to_string(),
-                            Box::new(err),
-                        )
+                        AppError::General(format!(
+                            "Error converting serde Value to Connection: err={:?}",
+                            &err
+                        ))
                     })
                 })
                 .collect::<Result<Vec<Connection>, AppError>>()?)
         } else {
             Ok(vec![serde_json::from_value(value.clone()).map_err(
                 |err| {
-                    AppError::GenWithMsgAndErr(
-                        "Error converting serde Value to Connection".to_string(),
-                        Box::new(err),
-                    )
+                    AppError::General(format!(
+                        "Error converting serde Value to Connection: err={:?}",
+                        &err
+                    ))
                 },
             )?])
         }
@@ -625,12 +595,7 @@ impl TryInto<Value> for &Connection {
     type Error = AppError;
 
     fn try_into(self) -> Result<Value, Self::Error> {
-        serde_json::to_value(self).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Error converting Connection to serde Value".to_string(),
-                Box::new(err),
-            )
-        })
+        Ok(serde_json::to_value(self).unwrap())
     }
 }
 
@@ -812,7 +777,7 @@ mod tests {
     }
 
     #[test]
-    fn proxy_from_serde_value_when_invalid() {
+    fn proxy_from_serde_value_when_invalid_object() {
         let proxy_json = json!({"service_INVALID": {"id": 200, "name": "svc1", "transport": "TCP", "address": "host:9000"}, "gateway_host": "gwhost1", "gateway_port": 8400, "client_port": 8501});
 
         match Proxy::from_serde_value(&proxy_json) {
@@ -822,8 +787,8 @@ mod tests {
     }
 
     #[test]
-    fn proxy_from_serde_value_when_valid_list() {
-        let proxy_json = json!([{"service": {"id": 200, "name": "svc1", "transport": "TCP", "address": "host:9000"}, "gateway_host": "gwhost1", "gateway_port": 8400, "client_port": 8501}]);
+    fn proxy_from_serde_value_when_valid_object() {
+        let proxy_json = json!({"service": {"id": 200, "name": "svc1", "transport": "TCP", "address": "host:9000"}, "gateway_host": "gwhost1", "gateway_port": 8400, "client_port": 8501});
 
         match Proxy::from_serde_value(&proxy_json) {
             Ok(proxies) => {
@@ -842,8 +807,18 @@ mod tests {
     }
 
     #[test]
-    fn proxy_from_serde_value_when_valid_object() {
-        let proxy_json = json!({"service": {"id": 200, "name": "svc1", "transport": "TCP", "address": "host:9000"}, "gateway_host": "gwhost1", "gateway_port": 8400, "client_port": 8501});
+    fn proxy_from_serde_value_when_invalid_list() {
+        let proxy_json = json!([{"service_INVALID": {"id": 200, "name": "svc1", "transport": "TCP", "address": "host:9000"}, "gateway_host": "gwhost1", "gateway_port": 8400, "client_port": 8501}]);
+
+        match Proxy::from_serde_value(&proxy_json) {
+            Ok(proxies) => panic!("Unexpected successful result: proxies={:?}", proxies),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn proxy_from_serde_value_when_valid_list() {
+        let proxy_json = json!([{"service": {"id": 200, "name": "svc1", "transport": "TCP", "address": "host:9000"}, "gateway_host": "gwhost1", "gateway_port": 8400, "client_port": 8501}]);
 
         match Proxy::from_serde_value(&proxy_json) {
             Ok(proxies) => {
@@ -899,7 +874,7 @@ mod tests {
     }
 
     #[test]
-    fn service_from_serde_value_when_invalid() {
+    fn service_from_serde_value_when_invalid_object() {
         let service_json =
             json!({"id_INVALID": 200, "name": "svc1", "transport": "TCP", "address": "host:9000"});
 
@@ -910,9 +885,9 @@ mod tests {
     }
 
     #[test]
-    fn service_from_serde_value_when_valid_list() {
+    fn service_from_serde_value_when_valid_object() {
         let service_json =
-            json!([{"id": 200, "name": "svc1", "transport": "TCP", "address": "host:9000"}]);
+            json!({"id": 200, "name": "svc1", "transport": "TCP", "address": "host:9000"});
 
         match Service::from_serde_value(&service_json) {
             Ok(services) => {
@@ -930,9 +905,19 @@ mod tests {
     }
 
     #[test]
-    fn service_from_serde_value_when_valid_object() {
+    fn service_from_serde_value_when_invalid_list() {
+        let service_json = json!([{"id_INVALID": 200, "name": "svc1", "transport": "TCP", "address": "host:9000"}]);
+
+        match Service::from_serde_value(&service_json) {
+            Ok(services) => panic!("Unexpected successful result: svcs={:?}", services),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn service_from_serde_value_when_valid_list() {
         let service_json =
-            json!({"id": 200, "name": "svc1", "transport": "TCP", "address": "host:9000"});
+            json!([{"id": 200, "name": "svc1", "transport": "TCP", "address": "host:9000"}]);
 
         match Service::from_serde_value(&service_json) {
             Ok(services) => {
@@ -985,7 +970,7 @@ mod tests {
     }
 
     #[test]
-    fn logindata_from_serde_value_when_invalid() {
+    fn logindata_from_serde_value_when_invalid_object() {
         let login_data_json =
             json!({"authnTypeINVALID": "scramSha256", "message": {"payload": "data1"}});
 
@@ -996,9 +981,8 @@ mod tests {
     }
 
     #[test]
-    fn logindata_from_serde_value_when_valid_list() {
-        let login_data_json =
-            json!([{"authnType": "scramSha256", "message": {"payload": "data1"}}]);
+    fn logindata_from_serde_value_when_valid_object() {
+        let login_data_json = json!({"authnType": "scramSha256", "message": {"payload": "data1"}});
 
         match LoginData::from_serde_value(&login_data_json) {
             Ok(login_data_list) => {
@@ -1014,8 +998,20 @@ mod tests {
     }
 
     #[test]
-    fn logindata_from_serde_value_when_valid_object() {
-        let login_data_json = json!({"authnType": "scramSha256", "message": {"payload": "data1"}});
+    fn logindata_from_serde_value_when_invalid_list() {
+        let login_data_json =
+            json!([{"authnTypeINVALID": "scramSha256", "message": {"payload": "data1"}}]);
+
+        match LoginData::from_serde_value(&login_data_json) {
+            Ok(login_data) => panic!("Unexpected successful result: data={:?}", login_data),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn logindata_from_serde_value_when_valid_list() {
+        let login_data_json =
+            json!([{"authnType": "scramSha256", "message": {"payload": "data1"}}]);
 
         match LoginData::from_serde_value(&login_data_json) {
             Ok(login_data_list) => {
@@ -1066,7 +1062,7 @@ mod tests {
     }
 
     #[test]
-    fn connection_from_serde_value_when_invalid() {
+    fn connection_from_serde_value_when_invalid_object() {
         let conn_json = json!({"service_name_INVALID": "svc1", "binds": [["b0","b1"],["b2","b3"]]});
 
         match Connection::from_serde_value(&conn_json) {
@@ -1076,8 +1072,8 @@ mod tests {
     }
 
     #[test]
-    fn connection_from_serde_value_when_valid_list() {
-        let conn_json = json!([{"service_name": "svc1", "binds": [["b0","b1"],["b2","b3"]]}]);
+    fn connection_from_serde_value_when_valid_object() {
+        let conn_json = json!({"service_name": "svc1", "binds": [["b0","b1"],["b2","b3"]]});
 
         match Connection::from_serde_value(&conn_json) {
             Ok(conns) => {
@@ -1096,8 +1092,19 @@ mod tests {
     }
 
     #[test]
-    fn connection_from_serde_value_when_valid_object() {
-        let conn_json = json!({"service_name": "svc1", "binds": [["b0","b1"],["b2","b3"]]});
+    fn connection_from_serde_value_when_invalid_list() {
+        let conn_json =
+            json!([{"service_name_INVALID": "svc1", "binds": [["b0","b1"],["b2","b3"]]}]);
+
+        match Connection::from_serde_value(&conn_json) {
+            Ok(proxies) => panic!("Unexpected successful result: conns={:?}", proxies),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn connection_from_serde_value_when_valid_list() {
+        let conn_json = json!([{"service_name": "svc1", "binds": [["b0","b1"],["b2","b3"]]}]);
 
         match Connection::from_serde_value(&conn_json) {
             Ok(conns) => {
