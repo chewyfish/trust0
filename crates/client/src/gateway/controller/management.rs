@@ -196,12 +196,7 @@ impl ManagementController {
             }
         }
 
-        gateway_response.data = Some(serde_json::to_value(proxies).map_err(|err| {
-            AppError::GenWithMsgAndErr(
-                "Failed converting Proxies vector to serde Value::Array".to_string(),
-                Box::new(err),
-            )
-        })?);
+        gateway_response.data = Some(serde_json::to_value(proxies).unwrap());
 
         Ok(())
     }
@@ -387,20 +382,20 @@ impl ManagementController {
                 .unwrap()
                 .write_all(console_output_text.as_bytes())
                 .map_err(|err| {
-                    AppError::GenWithMsgAndErr(
-                        "Error writing login label to STDOUT".to_string(),
-                        Box::new(err),
-                    )
+                    AppError::General(format!(
+                        "Error writing login label to STDOUT: err={:?}",
+                        &err
+                    ))
                 })?;
             self.console_shell_output
                 .lock()
                 .unwrap()
                 .flush()
                 .map_err(|err| {
-                    AppError::GenWithMsgAndErr(
-                        "Error flushing login label to STDOUT".to_string(),
-                        Box::new(err),
-                    )
+                    AppError::General(format!(
+                        "Error flushing login label to STDOUT: err={:?}",
+                        &err
+                    ))
                 })?;
         }
 
@@ -592,10 +587,10 @@ impl ChannelProcessor for ManagementController {
                     .unwrap()
                     .write_all(format!("{}\n", err).as_bytes())
                     .map_err(|err| {
-                        AppError::GenWithMsgAndErr(
-                            "Error writing invalid command response to STDOUT".to_string(),
-                            Box::new(err),
-                        )
+                        AppError::General(format!(
+                            "Error writing invalid command response to STDOUT: err={:?}",
+                            &err
+                        ))
                     })?;
                 self.console_shell_output
                     .lock()
@@ -661,12 +656,7 @@ impl ChannelProcessor for ManagementController {
         // Write response to REPL shell
         let repl_shell_response = format!(
             "{}\n",
-            serde_json::to_string_pretty(&gateway_response).map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    "Error serializing response".to_ascii_lowercase(),
-                    Box::new(err),
-                )
-            })?
+            serde_json::to_string_pretty(&gateway_response).unwrap()
         );
 
         self.console_shell_output
@@ -674,10 +664,7 @@ impl ChannelProcessor for ManagementController {
             .unwrap()
             .write_all(repl_shell_response.as_bytes())
             .map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    "Error writing response to STDOUT".to_string(),
-                    Box::new(err),
-                )
+                AppError::General(format!("Error writing response to STDOUT: err={:?}", &err))
             })?;
 
         self.console_shell_output

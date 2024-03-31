@@ -137,10 +137,7 @@ impl AppConfig {
 
         for ca_root_cert in ca_root_certs {
             ca_root_store.add(ca_root_cert).map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    "Error adding CA root cert".to_string(),
-                    Box::new(err.clone()),
-                )
+                AppError::General(format!("Error adding CA root cert: err={:?}", &err))
             })?;
         }
 
@@ -306,10 +303,7 @@ pub mod tests {
         let mut auth_root_certs = RootCertStore::empty();
         for ca_root_cert in rootca_cert {
             auth_root_certs.add(ca_root_cert).map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    "Error adding CA root cert".to_string(),
-                    Box::new(err.clone()),
-                )
+                AppError::General(format!("Error adding CA root cert: err={:?}", &err))
             })?;
         }
 

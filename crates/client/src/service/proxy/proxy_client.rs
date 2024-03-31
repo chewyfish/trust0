@@ -30,10 +30,10 @@ impl client_std::ClientVisitor for ClientVisitor {
                 let t0_conn =
                     serde_json::from_value::<tls::message::Trust0Connection>(msg.data.unwrap())
                         .map_err(|err| {
-                            AppError::GenWithMsgAndErr(
-                                "Invalid Trust0Connection json".to_string(),
-                                Box::new(err),
-                            )
+                            AppError::General(format!(
+                                "Invalid Trust0Connection json: err={:?}",
+                                &err
+                            ))
                         })?;
                 Some(t0_conn.binds)
             }
@@ -112,10 +112,7 @@ pub mod tests {
 
         for ca_root_cert in rootca_cert {
             ca_root_store.add(ca_root_cert).map_err(|err| {
-                AppError::GenWithMsgAndErr(
-                    "Error adding CA root cert".to_string(),
-                    Box::new(err.clone()),
-                )
+                AppError::General(format!("Error adding CA root cert: err={:?}", &err))
             })?;
         }
 
@@ -156,7 +153,11 @@ pub mod tests {
                     ServerName::try_from("127.0.0.1".to_string()).unwrap(),
                 )
                 .unwrap(),
-                stream_utils::clone_std_tcp_stream(&connected_tcp_stream.client_stream.0).unwrap(),
+                stream_utils::clone_std_tcp_stream(
+                    &connected_tcp_stream.client_stream.0,
+                    "test-proxy-client",
+                )
+                .unwrap(),
             ),
             Some(tls::message::SessionMessage::new(
                 &tls::message::DataType::Trust0Connection,
@@ -186,7 +187,11 @@ pub mod tests {
                     ServerName::try_from("127.0.0.1".to_string()).unwrap(),
                 )
                 .unwrap(),
-                stream_utils::clone_std_tcp_stream(&connected_tcp_stream.client_stream.0).unwrap(),
+                stream_utils::clone_std_tcp_stream(
+                    &connected_tcp_stream.client_stream.0,
+                    "test-proxy-client",
+                )
+                .unwrap(),
             ),
             Some(tls::message::SessionMessage::new(
                 &tls::message::DataType::Trust0Connection,
@@ -211,7 +216,11 @@ pub mod tests {
                     ServerName::try_from("127.0.0.1".to_string()).unwrap(),
                 )
                 .unwrap(),
-                stream_utils::clone_std_tcp_stream(&connected_tcp_stream.client_stream.0).unwrap(),
+                stream_utils::clone_std_tcp_stream(
+                    &connected_tcp_stream.client_stream.0,
+                    "test-proxy-client",
+                )
+                .unwrap(),
             ),
             None,
         );

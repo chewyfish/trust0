@@ -1,5 +1,9 @@
 use std::collections::VecDeque;
+#[cfg(test)]
+use std::io::Cursor;
 use std::io::{self, BufRead, Write};
+#[cfg(test)]
+use std::ops::DerefMut;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
@@ -91,19 +95,16 @@ impl ShellOutputWriter {
                     .as_bytes(),
                 )
                 .map_err(|err| {
-                    AppError::GenWithMsgAndErr(
-                        "Error writing welcome msg".to_string(),
-                        Box::new(err),
-                    )
+                    AppError::General(format!("Error writing welcome msg: err={:?}", &err))
                 })?;
         }
 
-        writer.write_all(SHELL_PROMPT.as_bytes()).map_err(|err| {
-            AppError::GenWithMsgAndErr("Error writing prompt".to_string(), Box::new(err))
-        })?;
-        writer.flush().map_err(|err| {
-            AppError::GenWithMsgAndErr("Error flushing STDOUT".to_string(), Box::new(err))
-        })?;
+        writer
+            .write_all(SHELL_PROMPT.as_bytes())
+            .map_err(|err| AppError::General(format!("Error writing prompt: err={:?}", &err)))?;
+        writer
+            .flush()
+            .map_err(|err| AppError::General(format!("Error flushing STDOUT: err={:?}", &err)))?;
 
         self.prompted_toggle.store(true, Ordering::SeqCst);
 
@@ -137,6 +138,12 @@ pub struct ShellInputReader {
     initial_lines: VecDeque<String>,
     /// Prompt displayed toggle
     prompted_toggle: Arc<AtomicBool>,
+    #[cfg(test)]
+    /// Shell input reader (for testing)
+    test_input_reader: Option<Arc<Mutex<Cursor<Vec<u8>>>>>,
+    #[cfg(test)]
+    /// Shell input lines total (for testing)
+    test_input_lines: i32,
 }
 
 impl ShellInputReader {
@@ -160,6 +167,10 @@ impl ShellInputReader {
             channel_recv: recv,
             initial_lines: VecDeque::from(initial_lines.to_vec()),
             prompted_toggle: prompted_toggle.clone(),
+            #[cfg(test)]
+            test_input_reader: None,
+            #[cfg(test)]
+            test_input_lines: 0,
         }
     }
 
@@ -214,16 +225,38 @@ impl InputTextStreamConnector for ShellInputReader {
     fn spawn_line_reader(&self) {
         let disable_tty_echo = self.disable_tty_echo.clone();
         let channel_send = self.channel_send.clone();
-        std::thread::spawn(move || loop {
-            let disable_tty_echo_val = *disable_tty_echo.lock().unwrap();
-            let is_password_input = match disable_tty_echo_val {
-                false => false,
-                true => {
-                    *disable_tty_echo.lock().unwrap() = false;
-                    true
+        #[cfg(test)]
+        let test_input_reader = self.test_input_reader.as_ref().unwrap().clone();
+        #[cfg(test)]
+        let test_input_lines = self.test_input_lines;
+        std::thread::spawn(move || {
+            let mut _lines_read_idx = 0;
+            loop {
+                let disable_tty_echo_val = *disable_tty_echo.lock().unwrap();
+                let is_password_input = match disable_tty_echo_val {
+                    false => false,
+                    true => {
+                        *disable_tty_echo.lock().unwrap() = false;
+                        true
+                    }
+                };
+                #[cfg(not(test))]
+                {
+                    Self::process_next_line(io::stdin().lock(), is_password_input, &channel_send);
                 }
-            };
-            Self::process_next_line(io::stdin().lock(), is_password_input, &channel_send);
+                #[cfg(test)]
+                {
+                    if _lines_read_idx >= test_input_lines {
+                        break;
+                    }
+                    Self::process_next_line(
+                        test_input_reader.lock().unwrap().deref_mut(),
+                        is_password_input,
+                        &channel_send,
+                    );
+                }
+                _lines_read_idx += 1;
+            }
         });
     }
 
@@ -245,10 +278,10 @@ impl InputTextStreamConnector for ShellInputReader {
         match self.channel_recv.try_recv() {
             Ok(result) => match result {
                 Ok(line) => Ok(Some(format!("{line}\n"))),
-                Err(err) => Err(AppError::GenWithMsgAndErr(
-                    "Error processing input".to_string(),
-                    Box::new(err),
-                )),
+                Err(err) => Err(AppError::General(format!(
+                    "Error processing input: err={:?}",
+                    &err
+                ))),
             },
             Err(TryRecvError::Disconnected) => Err(AppError::General(
                 "Input channel sender disconnected".to_string(),
@@ -284,6 +317,8 @@ pub mod tests {
     use super::*;
     use mockall::{mock, predicate};
     use std::io::{Cursor, Read};
+    use std::thread;
+    use std::time::Duration;
     use trust0_common::testutils::ChannelWriter;
 
     // mocks
@@ -597,6 +632,44 @@ pub mod tests {
                 TryRecvError::Empty => {}
             },
         }
+    }
+
+    #[test]
+    fn shellinp_spawn_line_reader_when_2_lines() {
+        let prompted_toggle = Arc::new(AtomicBool::new(true));
+        let mut input_reader = ShellInputReader::new(vec![].as_slice(), &prompted_toggle);
+        input_reader.test_input_reader = Some(Arc::new(Mutex::new(Cursor::new(
+            "line1\nline2\n".as_bytes().to_vec(),
+        ))));
+        input_reader.test_input_lines = 2;
+
+        input_reader.spawn_line_reader();
+
+        thread::sleep(Duration::from_millis(40));
+
+        let mut actual_lines = vec![];
+        loop {
+            let recvd_result = input_reader.channel_recv.try_recv();
+            match recvd_result {
+                Ok(line_result) => match line_result {
+                    Ok(line) => actual_lines.push(line),
+                    Err(err) => panic!(
+                        "Unexpected line result: recvd={:?}, err={:?}",
+                        &actual_lines, &err
+                    ),
+                },
+                Err(err) => match err {
+                    TryRecvError::Disconnected => panic!(
+                        "Unexpected disconnected line recvd result: recvd={:?}",
+                        &actual_lines
+                    ),
+                    TryRecvError::Empty => break,
+                },
+            }
+        }
+
+        assert_eq!(actual_lines.len(), 2);
+        assert_eq!(actual_lines, vec!["line1", "line2"]);
     }
 
     #[test]
