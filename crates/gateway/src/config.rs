@@ -397,7 +397,9 @@ impl TlsServerConfigBuilder {
         .expect("Bad certificates/private key");
 
         tls_server_config.key_log = Arc::new(rustls::KeyLogFile::new());
-        tls_server_config.alpn_protocols.clone_from(&self.alpn_protocols);
+        tls_server_config
+            .alpn_protocols
+            .clone_from(&self.alpn_protocols);
 
         Ok(tls_server_config)
     }
