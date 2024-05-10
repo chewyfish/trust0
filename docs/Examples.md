@@ -69,7 +69,7 @@ The testing utilized [MacPorts](https://www.macports.org). The following ports w
 
 #### Windows
 
-Tested with Windows 11. Currently only TCP services have been verified to work.
+Tested with Windows 11.
 
 The testing utilized [MSYS2](https://www.msys2.org/), using the `UCRT64` environment. The following packages were installed:
 

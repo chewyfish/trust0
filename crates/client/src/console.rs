@@ -298,6 +298,7 @@ pub trait InputTextStreamConnector {
     ///
     /// The channel sender used to queue lines read from console.
     ///
+    #[allow(dead_code)]
     fn clone_channel_sender(&self) -> Sender<io::Result<String>>;
 
     /// Spawn a thread to perform (blocking) STDIN reads (queue resulting lines)

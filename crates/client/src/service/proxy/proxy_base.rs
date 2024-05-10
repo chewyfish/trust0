@@ -18,12 +18,15 @@ pub trait ClientServiceProxyVisitor: Send {
     fn get_service(&self) -> Service;
 
     /// Client port for service proxy
+    #[allow(dead_code)]
     fn get_client_proxy_port(&self) -> u16;
 
     /// Gateway host for service proxy
+    #[allow(dead_code)]
     fn get_gateway_proxy_host(&self) -> &str;
 
     /// Gateway port for service proxy
+    #[allow(dead_code)]
     fn get_gateway_proxy_port(&self) -> u16;
 
     /// Client and gateway proxy key and stream addresses list for proxy connections (else None if no proxy active)

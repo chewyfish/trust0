@@ -111,6 +111,7 @@ pub trait ServiceMgr: Send {
     ///
     /// Cloned proxy tasks channel sender
     ///
+    #[allow(dead_code)]
     fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent>;
 
     /// Startup new proxy service to allow clients to connect/communicate to given service

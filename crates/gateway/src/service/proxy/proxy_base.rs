@@ -24,6 +24,7 @@ pub trait GatewayServiceProxy: Send {
     ///
     /// A [`Result`] indicating success/failure of shutdown.
     ///
+    #[allow(dead_code)]
     fn shutdown(&mut self);
 }
 
