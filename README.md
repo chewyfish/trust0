@@ -16,8 +16,6 @@
 
 Trust0 is a [Zero Trust](https://en.wikipedia.org/wiki/Zero_trust_security_model) security framework, whose implementation is fashioned as a [Software Defined Perimeter](https://en.wikipedia.org/wiki/Software-defined_perimeter) service gateway. The gateway ensures that users may only access services, which were authorized for their account.
 
-This is pre-release code, use with care.
-
 ### Change History
 
 Refer to [Trust0 Releases](https://github.com/chewyfish/trust0/releases)
