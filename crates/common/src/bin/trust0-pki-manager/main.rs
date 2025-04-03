@@ -436,6 +436,7 @@ mod tests {
     };
     use crate::config::{AppConfigArgs, RevokedCertReason};
     use std::path::PathBuf;
+    use time::ext::NumericalDuration;
     use time::macros::datetime;
     use trust0_common::crypto::file::{
         verify_certificates, verify_crl_list, verify_private_key_file,
@@ -455,7 +456,7 @@ mod tests {
 
     fn future_expiry_datetime() -> OffsetDateTime {
         let now = OffsetDateTime::now_utc();
-        now.checked_add(52.weeks()).unwrap()
+        now.checked_add(52_i64.weeks()).unwrap()
     }
 
     // tests
