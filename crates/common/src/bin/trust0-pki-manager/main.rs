@@ -436,6 +436,7 @@ mod tests {
     };
     use crate::config::{AppConfigArgs, RevokedCertReason};
     use std::path::PathBuf;
+    use time::ext::NumericalDuration;
     use time::macros::datetime;
     use trust0_common::crypto::file::{
         verify_certificates, verify_crl_list, verify_private_key_file,
@@ -453,6 +454,11 @@ mod tests {
         "ca-generated-rootca-ecdsa256.key.pem",
     ];
 
+    fn future_expiry_datetime() -> OffsetDateTime {
+        let now = OffsetDateTime::now_utc();
+        now.checked_add(52_i64.weeks()).unwrap()
+    }
+
     // tests
     // =====
 
@@ -468,7 +474,7 @@ mod tests {
                     key_file: expected_key_file.clone(),
                     key_algorithm: config::KeyAlgorithm::EcdsaP256,
                     serial_number: Some(vec![0x00u8, 0xa1u8, 0xffu8, 0x47u8]),
-                    validity_not_after: datetime!(2025-01-01 0:00 UTC),
+                    validity_not_after: future_expiry_datetime(),
                     validity_not_before: None,
                     subject_common_name: "name1".to_string(),
                     subject_organization: None,
@@ -514,7 +520,7 @@ mod tests {
                     rootca_key_file: rootca_key_filepath_str.to_string(),
                     key_algorithm: config::KeyAlgorithm::EcdsaP256,
                     serial_number: Some(vec![0x00u8, 0xa1u8, 0xffu8, 0x47u8]),
-                    validity_not_after: datetime!(2025-01-01 0:00 UTC),
+                    validity_not_after: future_expiry_datetime(),
                     validity_not_before: None,
                     subject_common_name: "name1".to_string(),
                     subject_organization: Some("org1".to_string()),
@@ -561,7 +567,7 @@ mod tests {
                     rootca_key_file: rootca_key_filepath_str.to_string(),
                     key_algorithm: config::KeyAlgorithm::EcdsaP256,
                     serial_number: Some(vec![0x00u8, 0xa1u8, 0xffu8, 0x47u8]),
-                    validity_not_after: datetime!(2025-01-01 0:00 UTC),
+                    validity_not_after: future_expiry_datetime(),
                     validity_not_before: None,
                     subject_common_name: "name1".to_string(),
                     subject_organization: None,

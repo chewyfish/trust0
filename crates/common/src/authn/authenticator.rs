@@ -113,7 +113,7 @@ pub trait AuthenticatorClient {
     /// # Arguments
     ///
     /// * `inbound_msg` - An optional [`AuthnMessage`] to pass into the authentication processing.
-    /// The message should be appropriate for the current processing flow state.
+    ///   The message should be appropriate for the current processing flow state.
     ///
     /// # Returns
     ///
@@ -159,7 +159,7 @@ pub trait AuthenticatorServer {
     /// # Arguments
     ///
     /// * `inbound_msg` - An optional [`AuthnMessage`] to pass into the authentication processing.
-    /// The message should be appropriate for the current processing flow state.
+    ///   The message should be appropriate for the current processing flow state.
     ///
     /// # Returns
     ///

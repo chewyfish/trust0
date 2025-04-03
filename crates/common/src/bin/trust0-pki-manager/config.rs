@@ -76,7 +76,7 @@ impl From<&RevokedCertReason> for rcgen::RevocationReason {
 
 /// Trust0 PKI resource administration tool. Refer to commands help for further information.
 #[derive(Parser, Debug)]
-#[command(version, version, long_about)]
+#[command(version, long_about)]
 pub struct AppConfigArgs {
     #[command(subcommand)]
     pub command: Command,

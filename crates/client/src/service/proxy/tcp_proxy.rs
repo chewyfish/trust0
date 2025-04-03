@@ -308,7 +308,7 @@ impl ClientServiceProxyVisitor for TcpClientProxyServerVisitor {
     }
 
     fn remove_proxy_for_key(&mut self, proxy_key: &str) -> bool {
-        return match self.proxy_addrs_by_proxy_key.contains_key(proxy_key) {
+        match self.proxy_addrs_by_proxy_key.contains_key(proxy_key) {
             true => {
                 self.services_by_proxy_key.lock().unwrap().remove(proxy_key);
                 self.proxy_addrs_by_proxy_key.remove(proxy_key);
@@ -316,7 +316,7 @@ impl ClientServiceProxyVisitor for TcpClientProxyServerVisitor {
             }
 
             false => false,
-        };
+        }
     }
 }
 

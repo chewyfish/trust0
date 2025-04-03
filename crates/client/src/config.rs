@@ -15,7 +15,6 @@ use trust0_common::file;
 /// An control plane REPL shell allows service proxies to be opened (among other features).
 #[derive(Parser, Debug)]
 #[command(author, version, long_about, disable_help_flag = true)]
-
 pub struct AppConfigArgs {
     /// Config file (as a shell environment file), using program's environment variable naming (see below).
     /// Note - Each config file variable entry may be overriden via their respective command-line arguments

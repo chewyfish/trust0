@@ -843,7 +843,6 @@ impl GatewayCertificateBuilder {
 }
 
 /// A Trust0 client certificate builder
-
 pub struct ClientCertificateBuilder {
     /// Common certificate builder delegate object
     common_builder: CommonCertificateBuilder,
