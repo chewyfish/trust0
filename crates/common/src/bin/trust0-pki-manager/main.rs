@@ -4,7 +4,6 @@ use std::{fs, process};
 
 use anyhow::Result;
 use time::{Duration, OffsetDateTime};
-use time::ext::NumericalDuration;
 use trust0_common::crypto::ca::{Certificate, KeyAlgorithm};
 use trust0_common::crypto::crl::{CertificateRevocationListBuilder, RevokedCertificateBuilder};
 use trust0_common::error::AppError;
