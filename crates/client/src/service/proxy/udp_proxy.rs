@@ -351,7 +351,7 @@ impl ClientServiceProxyVisitor for UdpClientProxyServerVisitor {
     fn remove_proxy_for_key(&mut self, proxy_key: &str) -> bool {
         let proxy_key = proxy_key.to_string();
 
-        return match self.proxy_addrs_by_proxy_key.contains_key(&proxy_key) {
+        match self.proxy_addrs_by_proxy_key.contains_key(&proxy_key) {
             true => {
                 self.services_by_proxy_key
                     .lock()
@@ -362,7 +362,7 @@ impl ClientServiceProxyVisitor for UdpClientProxyServerVisitor {
             }
 
             false => false,
-        };
+        }
     }
 }
 
