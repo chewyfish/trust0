@@ -1,4 +1,4 @@
-FROM rust:1.76 AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.85.1-slim-bookworm AS chef
 RUN \
     apt-get update && \
     apt-get install -y \
@@ -10,7 +10,6 @@ RUN \
         libssl-dev && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
-RUN cargo install cargo-chef
 WORKDIR app
 
 FROM chef AS planner

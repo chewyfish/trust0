@@ -1,6 +1,5 @@
-FROM rust:1.76 AS chef
-RUN cargo install cargo-chef
-WORKDIR app
+FROM lukemathwalker/cargo-chef:latest-rust-1.85.1-slim-bookworm AS chef
+WORKDIR /app
 
 FROM chef AS planner
 COPY ./Cargo.toml ./Cargo.lock /app/

@@ -1,10 +1,9 @@
-FROM rust:1.76 AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.85.1-slim-bookworm AS chef
 RUN \
     apt update; \
     apt install -y wget ca-certificates; \
     apt-get clean; \
     rm -rf /var/lib/apt/lists/*;
-RUN cargo install cargo-chef
 WORKDIR app
 
 FROM chef AS planner
