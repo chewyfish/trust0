@@ -88,6 +88,7 @@ read -p "If example requires secondary authentication credentials, please use \"
 if [ "$RECONFIGURE" == 'y' ]; then
   mkdir -p "${EXAMPLE_BUILD_DIR}"
   rm -f "${EXAMPLE_CONFIG_FILE}" "${DATASOURCE_INMEMDB_ACCESS_FILE}" "${DATASOURCE_INMEMDB_SERVICE_FILE}" "${DATASOURCE_INMEMDB_ROLE_FILE}" "${DATASOURCE_INMEMDB_USER_FILE}"
+  read -rp "Enter Rust toolchain (default used if not entered): " rust_toolchain && echo RUST_TOOLCHAIN=${rust_toolchain} >> ${EXAMPLE_CONFIG_FILE}
   read -rp "Enter an available port for the trust0 gateway: " gateway_port && echo TRUST0_GATEWAY__PORT=${gateway_port} >> ${EXAMPLE_CONFIG_FILE}
   read -rp "Enter an available port for the chat service: " chat_service_port && echo CHAT_SERVICE__PORT=${chat_service_port} >> ${EXAMPLE_CONFIG_FILE}
   read -rp "Enter an available port for the chat proxy: " chat_proxy_port && echo CHAT_PROXY__PORT=${chat_proxy_port} >> ${EXAMPLE_CONFIG_FILE}
