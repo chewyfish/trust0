@@ -221,19 +221,6 @@ impl TcpAndTcpStreamProxy {
                                     continue 'EVENTS;
                                 }
                             }
-
-                            if let Err(err) = poll.registry().reregister(
-                                &mut tcp_stream1,
-                                STREAM1_TOKEN,
-                                mio::Interest::READABLE,
-                            ) {
-                                proxy_error = Some(AppError::General(format!(
-                                    "Error registering tcp stream 1 in MIO registry: err={:?}",
-                                    &err
-                                )));
-                                *closing.lock().unwrap() = true;
-                                continue 'EVENTS;
-                            }
                         }
 
                         STREAM2_TOKEN => {
@@ -260,19 +247,6 @@ impl TcpAndTcpStreamProxy {
                                     *closing.lock().unwrap() = true;
                                     continue 'EVENTS;
                                 }
-                            }
-
-                            if let Err(err) = poll.registry().reregister(
-                                &mut tcp_stream2,
-                                STREAM2_TOKEN,
-                                mio::Interest::READABLE,
-                            ) {
-                                proxy_error = Some(AppError::General(format!(
-                                    "Error registering tcp stream 2 in MIO registry: err={:?}",
-                                    &err
-                                )));
-                                *closing.lock().unwrap() = true;
-                                continue 'EVENTS;
                             }
                         }
 

@@ -11,4 +11,7 @@ desktop.ini
 .project
 
 ## Build
+.cargo
+.local
 target
+*.profraw
