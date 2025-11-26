@@ -220,60 +220,32 @@ impl TcpAndUdpStreamProxy {
                                     continue 'EVENTS;
                                 }
                             }
+                        }
 
-                            if let Err(err) = poll.registry().reregister(
-                                &mut tcp_stream,
-                                TCP_STREAM_TOKEN,
-                                mio::Interest::READABLE,
-                            ) {
-                                proxy_error = Some(AppError::General(format!(
-                                    "Error registering tcp stream in MIO registry: err={:?}",
-                                    &err
-                                )));
+                        UDP_SOCKET_TOKEN => match stream_utils::read_mio_udp_socket(&udp_socket) {
+                            Ok((_socket_addr, data)) => {
+                                match stream_utils::write_tcp_stream(
+                                    &mut tcp_stream_reader_writer,
+                                    data.as_slice(),
+                                ) {
+                                    Ok(()) => {}
+                                    Err(err) => match err {
+                                        AppError::WouldBlock => continue,
+                                        AppError::StreamEOF => break 'EVENTS,
+                                        _ => {
+                                            proxy_error = Some(err);
+                                            *closing.lock().unwrap() = true;
+                                            continue 'EVENTS;
+                                        }
+                                    },
+                                }
+                            }
+                            Err(err) => {
+                                proxy_error = Some(err);
                                 *closing.lock().unwrap() = true;
                                 continue 'EVENTS;
                             }
-                        }
-
-                        UDP_SOCKET_TOKEN => {
-                            match stream_utils::read_mio_udp_socket(&udp_socket) {
-                                Ok((_socket_addr, data)) => {
-                                    match stream_utils::write_tcp_stream(
-                                        &mut tcp_stream_reader_writer,
-                                        data.as_slice(),
-                                    ) {
-                                        Ok(()) => {}
-                                        Err(err) => match err {
-                                            AppError::WouldBlock => continue,
-                                            AppError::StreamEOF => break 'EVENTS,
-                                            _ => {
-                                                proxy_error = Some(err);
-                                                *closing.lock().unwrap() = true;
-                                                continue 'EVENTS;
-                                            }
-                                        },
-                                    }
-                                }
-                                Err(err) => {
-                                    proxy_error = Some(err);
-                                    *closing.lock().unwrap() = true;
-                                    continue 'EVENTS;
-                                }
-                            }
-
-                            if let Err(err) = poll.registry().reregister(
-                                &mut udp_socket,
-                                UDP_SOCKET_TOKEN,
-                                mio::Interest::READABLE,
-                            ) {
-                                proxy_error = Some(AppError::General(format!(
-                                    "Error registering udp socket in MIO registry: err={:?}",
-                                    &err
-                                )));
-                                *closing.lock().unwrap() = true;
-                                continue 'EVENTS;
-                            }
-                        }
+                        },
 
                         _ => {}
                     }

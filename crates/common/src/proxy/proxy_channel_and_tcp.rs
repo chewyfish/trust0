@@ -263,19 +263,6 @@ impl ChannelAndTcpStreamProxy {
                                     continue 'EVENTS;
                                 }
                             }
-
-                            if let Err(err) = poll.registry().reregister(
-                                &mut tcp_stream,
-                                TCP_STREAM_TOKEN,
-                                mio::Interest::READABLE,
-                            ) {
-                                proxy_error = Some(AppError::General(format!(
-                                    "Error registering tcp stream in MIO registry: err={:?}",
-                                    &err
-                                )));
-                                *closing.lock().unwrap() = true;
-                                continue 'EVENTS;
-                            }
                         }
                     }
                 }
