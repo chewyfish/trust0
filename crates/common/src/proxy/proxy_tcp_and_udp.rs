@@ -4,6 +4,7 @@ use std::time::Duration;
 use std::{io, sync, thread};
 
 use anyhow::Result;
+use bytes::BytesMut;
 
 use crate::error::AppError;
 use crate::logging::{error, info, warn};
@@ -172,6 +173,7 @@ impl TcpAndUdpStreamProxy {
                 )));
             }
 
+            let mut datagram_buffer = BytesMut::with_capacity(0);
             let mut events = mio::Events::with_capacity(256);
             let mut proxy_error = None;
 
@@ -198,20 +200,35 @@ impl TcpAndUdpStreamProxy {
                         TCP_STREAM_TOKEN => {
                             match stream_utils::read_tcp_stream(&mut tcp_stream_reader_writer) {
                                 Ok(data) => {
-                                    match stream_utils::write_mio_udp_socket(
-                                        &udp_socket,
-                                        data.as_slice(),
-                                    ) {
-                                        Ok(()) => {}
-                                        Err(err) => match err {
-                                            AppError::WouldBlock => continue,
-                                            AppError::StreamEOF => break 'EVENTS,
-                                            _ => {
-                                                proxy_error = Some(err);
-                                                *closing.lock().unwrap() = true;
+                                    datagram_buffer.extend_from_slice(data.as_slice());
+                                    loop {
+                                        match stream_utils::decode_proxied_datagram(
+                                            &mut datagram_buffer,
+                                        ) {
+                                            Ok(None) => break,
+                                            Ok(Some(datagram)) => {
+                                                match stream_utils::write_mio_udp_socket(
+                                                    &udp_socket,
+                                                    &datagram,
+                                                ) {
+                                                    Ok(()) => {}
+                                                    Err(err) => match err {
+                                                        AppError::WouldBlock => continue,
+                                                        AppError::StreamEOF => break 'EVENTS,
+                                                        _ => {
+                                                            proxy_error = Some(err);
+                                                            *closing.lock().unwrap() = true;
+                                                            continue 'EVENTS;
+                                                        }
+                                                    },
+                                                }
+                                            }
+                                            Err(err) => {
+                                                error(&target!(), &format!("Error decoding proxied datagram, discarding: err={:?}", &err));
+                                                datagram_buffer.clear();
                                                 continue 'EVENTS;
                                             }
-                                        },
+                                        }
                                     }
                                 }
                                 Err(err) => {
@@ -224,20 +241,28 @@ impl TcpAndUdpStreamProxy {
 
                         UDP_SOCKET_TOKEN => match stream_utils::read_mio_udp_socket(&udp_socket) {
                             Ok((_socket_addr, data)) => {
-                                match stream_utils::write_tcp_stream(
-                                    &mut tcp_stream_reader_writer,
-                                    data.as_slice(),
-                                ) {
-                                    Ok(()) => {}
-                                    Err(err) => match err {
-                                        AppError::WouldBlock => continue,
-                                        AppError::StreamEOF => break 'EVENTS,
-                                        _ => {
-                                            proxy_error = Some(err);
-                                            *closing.lock().unwrap() = true;
-                                            continue 'EVENTS;
+                                match stream_utils::encode_proxied_datagram(data.as_slice()) {
+                                    Ok(encoded_datagram) => {
+                                        match stream_utils::write_tcp_stream(
+                                            &mut tcp_stream_reader_writer,
+                                            &encoded_datagram,
+                                        ) {
+                                            Ok(()) => {}
+                                            Err(err) => match err {
+                                                AppError::WouldBlock => continue,
+                                                AppError::StreamEOF => break 'EVENTS,
+                                                _ => {
+                                                    proxy_error = Some(err);
+                                                    *closing.lock().unwrap() = true;
+                                                    continue 'EVENTS;
+                                                }
+                                            },
                                         }
-                                    },
+                                    }
+                                    Err(err) => {
+                                        error(&target!(), &format!("Error encoding proxied datagram, discarding: err={:?}", &err));
+                                        continue 'EVENTS;
+                                    }
                                 }
                             }
                             Err(err) => {
@@ -417,15 +442,15 @@ pub mod tests {
     }
 
     #[test]
-    fn tcpudpproxy_connect_when_tcp_to_udp_copy() {
+    fn tcpudpproxy_connect_when_tcp_to_udp_copy_one_message() {
         let mut proxy_result = create_tcp_and_udp_stream_proxy("key1").unwrap();
 
         if let Err(err) = proxy_result.0.connect() {
             panic!("Unexpected proxy connect result: err={:?}", &err);
         }
 
-        let data = "hello".as_bytes();
-        if let Err(err) = proxy_result.1.client_stream.0.write_all(data) {
+        let data = [0x00u8, 0x05u8, b'h', b'e', b'l', b'l', b'o'];
+        if let Err(err) = proxy_result.1.client_stream.0.write_all(&data as &[u8]) {
             panic!("Unexpected tcp stream write result: err={:?}", &err);
         }
 
@@ -439,6 +464,7 @@ pub mod tests {
             .0
             .set_nonblocking(true)
             .unwrap();
+
         let read_result = proxy_result.2.server_socket.0.recv(&mut buffer);
         if let Err(err) = read_result {
             panic!("Unexpected udp socket read result: err={:?}", &err);
@@ -447,8 +473,74 @@ pub mod tests {
         assert_eq!(read_result.unwrap(), 5);
 
         let mut expected_buffer = [0u8; 10];
-        expected_buffer.as_mut_slice()[..5].copy_from_slice(data);
+        expected_buffer.as_mut_slice()[..5].copy_from_slice(&data[2..7] as &[u8]);
         assert_eq!(buffer, expected_buffer);
+
+        let read_result = proxy_result.2.server_socket.0.recv(&mut buffer);
+        if let Ok(read_len) = read_result {
+            panic!(
+                "Unexpected successful udp socket read result: len={}, buf={:?}",
+                read_len, &buffer
+            );
+        }
+    }
+
+    #[test]
+    fn tcpudpproxy_connect_when_tcp_to_udp_copy_two_messages() {
+        let mut proxy_result = create_tcp_and_udp_stream_proxy("key1").unwrap();
+
+        if let Err(err) = proxy_result.0.connect() {
+            panic!("Unexpected proxy connect result: err={:?}", &err);
+        }
+
+        let data = [
+            0x00u8, 0x05u8, b'h', b'e', b'l', b'l', b'o', 0x00u8, 0x03u8, b'b', b'y', b'e',
+        ];
+        if let Err(err) = proxy_result.1.client_stream.0.write_all(&data as &[u8]) {
+            panic!("Unexpected tcp stream write result: err={:?}", &err);
+        }
+
+        thread::sleep(Duration::from_millis(10));
+        *proxy_result.0.closing.lock().unwrap() = true;
+
+        proxy_result
+            .2
+            .server_socket
+            .0
+            .set_nonblocking(true)
+            .unwrap();
+
+        let mut buffer = [0u8; 15];
+        let read_result = proxy_result.2.server_socket.0.recv(&mut buffer);
+        if let Err(err) = read_result {
+            panic!("Unexpected udp socket read result: err={:?}", &err);
+        }
+
+        assert_eq!(read_result.unwrap(), 5);
+
+        let mut expected_buffer = [0u8; 15];
+        expected_buffer.as_mut_slice()[..5].copy_from_slice(&data[2..7] as &[u8]);
+        assert_eq!(buffer, expected_buffer);
+
+        let mut buffer = [0u8; 15];
+        let read_result = proxy_result.2.server_socket.0.recv(&mut buffer);
+        if let Err(err) = read_result {
+            panic!("Unexpected udp socket read result: err={:?}", &err);
+        }
+
+        assert_eq!(read_result.unwrap(), 3);
+
+        let mut expected_buffer = [0u8; 15];
+        expected_buffer.as_mut_slice()[..3].copy_from_slice(&data[9..12] as &[u8]);
+        assert_eq!(buffer, expected_buffer);
+
+        let read_result = proxy_result.2.server_socket.0.recv(&mut buffer);
+        if let Ok(read_len) = read_result {
+            panic!(
+                "Unexpected successful udp socket read result: len={}, buf={:?}",
+                read_len, &buffer
+            );
+        }
     }
 
     #[test]
@@ -515,10 +607,12 @@ pub mod tests {
             panic!("Unexpected tcp stream read result: err={:?}", &err);
         }
 
-        assert_eq!(read_result.unwrap(), 5);
+        assert_eq!(read_result.unwrap(), 7);
 
         let mut expected_buffer = [0u8; 10];
-        expected_buffer.as_mut_slice()[..5].copy_from_slice(data);
+        expected_buffer.as_mut_slice()[..7]
+            .copy_from_slice(&[0x00u8, 0x05u8, b'h', b'e', b'l', b'l', b'o'] as &[u8]);
+        expected_buffer.as_mut_slice()[2..7].copy_from_slice(data);
         assert_eq!(buffer, expected_buffer);
     }
 

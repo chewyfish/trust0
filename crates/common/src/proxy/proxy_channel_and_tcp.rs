@@ -4,6 +4,7 @@ use std::time::Duration;
 use std::{io, sync, thread};
 
 use anyhow::Result;
+use bytes::BytesMut;
 
 use crate::error::AppError;
 use crate::logging::{error, info, warn};
@@ -136,20 +137,34 @@ impl ChannelAndTcpStreamProxy {
 
                     // Process event
                     if let ProxyEvent::Message(_, _, data) = socket_event {
-                        match stream_utils::write_tcp_stream(
-                            &mut tcp_stream_reader_writer,
-                            data.as_slice(),
-                        ) {
-                            Ok(()) => {}
-                            Err(err) => match err {
-                                AppError::WouldBlock => continue,
-                                AppError::StreamEOF => break 'EVENTS,
-                                _ => {
-                                    proxy_error = Some(err);
-                                    *closing.lock().unwrap() = true;
-                                    continue 'EVENTS;
+                        match stream_utils::encode_proxied_datagram(data.as_slice()) {
+                            Ok(encoded_datagram) => {
+                                match stream_utils::write_tcp_stream(
+                                    &mut tcp_stream_reader_writer,
+                                    &encoded_datagram,
+                                ) {
+                                    Ok(()) => {}
+                                    Err(err) => match err {
+                                        AppError::WouldBlock => continue,
+                                        AppError::StreamEOF => break 'EVENTS,
+                                        _ => {
+                                            proxy_error = Some(err);
+                                            *closing.lock().unwrap() = true;
+                                            continue 'EVENTS;
+                                        }
+                                    },
                                 }
-                            },
+                            }
+                            Err(err) => {
+                                error(
+                                    &target!(),
+                                    &format!(
+                                        "Error encoding proxied datagram, discarding: err={:?}",
+                                        &err
+                                    ),
+                                );
+                                continue 'EVENTS;
+                            }
                         }
                     }
                 }
@@ -210,6 +225,7 @@ impl ChannelAndTcpStreamProxy {
                     )));
                 }
 
+                let mut datagram_buffer = BytesMut::with_capacity(0);
                 let mut events = mio::Events::with_capacity(256);
                 let mut proxy_error = None;
 
@@ -236,23 +252,38 @@ impl ChannelAndTcpStreamProxy {
                             match stream_utils::read_tcp_stream(&mut tcp_stream_reader_writer) {
                                 Ok(data) => {
                                     if !data.is_empty() {
-                                        let proxy_key_copy = proxy_key.clone();
-                                        match crate::sync::send_mpsc_channel_message(
-                                            &server_socket_channel_sender,
-                                            ProxyEvent::Message(
-                                                proxy_key.clone(),
-                                                socket_channel_addr,
-                                                data,
-                                            ),
-                                            Box::new(move || {
-                                                format!("Error sending socket message to channel: proxy_stream={},", &proxy_key_copy)
-                                            }),
-                                        ) {
-                                            Ok(()) => {}
-                                            Err(err) => {
-                                                proxy_error = Some(err);
-                                                *closing.lock().unwrap() = true;
-                                                continue 'EVENTS;
+                                        datagram_buffer.extend_from_slice(data.as_slice());
+                                        loop {
+                                            match stream_utils::decode_proxied_datagram(
+                                                &mut datagram_buffer,
+                                            ) {
+                                                Ok(None) => break,
+                                                Ok(Some(datagram)) => {
+                                                    let proxy_key_copy = proxy_key.clone();
+                                                    match crate::sync::send_mpsc_channel_message(
+                                                        &server_socket_channel_sender,
+                                                        ProxyEvent::Message(
+                                                            proxy_key.clone(),
+                                                            socket_channel_addr,
+                                                            datagram.to_vec(),
+                                                        ),
+                                                        Box::new(move || {
+                                                            format!("Error sending socket message to channel: proxy_stream={},", &proxy_key_copy)
+                                                        }),
+                                                    ) {
+                                                        Ok(()) => {}
+                                                        Err(err) => {
+                                                            proxy_error = Some(err);
+                                                            *closing.lock().unwrap() = true;
+                                                            continue 'EVENTS;
+                                                        }
+                                                    }
+                                                }
+                                                Err(err) => {
+                                                    error(&target!(), &format!("Error decoding proxied datagram, discarding: err={:?}", &err));
+                                                    datagram_buffer.clear();
+                                                    continue 'EVENTS;
+                                                }
                                             }
                                         }
                                     }
@@ -481,10 +512,11 @@ pub mod tests {
             panic!("Unexpected tcp stream read result: err={:?}", &err);
         }
 
-        assert_eq!(read_result.unwrap(), 5);
+        assert_eq!(read_result.unwrap(), 7);
 
         let mut expected_buffer = [0u8; 10];
-        expected_buffer.as_mut_slice()[..5].copy_from_slice(data);
+        expected_buffer.as_mut_slice()[..2].copy_from_slice(&[0x00u8, 0x05u8] as &[u8]);
+        expected_buffer.as_mut_slice()[2..7].copy_from_slice(data);
         assert_eq!(buffer, expected_buffer);
     }
 
@@ -522,7 +554,7 @@ pub mod tests {
     }
 
     #[test]
-    fn channeltcpproxy_connect_when_stream_to_channel_copy() {
+    fn channeltcpproxy_connect_when_stream_to_channel_copy_one_message() {
         let socket_channel_addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
         let mut proxy_result =
             create_channel_and_tcp_stream_proxy("key1", &socket_channel_addr).unwrap();
@@ -531,7 +563,7 @@ pub mod tests {
             panic!("Unexpected proxy connect result: err={:?}", &err);
         }
 
-        let data = "hello".as_bytes();
+        let data = &[0x00u8, 0x05u8, b'h', b'e', b'l', b'l', b'o'] as &[u8];
         if let Err(err) = proxy_result.3.server_stream.0.write_all(data) {
             panic!("Unexpected tcp stream write result: err={:?}", &err);
         }
@@ -544,17 +576,96 @@ pub mod tests {
             panic!("Unexpected channel read result: err={:?}", &err);
         }
 
+        let expected_data = (b"hello" as &[u8]).to_vec();
+
         let channel_proxy_event = channel_read_result.unwrap();
         match &channel_proxy_event {
             ProxyEvent::Message(result_key, result_addr, result_data) => {
                 assert_eq!(*result_key, "key1".to_string());
                 assert_eq!(*result_addr, socket_channel_addr);
-                assert_eq!(*result_data, data.to_vec());
+                assert_eq!(*result_data, expected_data);
             }
             _ => panic!(
                 "Unexpected channel proxy result: evt={:?}",
                 &channel_proxy_event
             ),
+        }
+
+        let channel_read_result = proxy_result.2.try_recv();
+        if let Ok(message) = channel_read_result {
+            panic!(
+                "Unexpected successful channel read result: msg={:?}",
+                &message
+            );
+        }
+    }
+
+    #[test]
+    fn channeltcpproxy_connect_when_stream_to_channel_copy_two_messages() {
+        let socket_channel_addr: SocketAddr = "127.0.0.1:3000".parse().unwrap();
+        let mut proxy_result =
+            create_channel_and_tcp_stream_proxy("key1", &socket_channel_addr).unwrap();
+
+        if let Err(err) = proxy_result.0.connect() {
+            panic!("Unexpected proxy connect result: err={:?}", &err);
+        }
+
+        let data = &[
+            0x00u8, 0x05u8, b'h', b'e', b'l', b'l', b'o', 0x00u8, 0x03u8, b'b', b'y', b'e',
+        ] as &[u8];
+        if let Err(err) = proxy_result.3.server_stream.0.write_all(data) {
+            panic!("Unexpected tcp stream write result: err={:?}", &err);
+        }
+
+        thread::sleep(Duration::from_millis(10));
+        *proxy_result.0.closing.lock().unwrap() = true;
+
+        let channel_read_result = proxy_result.2.try_recv();
+        if let Err(err) = channel_read_result {
+            panic!("Unexpected channel read result: err={:?}", &err);
+        }
+
+        let expected_data = (b"hello" as &[u8]).to_vec();
+
+        let channel_proxy_event = channel_read_result.unwrap();
+        match &channel_proxy_event {
+            ProxyEvent::Message(result_key, result_addr, result_data) => {
+                assert_eq!(*result_key, "key1".to_string());
+                assert_eq!(*result_addr, socket_channel_addr);
+                assert_eq!(*result_data, expected_data);
+            }
+            _ => panic!(
+                "Unexpected channel proxy result (first message): evt={:?}",
+                &channel_proxy_event
+            ),
+        }
+
+        let channel_read_result = proxy_result.2.try_recv();
+        if let Err(err) = channel_read_result {
+            panic!("Unexpected channel read result: err={:?}", &err);
+        }
+
+        let expected_data = (b"bye" as &[u8]).to_vec();
+
+        let channel_proxy_event = channel_read_result.unwrap();
+        match &channel_proxy_event {
+            ProxyEvent::Message(result_key, result_addr, result_data) => {
+                assert_eq!(*result_key, "key1".to_string());
+                assert_eq!(*result_addr, socket_channel_addr);
+                assert_eq!(*result_data, expected_data);
+            }
+            _ => panic!(
+                "Unexpected channel proxy result (second message): evt={:?}",
+                &channel_proxy_event
+            ),
+        }
+
+        let channel_read_result = proxy_result.2.try_recv();
+        if let Ok(message) = channel_read_result {
+            panic!(
+                "Unexpected successful channel read result: msg={:?}",
+                &message
+            );
         }
     }
 
