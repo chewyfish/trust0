@@ -65,18 +65,20 @@ impl TcpAndTcpStreamProxy {
         let tcp_stream1 = stream_utils::clone_std_tcp_stream(&tcp_stream1, "tcptcp-proxy-1")?;
         let tcp_stream2 = stream_utils::clone_std_tcp_stream(&tcp_stream2, "tcptcp-proxy-2")?;
 
-        tcp_stream1.set_nonblocking(true).map_err(|err| {
-            AppError::General(format!(
-                "Failed making stream 1 socket non-blocking: proxy_stream={}, err={:?}",
-                &proxy_key, &err
-            ))
-        })?;
-        tcp_stream2.set_nonblocking(true).map_err(|err| {
-            AppError::General(format!(
-                "Failed making stream 2 socket non-blocking: proxy_stream={}, err={:?}",
-                &proxy_key, &err
-            ))
-        })?;
+        let proxy_key_copy = proxy_key.to_string();
+        stream_utils::set_std_tcp_stream_blocking_and_delay(
+            &tcp_stream1,
+            false,
+            false,
+            Box::new(move || format!("stream=1, proxy_key={}", &proxy_key_copy)),
+        )?;
+        let proxy_key_copy = proxy_key.to_string();
+        stream_utils::set_std_tcp_stream_blocking_and_delay(
+            &tcp_stream2,
+            false,
+            false,
+            Box::new(move || format!("stream=2, proxy_key={}", &proxy_key_copy)),
+        )?;
 
         // Instantiate TcpStreamProxy
         Ok(TcpAndTcpStreamProxy {

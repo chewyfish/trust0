@@ -62,22 +62,18 @@ impl TcpAndUdpStreamProxy {
         let tcp_stream = stream_utils::clone_std_tcp_stream(&tcp_stream, "tcpudp-proxy")?;
         let udp_socket = stream_utils::clone_std_udp_socket(&udp_socket, "tcpudp-proxy")?;
 
-        tcp_stream.set_nonblocking(true).map_err(|err| {
-            AppError::General(format!(
-                "Failed making tcp socket non-blocking: proxy_stream={}, err={:?}",
-                &proxy_key, &err
-            ))
-        })?;
+        let proxy_key_copy = proxy_key.to_string();
+        stream_utils::set_std_tcp_stream_blocking_and_delay(
+            &tcp_stream,
+            false,
+            false,
+            Box::new(move || format!("proxy_key={}", &proxy_key_copy)),
+        )?;
         let proxy_key_copy = proxy_key.to_string();
         stream_utils::set_std_udp_socket_blocking(
             &udp_socket,
             false,
-            Box::new(move || {
-                format!(
-                    "Failed making udp socket non-blocking: proxy_stream={}",
-                    &proxy_key_copy
-                )
-            }),
+            Box::new(move || format!("proxy_key={}", &proxy_key_copy)),
         )?;
 
         // Instantiate TcpStreamProxy

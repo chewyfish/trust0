@@ -85,12 +85,7 @@ impl Server {
         stream_utils::set_std_udp_socket_blocking(
             &server_socket,
             false,
-            Box::new(move || {
-                format!(
-                    "Failed making UDP server socket non-blocking: server_addr={}",
-                    &server_addr_str
-                )
-            }),
+            Box::new(move || format!("server_addr={}", &server_addr_str)),
         )?;
 
         self.server_socket = Some(server_socket);

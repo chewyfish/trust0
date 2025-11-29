@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+
 use std::thread::JoinHandle;
 use std::{io, thread};
 
@@ -194,26 +195,41 @@ pub fn clone_std_udp_socket(
     })
 }
 
-/// Set TCP stream socket blocking value
+/// Set TCP stream socket blocking and nodelay (Nagle) values
 ///
 /// # Arguments
 ///
 /// * `tcp_stream` - TCP stream socket
 /// * `blocking_value` - Whether blocking or non-blocking is requested
+/// * `delay_value` - Whether delay or no-delay is requested (Nagle)
 /// * `err_msg_fn` - Function, which will return an error string (used on failure)
 ///
 /// # Returns
 ///
 /// A [`Result`] indicating success/failure of the socket modification operation.
 ///
-pub fn set_std_tcp_stream_blocking(
+pub fn set_std_tcp_stream_blocking_and_delay(
     tcp_stream: &std::net::TcpStream,
     blocking_value: bool,
+    delay_value: bool,
     err_msg_fn: Box<dyn Fn() -> String>,
 ) -> Result<(), AppError> {
-    tcp_stream
-        .set_nonblocking(!blocking_value)
-        .map_err(|err| AppError::General(format!("{} err={:?}", err_msg_fn(), &err)))
+    tcp_stream.set_nonblocking(!blocking_value).map_err(|err| {
+        AppError::General(format!(
+            "Failed making socket non-blocking: {}, val={}, err={:?}",
+            err_msg_fn(),
+            !blocking_value,
+            &err
+        ))
+    })?;
+    tcp_stream.set_nodelay(!delay_value).map_err(|err| {
+        AppError::General(format!(
+            "Failed making socket no-delay: {}, val={}, err={:?}",
+            err_msg_fn(),
+            !delay_value,
+            &err
+        ))
+    })
 }
 
 /// Set UDP socket blocking value
@@ -233,9 +249,14 @@ pub fn set_std_udp_socket_blocking(
     blocking_value: bool,
     err_msg_fn: Box<dyn Fn() -> String>,
 ) -> Result<(), AppError> {
-    udp_socket
-        .set_nonblocking(!blocking_value)
-        .map_err(|err| AppError::General(format!("{} err={:?}", err_msg_fn(), &err)))
+    udp_socket.set_nonblocking(!blocking_value).map_err(|err| {
+        AppError::General(format!(
+            "Failed making socket non-blocking: {}, val={}, err={:?}",
+            err_msg_fn(),
+            !blocking_value,
+            &err
+        ))
+    })
 }
 
 /// Encode datagram message for transport.
@@ -738,11 +759,12 @@ pub mod tests {
     }
 
     #[test]
-    fn streamutl_set_std_tcp_stream_blocking() {
+    fn streamutl_set_std_tcp_stream_blocking_and_delay() {
         let connected_tcp_stream = ConnectedTcpStream::new().unwrap();
 
-        if let Err(err) = set_std_tcp_stream_blocking(
+        if let Err(err) = set_std_tcp_stream_blocking_and_delay(
             &connected_tcp_stream.client_stream.0,
+            false,
             false,
             Box::new(|| "error".to_string()),
         ) {

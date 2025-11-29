@@ -68,12 +68,13 @@ impl ChannelAndTcpStreamProxy {
         // Convert tcp stream to non-blocking
         let tcp_stream = stream_utils::clone_std_tcp_stream(&tcp_stream, "tcpchannel-proxy")?;
 
-        tcp_stream.set_nonblocking(true).map_err(|err| {
-            AppError::General(format!(
-                "Failed making tcp stream non-blocking: stream_addr={}, err={:?}",
-                &proxy_key, &err
-            ))
-        })?;
+        let proxy_key_copy = proxy_key.to_string();
+        stream_utils::set_std_tcp_stream_blocking_and_delay(
+            &tcp_stream,
+            false,
+            false,
+            Box::new(move || format!("proxy_key={}", &proxy_key_copy)),
+        )?;
 
         // Instantiate TcpStreamProxy
         Ok(ChannelAndTcpStreamProxy {

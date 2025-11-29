@@ -259,12 +259,7 @@ impl server_std::ServerVisitor for UdpGatewayProxyServerVisitor {
                     stream_utils::set_std_udp_socket_blocking(
                         &udp_socket,
                         false,
-                        Box::new(move || {
-                            format!(
-                                "Failed making socket non-blocking: socket={:?}",
-                                &udp_socket_str
-                            )
-                        }),
+                        Box::new(move || format!("socket={:?}", &udp_socket_str)),
                     )?;
                     break;
                 }
