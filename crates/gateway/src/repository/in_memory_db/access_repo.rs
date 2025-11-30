@@ -36,7 +36,7 @@ impl InMemAccessRepo {
     #[allow(clippy::type_complexity)]
     fn access_data_for_write(
         &self,
-    ) -> Result<RwLockWriteGuard<HashMap<AccessKey, ServiceAccess>>, AppError> {
+    ) -> Result<RwLockWriteGuard<'_, HashMap<AccessKey, ServiceAccess>>, AppError> {
         if let Err(err) = self.process_source_data_updates() {
             error(
                 &target!(),
@@ -51,7 +51,7 @@ impl InMemAccessRepo {
     #[allow(clippy::type_complexity)]
     fn access_data_for_read(
         &self,
-    ) -> Result<RwLockReadGuard<HashMap<AccessKey, ServiceAccess>>, AppError> {
+    ) -> Result<RwLockReadGuard<'_, HashMap<AccessKey, ServiceAccess>>, AppError> {
         if let Err(err) = self.process_source_data_updates() {
             error(
                 &target!(),

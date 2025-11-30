@@ -24,7 +24,7 @@ pub type TlsServerConnection = StreamOwned<rustls::ServerConnection, TcpStream>;
 /// TLS connection trait to wrap key rustls server connection functions, attributes
 pub trait TlsConnection {
     /// Retrieves the certificate chain used by the peer to authenticate.
-    fn peer_certificates(&self) -> Option<Vec<CertificateDer>>;
+    fn peer_certificates(&self) -> Option<Vec<CertificateDer<'_>>>;
 
     /// Retrieves the protocol agreed with the peer via ALPN.
     fn alpn_protocol(&self) -> Option<Vec<u8>>;
@@ -37,7 +37,7 @@ impl TlsConnection for TlsServerConnection {
     ///
     /// An (optional) vector of peer certificates.
     ///
-    fn peer_certificates(&self) -> Option<Vec<CertificateDer>> {
+    fn peer_certificates(&self) -> Option<Vec<CertificateDer<'_>>> {
         self.conn.peer_certificates().map(|certs| certs.to_vec())
     }
 

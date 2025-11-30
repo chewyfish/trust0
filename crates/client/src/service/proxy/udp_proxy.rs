@@ -103,6 +103,7 @@ unsafe impl Send for UdpClientProxy {}
 pub struct UdpClientProxyServerVisitor {
     app_config: Arc<AppConfig>,
     service: Service,
+    #[allow(dead_code)]
     client_proxy_port: u16,
     gateway_proxy_host: String,
     gateway_proxy_port: u16,
