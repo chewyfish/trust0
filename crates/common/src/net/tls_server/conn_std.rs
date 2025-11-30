@@ -281,13 +281,13 @@ impl Connection {
         }
 
         // Handle connection error
-        if error.is_some() {
+        if let Some(error) = error {
             sync::send_mpsc_channel_message(
                 &self.event_channel.0,
                 ConnectionEvent::Closing,
                 Box::new(|| "Error sending closing event:".to_string()),
             )?;
-            return Err(error.unwrap());
+            return Err(error);
         }
 
         Ok(return_buffer)
@@ -313,13 +313,13 @@ impl Connection {
         }
 
         // Handle connection error
-        if error.is_some() {
+        if let Some(error) = error {
             sync::send_mpsc_channel_message(
                 &self.event_channel.0,
                 ConnectionEvent::Closing,
                 Box::new(|| "Error sending closing event:".to_string()),
             )?;
-            return Err(error.unwrap());
+            return Err(error);
         }
 
         Ok(())
