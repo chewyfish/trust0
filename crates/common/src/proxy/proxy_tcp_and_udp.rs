@@ -170,7 +170,7 @@ impl TcpAndUdpStreamProxy {
             }
 
             let mut datagram_buffer = BytesMut::with_capacity(0);
-            let mut events = mio::Events::with_capacity(256);
+            let mut events = mio::Events::with_capacity(4196);
             let mut proxy_error = None;
 
             // IO events processing loop

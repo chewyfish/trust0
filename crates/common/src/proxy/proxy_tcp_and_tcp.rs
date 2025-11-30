@@ -175,7 +175,7 @@ impl TcpAndTcpStreamProxy {
                 )));
             }
 
-            let mut events = mio::Events::with_capacity(256);
+            let mut events = mio::Events::with_capacity(4196);
             let mut proxy_error = None;
 
             // IO events processing loop
