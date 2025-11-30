@@ -245,15 +245,11 @@ impl server_std::ServerVisitor for TcpGatewayProxyServerVisitor {
             match TcpStream::connect(service_addr) {
                 Ok(socket) => {
                     let tcp_socket_str = format!("{:?}", &socket);
-                    stream_utils::set_std_tcp_stream_blocking(
+                    stream_utils::set_std_tcp_stream_blocking_and_delay(
                         &socket,
                         false,
-                        Box::new(move || {
-                            format!(
-                                "Failed making socket non-blocking: socket={:?}",
-                                &tcp_socket_str
-                            )
-                        }),
+                        false,
+                        Box::new(move || format!("socket={:?}", &tcp_socket_str)),
                     )?;
                     service_stream = Some(socket);
                     break;

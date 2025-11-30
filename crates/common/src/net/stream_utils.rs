@@ -1,8 +1,10 @@
-use log::error;
 use std::sync::{Arc, Mutex};
+
 use std::thread::JoinHandle;
 use std::{io, thread};
 
+use bytes::{Buf, BufMut, Bytes, BytesMut};
+use log::error;
 use rustls::{ClientConnection, ServerConnection, StreamOwned};
 
 use crate::error::AppError;
@@ -193,26 +195,41 @@ pub fn clone_std_udp_socket(
     })
 }
 
-/// Set TCP stream socket blocking value
+/// Set TCP stream socket blocking and nodelay (Nagle) values
 ///
 /// # Arguments
 ///
 /// * `tcp_stream` - TCP stream socket
 /// * `blocking_value` - Whether blocking or non-blocking is requested
+/// * `delay_value` - Whether delay or no-delay is requested (Nagle)
 /// * `err_msg_fn` - Function, which will return an error string (used on failure)
 ///
 /// # Returns
 ///
 /// A [`Result`] indicating success/failure of the socket modification operation.
 ///
-pub fn set_std_tcp_stream_blocking(
+pub fn set_std_tcp_stream_blocking_and_delay(
     tcp_stream: &std::net::TcpStream,
     blocking_value: bool,
+    delay_value: bool,
     err_msg_fn: Box<dyn Fn() -> String>,
 ) -> Result<(), AppError> {
-    tcp_stream
-        .set_nonblocking(!blocking_value)
-        .map_err(|err| AppError::General(format!("{} err={:?}", err_msg_fn(), &err)))
+    tcp_stream.set_nonblocking(!blocking_value).map_err(|err| {
+        AppError::General(format!(
+            "Failed making socket non-blocking: {}, val={}, err={:?}",
+            err_msg_fn(),
+            !blocking_value,
+            &err
+        ))
+    })?;
+    tcp_stream.set_nodelay(!delay_value).map_err(|err| {
+        AppError::General(format!(
+            "Failed making socket no-delay: {}, val={}, err={:?}",
+            err_msg_fn(),
+            !delay_value,
+            &err
+        ))
+    })
 }
 
 /// Set UDP socket blocking value
@@ -232,9 +249,71 @@ pub fn set_std_udp_socket_blocking(
     blocking_value: bool,
     err_msg_fn: Box<dyn Fn() -> String>,
 ) -> Result<(), AppError> {
-    udp_socket
-        .set_nonblocking(!blocking_value)
-        .map_err(|err| AppError::General(format!("{} err={:?}", err_msg_fn(), &err)))
+    udp_socket.set_nonblocking(!blocking_value).map_err(|err| {
+        AppError::General(format!(
+            "Failed making socket non-blocking: {}, val={}, err={:?}",
+            err_msg_fn(),
+            !blocking_value,
+            &err
+        ))
+    })
+}
+
+/// Encode datagram message for transport.
+///
+/// Create analogue payload with message prepended by message length.
+///
+/// | length   | datagram message |
+/// | (u16 be) | (max 2^16 byyes) |
+/// |_____________________________|
+///
+/// # Arguments
+///
+/// * `datagram` - UDP datagram message (<= 2^16 byyes)
+///
+/// # Returns
+///
+/// A [`Result`] containing [`Bytes`] object representing encoded datagram
+///
+pub fn encode_proxied_datagram(datagram: &[u8]) -> Result<Bytes, AppError> {
+    let datagram_len = u16::try_from(datagram.len()).map_err(|err| {
+        AppError::General(format!("UDP datagram exceeded 2^16 size: err={:?}", &err))
+    })?;
+
+    let mut encoded_datagram = BytesMut::with_capacity(usize::from(datagram_len) + 2);
+    encoded_datagram.put_u16(datagram_len);
+    encoded_datagram.put_slice(datagram);
+
+    Ok(encoded_datagram.freeze())
+}
+
+/// Decode next available datagram message
+///
+/// From a buffer (potentially) containing encoded datagrams (see [`encode_proxied_datagram`]),
+/// return next available datagram (based on encoded datagram length). If a datagram is returned,
+/// advance buffer cursor as appropriate.
+///
+/// # Arguments
+///
+/// * `buffer` - [`BytesMut`] object containing encoded datagrams (in order of arrival)
+///
+/// # Returns
+///
+/// A [`Result`] containing an optiona;l [`Bytes`] object representing next decoded datagram
+///
+pub fn decode_proxied_datagram(buffer: &mut BytesMut) -> Result<Option<Bytes>, AppError> {
+    let buffer_len = buffer.len();
+    if buffer_len < 2 {
+        return Ok(None);
+    }
+
+    let datagram_len = u16::from_be_bytes(buffer.get(0..2).unwrap().try_into().unwrap());
+    if buffer_len < (usize::from(datagram_len) + 2) {
+        return Ok(None);
+    }
+    buffer.get_u16();
+
+    Ok(Some(buffer.copy_to_bytes(usize::from(datagram_len))))
 }
 
 /// Connected TCP stream pair creator
@@ -680,11 +759,12 @@ pub mod tests {
     }
 
     #[test]
-    fn streamutl_set_std_tcp_stream_blocking() {
+    fn streamutl_set_std_tcp_stream_blocking_and_delay() {
         let connected_tcp_stream = ConnectedTcpStream::new().unwrap();
 
-        if let Err(err) = set_std_tcp_stream_blocking(
+        if let Err(err) = set_std_tcp_stream_blocking_and_delay(
             &connected_tcp_stream.client_stream.0,
+            false,
             false,
             Box::new(|| "error".to_string()),
         ) {
@@ -703,5 +783,143 @@ pub mod tests {
         ) {
             panic!("Unexpected result: err={:?}", &err);
         }
+    }
+
+    #[test]
+    fn streamutl_encode_proxied_datagram_when_too_big() {
+        let datagram = &[0x00u8; (1 as usize + u16::MAX as usize)];
+        if let Ok(encoded_datagram) = encode_proxied_datagram(datagram) {
+            panic!(
+                "Unexpected successful result: encoded_len={}",
+                encoded_datagram.len()
+            );
+        }
+    }
+
+    #[test]
+    fn streamutl_encode_proxied_datagram_when_empty() {
+        let datagram: &[u8] = &[];
+        let expected_encoded_datagram: &[u8] = &[0x00u8, 0x00u8];
+        match encode_proxied_datagram(datagram) {
+            Ok(encoded_datagram) => assert_eq!(encoded_datagram, expected_encoded_datagram),
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
+    }
+
+    #[test]
+    fn streamutl_encode_proxied_datagram_when_valid() {
+        let datagram: &[u8] = b"hello";
+        let expected_encoded_datagram: &[u8] = &[0x00u8, 0x05u8, b'h', b'e', b'l', b'l', b'o'];
+        match encode_proxied_datagram(datagram) {
+            Ok(encoded_datagram) => assert_eq!(encoded_datagram, expected_encoded_datagram),
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
+    }
+
+    #[test]
+    fn streamutl_decode_proxied_datagram_when_empty() {
+        let mut buffer = BytesMut::with_capacity(0);
+        match decode_proxied_datagram(&mut buffer) {
+            Ok(None) => {}
+            Ok(Some(datagram)) => panic!("Unexpected successful result: datagram={:?}", &datagram),
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
+    }
+
+    #[test]
+    fn streamutl_decode_proxied_datagram_when_too_short() {
+        let mut buffer = BytesMut::from(&[0x00u8, 0x05u8, b'h', b'e', b'l', b'l'] as &[u8]);
+        match decode_proxied_datagram(&mut buffer) {
+            Ok(None) => {}
+            Ok(Some(datagram)) => panic!("Unexpected successful result: datagram={:?}", &datagram),
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
+    }
+
+    #[test]
+    fn streamutl_decode_proxied_datagram_when_exactly_one_message() {
+        let mut buffer = BytesMut::from(&[0x00u8, 0x05u8, b'h', b'e', b'l', b'l', b'o'] as &[u8]);
+        let expected_datagram = Bytes::from(b"hello" as &[u8]);
+        match decode_proxied_datagram(&mut buffer) {
+            Ok(None) => panic!("No datagram message decoded"),
+            Ok(Some(datagram)) => assert_eq!(datagram, expected_datagram),
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn streamutl_decode_proxied_datagram_when_one_full_and_partial_second_msgs() {
+        let mut buffer = BytesMut::from(&[
+            0x00u8, 0x05u8, b'h', b'e', b'l', b'l', b'o', 0x00u8, 0x03u8, b'b', b'y',
+        ] as &[u8]);
+        let expected_datagram = Bytes::from(b"hello" as &[u8]);
+        let expected_decoded_buffer = BytesMut::from(&[0x00u8, 0x03u8, b'b', b'y'] as &[u8]);
+
+        match decode_proxied_datagram(&mut buffer) {
+            Ok(None) => panic!("No datagram message decoded (initial decode)"),
+            Ok(Some(datagram)) => assert_eq!(
+                datagram, expected_datagram,
+                "Comparing datagrams {:?} and {:?} (initial decode)",
+                datagram, expected_datagram
+            ),
+            Err(err) => panic!("Unexpected result (initial decode): err={:?}", &err),
+        }
+        assert_eq!(
+            buffer, expected_decoded_buffer,
+            "Comparing buffers {:?} and {:?} (initial decode)",
+            buffer, expected_decoded_buffer
+        );
+
+        match decode_proxied_datagram(&mut buffer) {
+            Ok(None) => {}
+            Ok(Some(datagram)) => panic!(
+                "Unexpected successful result (second decode): datagram={:?}",
+                &datagram
+            ),
+            Err(err) => panic!("Unexpected result (decode decode): err={:?}", &err),
+        }
+        assert_eq!(
+            buffer, expected_decoded_buffer,
+            "Comparing buffers {:?} and {:?} (second decode)",
+            buffer, expected_decoded_buffer
+        );
+    }
+
+    #[test]
+    fn streamutl_decode_proxied_datagram_when_two_full_messages() {
+        let mut buffer = BytesMut::from(&[
+            0x00u8, 0x05u8, b'h', b'e', b'l', b'l', b'o', 0x00u8, 0x03u8, b'b', b'y', b'e',
+        ] as &[u8]);
+        let expected_initial_datagram = Bytes::from(b"hello" as &[u8]);
+        let expected_initial_decoded_buffer =
+            BytesMut::from(&[0x00u8, 0x03u8, b'b', b'y', b'e'] as &[u8]);
+        let expected_second_datagram = Bytes::from(b"bye" as &[u8]);
+
+        match decode_proxied_datagram(&mut buffer) {
+            Ok(None) => panic!("No datagram message decoded (initial decode)"),
+            Ok(Some(datagram)) => assert_eq!(
+                datagram, expected_initial_datagram,
+                "Comparing datagrams {:?} and {:?} (initial decode)",
+                datagram, expected_initial_datagram
+            ),
+            Err(err) => panic!("Unexpected result (initial decode): err={:?}", &err),
+        }
+        assert_eq!(
+            buffer, expected_initial_decoded_buffer,
+            "Comparing buffers {:?} and {:?} (initial decode)",
+            buffer, expected_initial_decoded_buffer
+        );
+
+        match decode_proxied_datagram(&mut buffer) {
+            Ok(None) => panic!("No datagram message decoded (second decode)"),
+            Ok(Some(datagram)) => assert_eq!(
+                datagram, expected_second_datagram,
+                "Comparing datagrams {:?} and {:?} (second decode)",
+                datagram, expected_second_datagram
+            ),
+            Err(err) => panic!("Unexpected result (second decode): err={:?}", &err),
+        }
+        assert!(buffer.is_empty());
     }
 }

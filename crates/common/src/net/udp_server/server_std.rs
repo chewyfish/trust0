@@ -85,12 +85,7 @@ impl Server {
         stream_utils::set_std_udp_socket_blocking(
             &server_socket,
             false,
-            Box::new(move || {
-                format!(
-                    "Failed making UDP server socket non-blocking: server_addr={}",
-                    &server_addr_str
-                )
-            }),
+            Box::new(move || format!("server_addr={}", &server_addr_str)),
         )?;
 
         self.server_socket = Some(server_socket);
@@ -223,7 +218,7 @@ impl Server {
             )));
         }
 
-        let mut events = mio::Events::with_capacity(256);
+        let mut events = mio::Events::with_capacity(4196);
 
         // Start polling loop
         let mut polling_error = None;
@@ -254,7 +249,7 @@ impl Server {
                 }
 
                 Ok(()) => {
-                    if let Err(err) = self.accept_message() {
+                    if let Err(err) = self.accept_messages() {
                         match err {
                             AppError::WouldBlock => {}
                             _ => error(&target!(), &format!("{:?}", err)),
@@ -289,37 +284,39 @@ impl Server {
         Ok(())
     }
 
-    /// New client message acceptance processor
-    fn accept_message(&mut self) -> Result<(), AppError> {
+    /// New client message(s) acceptance processor
+    fn accept_messages(&mut self) -> Result<(), AppError> {
         // Accept message
         let mut buffer = [0; RECV_BUFFER_SIZE];
 
-        let (message_size, peer_addr) = self
-            .server_socket
-            .as_ref()
-            .unwrap()
-            .recv_from(&mut buffer)
-            .map_err(|err| {
-                if err.kind() == io::ErrorKind::WouldBlock {
-                    AppError::WouldBlock
-                } else {
-                    AppError::General(format!(
-                        "Error receiving message: server_addr={:?}, err={:?}",
-                        &self.server_addr, &err
-                    ))
-                }
-            })?;
+        loop {
+            let (message_size, peer_addr) = self
+                .server_socket
+                .as_ref()
+                .unwrap()
+                .recv_from(&mut buffer)
+                .map_err(|err| {
+                    if err.kind() == io::ErrorKind::WouldBlock {
+                        AppError::WouldBlock
+                    } else {
+                        AppError::General(format!(
+                            "Error receiving message: server_addr={:?}, err={:?}",
+                            &self.server_addr, &err
+                        ))
+                    }
+                })?;
 
-        debug(
-            &target!(),
-            &format!("Client message recvd: size={}", message_size),
-        );
+            debug(
+                &target!(),
+                &format!("Client message recvd: size={}", message_size),
+            );
 
-        self.visitor.lock().unwrap().on_message_received(
-            &self.server_socket.as_ref().unwrap().local_addr().unwrap(),
-            &peer_addr,
-            buffer[..message_size].to_vec(),
-        )
+            self.visitor.lock().unwrap().on_message_received(
+                &self.server_socket.as_ref().unwrap().local_addr().unwrap(),
+                &peer_addr,
+                buffer[..message_size].to_vec(),
+            )?;
+        }
     }
 
     fn assert_listening(&self) -> Result<(), AppError> {

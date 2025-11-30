@@ -1,6 +1,6 @@
 [package]
 name = "trust0-common"
-version = "1.0.2"
+version = "1.0.3"
 description = "Trust0 SDP Shared Codebase"
 repository = "https://github.com/chewyfish/trust0"
 edition = "2021"
@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 anyhow = "1.0.76"
 base64 = "0.21.6"
+bytes = "1.11.0"
 clap = { version = "4.4.11", features = [ "derive", "env" ] }
 dotenvy = "0.15.7"
 futures-util = "0.3.29"

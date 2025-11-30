@@ -548,10 +548,11 @@ mod tests {
             panic!("Unexpected tcp stream read result: err={:?}", &err);
         }
 
-        assert_eq!(read_result.unwrap(), 5);
+        assert_eq!(read_result.unwrap(), 7);
 
         let mut expected_buffer = [0u8; 10];
-        expected_buffer.as_mut_slice()[..5].copy_from_slice(data);
+        expected_buffer.as_mut_slice()[..2].copy_from_slice(&[0x00u8, 0x05u8] as &[u8]);
+        expected_buffer.as_mut_slice()[2..7].copy_from_slice(data);
         assert_eq!(buffer, expected_buffer);
     }
 
@@ -633,7 +634,7 @@ mod tests {
         let proxy_stream = executor.proxy_streams.get_mut(proxy_key);
         assert!(proxy_stream.is_some());
 
-        let data = "hello".as_bytes();
+        let data = &[0x00u8, 0x05u8, b'h', b'e', b'l', b'l', b'o'] as &[u8];
         if let Err(err) = client_tcp_stream.client_stream.0.write_all(data) {
             panic!("Unexpected tcp stream write result: err={:?}", &err);
         }
@@ -657,7 +658,7 @@ mod tests {
         assert_eq!(read_result.unwrap(), 5);
 
         let mut expected_buffer = [0u8; 10];
-        expected_buffer.as_mut_slice()[..5].copy_from_slice(data);
+        expected_buffer.as_mut_slice()[..5].copy_from_slice(&data[2..7]);
         assert_eq!(buffer, expected_buffer);
     }
 
