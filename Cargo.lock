@@ -3214,7 +3214,7 @@ dependencies = [
 
 [[package]]
 name = "trust0-client"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3245,7 +3245,7 @@ dependencies = [
 
 [[package]]
 name = "trust0-common"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3283,7 +3283,7 @@ dependencies = [
 
 [[package]]
 name = "trust0-gateway"
-version = "1.0.3"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "chrono",
