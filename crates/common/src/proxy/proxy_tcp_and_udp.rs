@@ -222,7 +222,7 @@ impl TcpAndUdpStreamProxy {
                                             Err(err) => {
                                                 error(&target!(), &format!("Error decoding proxied datagram, discarding: err={:?}", &err));
                                                 datagram_buffer.clear();
-                                                continue 'EVENTS;
+                                                break;
                                             }
                                         }
                                     }
@@ -233,40 +233,74 @@ impl TcpAndUdpStreamProxy {
                                     continue 'EVENTS;
                                 }
                             }
-                        }
 
-                        UDP_SOCKET_TOKEN => match stream_utils::read_mio_udp_socket(&udp_socket) {
-                            Ok((_socket_addr, data)) => {
-                                match stream_utils::encode_proxied_datagram(data.as_slice()) {
-                                    Ok(encoded_datagram) => {
-                                        match stream_utils::write_tcp_stream(
-                                            &mut tcp_stream_reader_writer,
-                                            &encoded_datagram,
-                                        ) {
-                                            Ok(()) => {}
-                                            Err(err) => match err {
-                                                AppError::WouldBlock => continue,
-                                                AppError::StreamEOF => break 'EVENTS,
-                                                _ => {
-                                                    proxy_error = Some(err);
-                                                    *closing.lock().unwrap() = true;
-                                                    continue 'EVENTS;
-                                                }
-                                            },
-                                        }
-                                    }
-                                    Err(err) => {
-                                        error(&target!(), &format!("Error encoding proxied datagram, discarding: err={:?}", &err));
-                                        continue 'EVENTS;
-                                    }
+                            #[cfg(windows)]
+                            {
+                                if let Err(err) = poll.registry().reregister(
+                                    &mut tcp_stream,
+                                    TCP_STREAM_TOKEN,
+                                    mio::Interest::READABLE,
+                                ) {
+                                    proxy_error = Some(AppError::General(format!(
+                                        "Error registering tcp stream in MIO registry: err={:?}",
+                                        &err
+                                    )));
+                                    *closing.lock().unwrap() = true;
+                                    continue 'EVENTS;
                                 }
                             }
-                            Err(err) => {
-                                proxy_error = Some(err);
-                                *closing.lock().unwrap() = true;
-                                continue 'EVENTS;
+                        }
+
+                        UDP_SOCKET_TOKEN => {
+                            match stream_utils::read_mio_udp_socket(&udp_socket) {
+                                Ok((_socket_addr, data)) => {
+                                    match stream_utils::encode_proxied_datagram(data.as_slice()) {
+                                        Ok(encoded_datagram) => {
+                                            match stream_utils::write_tcp_stream(
+                                                &mut tcp_stream_reader_writer,
+                                                &encoded_datagram,
+                                            ) {
+                                                Ok(()) => {}
+                                                Err(err) => match err {
+                                                    AppError::WouldBlock => {}
+                                                    AppError::StreamEOF => break 'EVENTS,
+                                                    _ => {
+                                                        proxy_error = Some(err);
+                                                        *closing.lock().unwrap() = true;
+                                                        continue 'EVENTS;
+                                                    }
+                                                },
+                                            }
+                                        }
+                                        Err(err) => {
+                                            error(&target!(), &format!("Error encoding proxied datagram, discarding: err={:?}", &err));
+                                            continue 'EVENTS;
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    proxy_error = Some(err);
+                                    *closing.lock().unwrap() = true;
+                                    continue 'EVENTS;
+                                }
                             }
-                        },
+
+                            #[cfg(windows)]
+                            {
+                                if let Err(err) = poll.registry().reregister(
+                                    &mut udp_socket,
+                                    UDP_SOCKET_TOKEN,
+                                    mio::Interest::READABLE,
+                                ) {
+                                    proxy_error = Some(AppError::General(format!(
+                                        "Error registering udp socket in MIO registry: err={:?}",
+                                        &err
+                                    )));
+                                    *closing.lock().unwrap() = true;
+                                    continue 'EVENTS;
+                                }
+                            }
+                        }
 
                         _ => {}
                     }

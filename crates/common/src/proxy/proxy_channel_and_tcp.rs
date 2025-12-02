@@ -283,7 +283,7 @@ impl ChannelAndTcpStreamProxy {
                                                 Err(err) => {
                                                     error(&target!(), &format!("Error decoding proxied datagram, discarding: err={:?}", &err));
                                                     datagram_buffer.clear();
-                                                    continue 'EVENTS;
+                                                    break;
                                                 }
                                             }
                                         }
@@ -291,6 +291,22 @@ impl ChannelAndTcpStreamProxy {
                                 }
                                 Err(err) => {
                                     proxy_error = Some(err);
+                                    *closing.lock().unwrap() = true;
+                                    continue 'EVENTS;
+                                }
+                            }
+
+                            #[cfg(windows)]
+                            {
+                                if let Err(err) = poll.registry().reregister(
+                                    &mut tcp_stream,
+                                    TCP_STREAM_TOKEN,
+                                    mio::Interest::READABLE,
+                                ) {
+                                    proxy_error = Some(AppError::General(format!(
+                                        "Error registering tcp stream in MIO registry: err={:?}",
+                                        &err
+                                    )));
                                     *closing.lock().unwrap() = true;
                                     continue 'EVENTS;
                                 }
