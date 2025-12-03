@@ -941,7 +941,7 @@ pub mod test {
             ClientStateFlow::ClientInitialSent,
             ServerStateFlow::ClientInitialRecvd,
             Duration::from_millis(50),
-            6,
+            7,
         );
         assert!(!*client_authenticated.lock().unwrap());
         assert!(!*server_authenticated.lock().unwrap());
@@ -970,7 +970,7 @@ pub mod test {
                 ClientStateFlow::ClientInitialSent,
                 ServerStateFlow::ClientInitialRecvd,
                 Duration::from_millis(50),
-                6,
+                7,
             );
             assert!(!*client_authenticated.lock().unwrap());
             assert!(!*server_authenticated.lock().unwrap());
@@ -1066,7 +1066,7 @@ pub mod test {
             ClientStateFlow::ClientResponseSent,
             ServerStateFlow::ServerChallengeSent,
             Duration::from_millis(50),
-            6,
+            7,
         );
         assert!(!*client_authenticated.lock().unwrap());
         assert!(!*server_authenticated.lock().unwrap());
@@ -1095,7 +1095,7 @@ pub mod test {
             ClientStateFlow::ClientResponseSent,
             ServerStateFlow::ServerFinalSent,
             Duration::from_millis(50),
-            6,
+            7,
         );
         assert!(!*client_authenticated.lock().unwrap());
         assert!(!*server_authenticated.lock().unwrap());
@@ -1183,7 +1183,7 @@ pub mod test {
             ClientStateFlow::ClientInitialSent,
             ServerStateFlow::ServerChallengeSent,
             Duration::from_millis(50),
-            6,
+            7,
         );
         assert!(!*client_authenticated.lock().unwrap());
         assert!(!*server_authenticated.lock().unwrap());
@@ -1212,7 +1212,7 @@ pub mod test {
             ClientStateFlow::ClientResponseSent,
             ServerStateFlow::ServerChallengeSent,
             Duration::from_millis(50),
-            6,
+            7,
         );
         assert!(!*client_authenticated.lock().unwrap());
         assert!(!*server_authenticated.lock().unwrap());
@@ -1241,7 +1241,7 @@ pub mod test {
             ClientStateFlow::ClientResponseSent,
             ServerStateFlow::ServerFinalSent,
             Duration::from_millis(50),
-            6,
+            7,
         );
         assert!(!*client_authenticated.lock().unwrap());
         assert!(*server_authenticated.lock().unwrap());
@@ -1270,7 +1270,7 @@ pub mod test {
             ClientStateFlow::ServerFinalRecvd,
             ServerStateFlow::ServerFinalSent,
             Duration::from_millis(50),
-            6,
+            7,
         );
         assert!(*client_authenticated.lock().unwrap());
         assert!(*server_authenticated.lock().unwrap());
@@ -1423,7 +1423,7 @@ pub mod test {
             ClientStateFlow::ClientInitialSent,
             ServerStateFlow::ServerChallengeSent,
             Duration::from_millis(50),
-            6,
+            7,
         );
         assert!(!auth_client.is_authenticated());
         assert!(!auth_server.is_authenticated());
@@ -1452,7 +1452,7 @@ pub mod test {
             ClientStateFlow::ClientResponseSent,
             ServerStateFlow::ServerChallengeSent,
             Duration::from_millis(50),
-            6,
+            7,
         );
         assert!(!auth_client.is_authenticated());
         assert!(!auth_server.is_authenticated());
@@ -1481,7 +1481,7 @@ pub mod test {
             ClientStateFlow::ClientResponseSent,
             ServerStateFlow::ServerFinalSent,
             Duration::from_millis(50),
-            6,
+            7,
         );
         assert!(!auth_client.is_authenticated());
         assert!(auth_server.is_authenticated());
@@ -1501,7 +1501,7 @@ pub mod test {
             ClientStateFlow::ServerFinalRecvd,
             ServerStateFlow::ServerFinalSent,
             Duration::from_millis(50),
-            6,
+            7,
         );
         assert!(auth_client.is_authenticated());
         assert!(auth_server.is_authenticated());
@@ -1630,7 +1630,7 @@ pub mod test {
             ClientStateFlow::ClientInitialSent,
             ServerStateFlow::ServerChallengeSent,
             Duration::from_millis(50),
-            6,
+            7,
         );
         assert!(!auth_client.is_authenticated());
         assert!(!auth_server.is_authenticated());

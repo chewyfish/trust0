@@ -493,7 +493,7 @@ pub mod tests {
             panic!("Unexpected tcp stream write result: err={:?}", &err);
         }
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(50));
         *proxy_result.0.closing.lock().unwrap() = true;
 
         let mut buffer = [0u8; 10];
@@ -523,7 +523,7 @@ pub mod tests {
             panic!("Unexpected proxy connect result: err={:?}", &err);
         }
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(50));
         *proxy_result.0.closing.lock().unwrap() = true;
 
         let mut buffer = [0u8; 10];
@@ -559,7 +559,7 @@ pub mod tests {
             panic!("Unexpected tcp stream write result: err={:?}", &err);
         }
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(50));
         *proxy_result.0.closing.lock().unwrap() = true;
 
         let mut buffer = [0u8; 10];
@@ -589,7 +589,7 @@ pub mod tests {
             panic!("Unexpected proxy connect result: err={:?}", &err);
         }
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(50));
         *proxy_result.0.closing.lock().unwrap() = true;
 
         let mut buffer = [0u8; 10];
