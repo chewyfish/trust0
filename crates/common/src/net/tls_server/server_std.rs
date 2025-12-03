@@ -340,8 +340,8 @@ impl Server {
 
             let mut tls_conn = rustls::StreamOwned::new(tls_srv_conn, tcp_stream);
 
-            if server_msg.is_some() {
-                let pdu_message_frame: pdu::MessageFrame = server_msg.unwrap().try_into().unwrap();
+            if let Some(server_msg) = server_msg {
+                let pdu_message_frame: pdu::MessageFrame = server_msg.try_into().unwrap();
                 if let Some(testing_data) = testing_data {
                     testing_data.lock().unwrap().insert(
                         "SvrMsgFrame".to_string(),

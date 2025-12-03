@@ -74,6 +74,7 @@ pub struct TcpClientProxyServerVisitor {
     /// Service model object corresponding to proxy
     service: Service,
     /// Client proxy server listening port
+    #[allow(dead_code)]
     client_proxy_port: u16,
     /// Gateway proxy host
     gateway_proxy_host: String,

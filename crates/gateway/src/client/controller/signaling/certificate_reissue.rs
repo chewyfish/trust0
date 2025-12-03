@@ -241,7 +241,10 @@ impl SignalingEventHandler for CertReissuanceProcessor {
         }
 
         self.curr_cycle_iteration += 1;
-        if (self.curr_cycle_iteration % self.recheck_cycle_iterations) == 0 {
+        if self
+            .curr_cycle_iteration
+            .is_multiple_of(self.recheck_cycle_iterations)
+        {
             self.curr_cycle_iteration = 0;
             self.process_outbound_event()?;
         }

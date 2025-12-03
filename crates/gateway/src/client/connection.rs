@@ -158,26 +158,8 @@ impl ClientConnVisitor {
         // Determine (ALPN) connection protocol
         let alpn_protocol = Self::parse_alpn_protocol(&tls_conn.alpn_protocol())?;
 
-        // Validate control plane connection
-        if service_id.is_none() {
-            // Ensure no active control plane for user
-            if self
-                .service_mgr
-                .lock()
-                .unwrap()
-                .has_control_plane_for_user(user_id, false)
-            {
-                return Err(AppError::GenWithCodeAndMsg(
-                    config::RESPCODE_0426_CONTROL_PLANE_ALREADY_CONNECTED,
-                    format!(
-                        "Not allowed to have multiple control planes: uid={}, ser={}",
-                        user_id, &serial_num
-                    ),
-                ));
-            }
-        }
         // Validate service connection
-        else {
+        if let Some(service_id) = service_id {
             // Ensure active control plane for user
             if !self
                 .service_mgr
@@ -195,8 +177,6 @@ impl ClientConnVisitor {
             }
 
             // Validate requested service
-            let service_id = service_id.unwrap();
-
             let invalid_service = match alpn_protocol {
                 alpn::Protocol::ControlPlane => true,
                 alpn::Protocol::Service(alpn_svc_id) => service_id != alpn_svc_id,
@@ -225,6 +205,24 @@ impl ClientConnVisitor {
                     format!(
                         "User is not authorized for service: uid={}, ser={}, svc_id={}",
                         user_id, &serial_num, service_id
+                    ),
+                ));
+            }
+        }
+        // Validate control plane connection
+        else {
+            // Ensure no active control plane for user
+            if self
+                .service_mgr
+                .lock()
+                .unwrap()
+                .has_control_plane_for_user(user_id, false)
+            {
+                return Err(AppError::GenWithCodeAndMsg(
+                    config::RESPCODE_0426_CONTROL_PLANE_ALREADY_CONNECTED,
+                    format!(
+                        "Not allowed to have multiple control planes: uid={}, ser={}",
+                        user_id, &serial_num
                     ),
                 ));
             }

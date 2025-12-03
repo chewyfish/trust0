@@ -29,7 +29,9 @@ impl InMemServiceRepo {
         }
     }
 
-    fn access_data_for_write(&self) -> Result<RwLockWriteGuard<HashMap<i64, Service>>, AppError> {
+    fn access_data_for_write(
+        &self,
+    ) -> Result<RwLockWriteGuard<'_, HashMap<i64, Service>>, AppError> {
         if let Err(err) = self.process_source_data_updates() {
             error(
                 &target!(),
@@ -41,7 +43,7 @@ impl InMemServiceRepo {
         })
     }
 
-    fn access_data_for_read(&self) -> Result<RwLockReadGuard<HashMap<i64, Service>>, AppError> {
+    fn access_data_for_read(&self) -> Result<RwLockReadGuard<'_, HashMap<i64, Service>>, AppError> {
         if let Err(err) = self.process_source_data_updates() {
             error(
                 &target!(),

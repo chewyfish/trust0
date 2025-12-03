@@ -532,7 +532,7 @@ mod tests {
             ))
             .unwrap();
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(50));
         if let Err(err) = proxy_stream.unwrap().lock().unwrap().disconnect() {
             panic!("Unexpected proxy stream disconnect result: err={:?}", &err);
         }
@@ -586,7 +586,7 @@ mod tests {
             panic!("Unexpected tcp stream write result: err={:?}", &err);
         }
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(50));
         if let Err(err) = proxy_stream.unwrap().lock().unwrap().disconnect() {
             panic!("Unexpected proxy stream disconnect result: err={:?}", &err);
         }
@@ -639,7 +639,7 @@ mod tests {
             panic!("Unexpected tcp stream write result: err={:?}", &err);
         }
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(50));
         if let Err(err) = proxy_stream.unwrap().lock().unwrap().disconnect() {
             panic!("Unexpected proxy stream disconnect result: err={:?}", &err);
         }

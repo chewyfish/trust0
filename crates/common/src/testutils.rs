@@ -28,7 +28,7 @@ impl io::Write for ChannelWriter {
         self.channel_sender
             .send(buf.to_vec())
             .map(|_| buf.len())
-            .map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+            .map_err(io::Error::other)
     }
 
     fn flush(&mut self) -> io::Result<()> {

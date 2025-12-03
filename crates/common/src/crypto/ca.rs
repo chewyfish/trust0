@@ -368,11 +368,9 @@ impl CommonCertificateBuilder {
             if self.key_pair_pem.is_none() {
                 errors.push(VALIDATION_MSG_KEY_PAIR_PEM_REQUIRED.to_string());
             } else {
-                let key_pair_result = rcgen::KeyPair::from_pem(self.key_pair_pem.as_ref().unwrap());
-                if key_pair_result.is_err() {
-                    errors.push(VALIDATION_MSG_INVALID_KEY_PAIR_PEM_CONTENTS.to_string());
-                } else {
-                    key_pair = Some(key_pair_result.unwrap());
+                match rcgen::KeyPair::from_pem(self.key_pair_pem.as_ref().unwrap()) {
+                    Ok(kp) => key_pair = Some(kp),
+                    Err(_) => errors.push(VALIDATION_MSG_INVALID_KEY_PAIR_PEM_CONTENTS.to_string()),
                 }
             }
 
@@ -383,10 +381,11 @@ impl CommonCertificateBuilder {
                     self.certificate_pem.as_ref().unwrap().as_str(),
                     key_pair.unwrap(),
                 );
-                if certificate_result.is_err() {
-                    errors.push(VALIDATION_MSG_INVALID_CERTIFICATE_PEM_CONTENTS.to_string());
-                } else {
-                    cert_params = Some(certificate_result.unwrap());
+                match certificate_result {
+                    Ok(cp) => cert_params = Some(cp),
+                    Err(_) => {
+                        errors.push(VALIDATION_MSG_INVALID_CERTIFICATE_PEM_CONTENTS.to_string())
+                    }
                 }
             }
         } else {

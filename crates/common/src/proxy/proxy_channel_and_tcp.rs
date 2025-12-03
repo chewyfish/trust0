@@ -283,7 +283,7 @@ impl ChannelAndTcpStreamProxy {
                                                 Err(err) => {
                                                     error(&target!(), &format!("Error decoding proxied datagram, discarding: err={:?}", &err));
                                                     datagram_buffer.clear();
-                                                    continue 'EVENTS;
+                                                    break;
                                                 }
                                             }
                                         }
@@ -291,6 +291,22 @@ impl ChannelAndTcpStreamProxy {
                                 }
                                 Err(err) => {
                                     proxy_error = Some(err);
+                                    *closing.lock().unwrap() = true;
+                                    continue 'EVENTS;
+                                }
+                            }
+
+                            #[cfg(windows)]
+                            {
+                                if let Err(err) = poll.registry().reregister(
+                                    &mut tcp_stream,
+                                    TCP_STREAM_TOKEN,
+                                    mio::Interest::READABLE,
+                                ) {
+                                    proxy_error = Some(AppError::General(format!(
+                                        "Error registering tcp stream in MIO registry: err={:?}",
+                                        &err
+                                    )));
                                     *closing.lock().unwrap() = true;
                                     continue 'EVENTS;
                                 }
@@ -498,7 +514,7 @@ pub mod tests {
             ))
             .unwrap();
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(50));
         *proxy_result.0.closing.lock().unwrap() = true;
 
         let mut buffer = [0u8; 10];
@@ -531,7 +547,7 @@ pub mod tests {
             panic!("Unexpected proxy connect result: err={:?}", &err);
         }
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(50));
         *proxy_result.0.closing.lock().unwrap() = true;
 
         let mut buffer = [0u8; 10];
@@ -569,7 +585,7 @@ pub mod tests {
             panic!("Unexpected tcp stream write result: err={:?}", &err);
         }
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(50));
         *proxy_result.0.closing.lock().unwrap() = true;
 
         let channel_read_result = proxy_result.2.try_recv();
@@ -618,7 +634,7 @@ pub mod tests {
             panic!("Unexpected tcp stream write result: err={:?}", &err);
         }
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(50));
         *proxy_result.0.closing.lock().unwrap() = true;
 
         let channel_read_result = proxy_result.2.try_recv();
@@ -680,7 +696,7 @@ pub mod tests {
             panic!("Unexpected proxy connect result: err={:?}", &err);
         }
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(50));
         *proxy_result.0.closing.lock().unwrap() = true;
 
         match proxy_result.2.try_recv() {

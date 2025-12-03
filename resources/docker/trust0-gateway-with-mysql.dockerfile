@@ -1,4 +1,4 @@
-FROM lukemathwalker/cargo-chef:latest-rust-1.85.1-slim-bookworm AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.91.1-slim-bookworm AS chef
 RUN \
     apt-get update && \
     apt-get install -y \

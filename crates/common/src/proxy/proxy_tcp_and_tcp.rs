@@ -196,6 +196,11 @@ impl TcpAndTcpStreamProxy {
                     _ => {}
                 }
 
+                #[cfg(windows)]
+                let mut processed_stream1 = false;
+                #[cfg(windows)]
+                let mut processed_stream2 = false;
+
                 for event in events.iter() {
                     match event.token() {
                         STREAM1_TOKEN => {
@@ -207,7 +212,7 @@ impl TcpAndTcpStreamProxy {
                                     ) {
                                         Ok(()) => {}
                                         Err(err) => match err {
-                                            AppError::WouldBlock => continue,
+                                            AppError::WouldBlock => {}
                                             AppError::StreamEOF => break 'EVENTS,
                                             _ => {
                                                 proxy_error = Some(err);
@@ -223,6 +228,25 @@ impl TcpAndTcpStreamProxy {
                                     continue 'EVENTS;
                                 }
                             }
+
+                            #[cfg(windows)]
+                            {
+                                if !processed_stream1 {
+                                    if let Err(err) = poll.registry().reregister(
+                                        &mut tcp_stream1,
+                                        STREAM1_TOKEN,
+                                        mio::Interest::READABLE,
+                                    ) {
+                                        proxy_error = Some(AppError::General(format!(
+                                        "Error registering tcp stream 1 in MIO registry: err={:?}",
+                                        &err
+                                    )));
+                                        *closing.lock().unwrap() = true;
+                                        continue 'EVENTS;
+                                    }
+                                }
+                                processed_stream1 = true;
+                            }
                         }
 
                         STREAM2_TOKEN => {
@@ -234,7 +258,7 @@ impl TcpAndTcpStreamProxy {
                                     ) {
                                         Ok(()) => {}
                                         Err(err) => match err {
-                                            AppError::WouldBlock => continue,
+                                            AppError::WouldBlock => {}
                                             AppError::StreamEOF => break 'EVENTS,
                                             _ => {
                                                 proxy_error = Some(err);
@@ -249,6 +273,25 @@ impl TcpAndTcpStreamProxy {
                                     *closing.lock().unwrap() = true;
                                     continue 'EVENTS;
                                 }
+                            }
+
+                            #[cfg(windows)]
+                            {
+                                if !processed_stream2 {
+                                    if let Err(err) = poll.registry().reregister(
+                                        &mut tcp_stream2,
+                                        STREAM2_TOKEN,
+                                        mio::Interest::READABLE,
+                                    ) {
+                                        proxy_error = Some(AppError::General(format!(
+                                        "Error registering tcp stream 2 in MIO registry: err={:?}",
+                                        &err
+                                    )));
+                                        *closing.lock().unwrap() = true;
+                                        continue 'EVENTS;
+                                    }
+                                }
+                                processed_stream2 = true;
                             }
                         }
 
@@ -450,7 +493,7 @@ pub mod tests {
             panic!("Unexpected tcp stream write result: err={:?}", &err);
         }
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(50));
         *proxy_result.0.closing.lock().unwrap() = true;
 
         let mut buffer = [0u8; 10];
@@ -480,7 +523,7 @@ pub mod tests {
             panic!("Unexpected proxy connect result: err={:?}", &err);
         }
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(50));
         *proxy_result.0.closing.lock().unwrap() = true;
 
         let mut buffer = [0u8; 10];
@@ -516,7 +559,7 @@ pub mod tests {
             panic!("Unexpected tcp stream write result: err={:?}", &err);
         }
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(50));
         *proxy_result.0.closing.lock().unwrap() = true;
 
         let mut buffer = [0u8; 10];
@@ -546,7 +589,7 @@ pub mod tests {
             panic!("Unexpected proxy connect result: err={:?}", &err);
         }
 
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(50));
         *proxy_result.0.closing.lock().unwrap() = true;
 
         let mut buffer = [0u8; 10];

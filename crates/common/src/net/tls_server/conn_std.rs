@@ -24,7 +24,7 @@ pub type TlsServerConnection = StreamOwned<rustls::ServerConnection, TcpStream>;
 /// TLS connection trait to wrap key rustls server connection functions, attributes
 pub trait TlsConnection {
     /// Retrieves the certificate chain used by the peer to authenticate.
-    fn peer_certificates(&self) -> Option<Vec<CertificateDer>>;
+    fn peer_certificates(&self) -> Option<Vec<CertificateDer<'_>>>;
 
     /// Retrieves the protocol agreed with the peer via ALPN.
     fn alpn_protocol(&self) -> Option<Vec<u8>>;
@@ -37,7 +37,7 @@ impl TlsConnection for TlsServerConnection {
     ///
     /// An (optional) vector of peer certificates.
     ///
-    fn peer_certificates(&self) -> Option<Vec<CertificateDer>> {
+    fn peer_certificates(&self) -> Option<Vec<CertificateDer<'_>>> {
         self.conn.peer_certificates().map(|certs| certs.to_vec())
     }
 
@@ -281,13 +281,13 @@ impl Connection {
         }
 
         // Handle connection error
-        if error.is_some() {
+        if let Some(error) = error {
             sync::send_mpsc_channel_message(
                 &self.event_channel.0,
                 ConnectionEvent::Closing,
                 Box::new(|| "Error sending closing event:".to_string()),
             )?;
-            return Err(error.unwrap());
+            return Err(error);
         }
 
         Ok(return_buffer)
@@ -313,13 +313,13 @@ impl Connection {
         }
 
         // Handle connection error
-        if error.is_some() {
+        if let Some(error) = error {
             sync::send_mpsc_channel_message(
                 &self.event_channel.0,
                 ConnectionEvent::Closing,
                 Box::new(|| "Error sending closing event:".to_string()),
             )?;
-            return Err(error.unwrap());
+            return Err(error);
         }
 
         Ok(())
