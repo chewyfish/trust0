@@ -1,7 +1,7 @@
 use crate::crypto::ca;
 use crate::error::AppError;
 use crate::{crypto, file};
-use pki_types::CertificateRevocationListDer;
+use pki_types::{pem::PemObject, CertificateRevocationListDer};
 use rcgen::{
     CertificateRevocationList, CertificateRevocationListParams, CrlIssuingDistributionPoint,
     KeyIdMethod, RevocationReason, RevokedCertParams, SerialNumber,
@@ -433,8 +433,8 @@ impl file::ReloadableFile for CRLFile {
     fn on_reload_data(&mut self) -> anyhow::Result<(), AppError> {
         match crypto::file::load_crl_list(self.path.to_str().unwrap()) {
             Ok(list) => {
-                *self.crl_list.lock().unwrap().deref_mut() = rustls_pemfile::crls(
-                    &mut list.as_slice(),
+                *self.crl_list.lock().unwrap().deref_mut() = CertificateRevocationListDer::pem_slice_iter(
+                    list.as_slice(),
                 )
                 .map(|result| {
                     result.map_err(|err| {

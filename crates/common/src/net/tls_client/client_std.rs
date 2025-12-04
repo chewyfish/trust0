@@ -271,6 +271,7 @@ pub trait ClientVisitor: Send {
 pub mod tests {
     use super::*;
     use crate::control::pdu;
+    use crate::crypto;
     use crate::crypto::file::{load_certificates, load_private_key};
     use crate::net::tls_server;
     use mockall::{mock, predicate};
@@ -407,6 +408,8 @@ pub mod tests {
 
     #[test]
     fn client_new() {
+        crypto::setup_crypto_provider();
+
         let tls_client_config = rustls::ClientConfig::builder()
             .with_root_certificates(rustls::RootCertStore::empty())
             .with_no_client_auth();
@@ -426,6 +429,8 @@ pub mod tests {
 
     #[test]
     fn client_get_connection() {
+        crypto::setup_crypto_provider();
+
         let tls_client_config = rustls::ClientConfig::builder()
             .with_root_certificates(rustls::RootCertStore::empty())
             .with_no_client_auth();
@@ -444,6 +449,8 @@ pub mod tests {
 
     #[test]
     fn client_connect() {
+        crypto::setup_crypto_provider();
+
         struct TestClientVisitor {
             conn_created: Arc<Mutex<bool>>,
             conn_connected: Arc<Mutex<bool>>,
@@ -523,6 +530,8 @@ pub mod tests {
 
     #[test]
     fn client_read_server_msg_when_valid_message() {
+        crypto::setup_crypto_provider();
+
         let expected_session_msg = tls::message::SessionMessage::new(
             &tls::message::DataType::Trust0Connection,
             &Some(
@@ -576,6 +585,8 @@ pub mod tests {
 
     #[test]
     fn client_read_server_msg_when_wrong_channel_type() {
+        crypto::setup_crypto_provider();
+
         let expected_msg_frame = MessageFrame::new(
             ControlChannel::Management,
             pdu::CODE_OK,
@@ -621,6 +632,8 @@ pub mod tests {
 
     #[test]
     fn client_read_server_msg_when_no_data_to_read() {
+        crypto::setup_crypto_provider();
+
         struct ConnReader {}
         impl Read for ConnReader {
             fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
@@ -651,6 +664,8 @@ pub mod tests {
 
     #[test]
     fn client_read_server_msg_when_always_would_block() {
+        crypto::setup_crypto_provider();
+
         struct ConnReader {}
         impl Read for ConnReader {
             fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
@@ -681,6 +696,8 @@ pub mod tests {
 
     #[test]
     fn client_read_server_msg_when_non_blockable_error() {
+        crypto::setup_crypto_provider();
+
         struct ConnReader {}
         impl Read for ConnReader {
             fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
@@ -711,6 +728,8 @@ pub mod tests {
 
     #[test]
     fn client_poll_connection_when_not_connected() {
+        crypto::setup_crypto_provider();
+
         let tls_client_config = rustls::ClientConfig::builder()
             .with_root_certificates(rustls::RootCertStore::empty())
             .with_no_client_auth();
@@ -730,6 +749,8 @@ pub mod tests {
 
     #[test]
     fn client_assert_connected_when_connected() {
+        crypto::setup_crypto_provider();
+
         let tls_client_config = rustls::ClientConfig::builder()
             .with_root_certificates(rustls::RootCertStore::empty())
             .with_no_client_auth();
@@ -750,6 +771,8 @@ pub mod tests {
 
     #[test]
     fn client_assert_connected_when_not_connected() {
+        crypto::setup_crypto_provider();
+
         let tls_client_config = rustls::ClientConfig::builder()
             .with_root_certificates(rustls::RootCertStore::empty())
             .with_no_client_auth();

@@ -1010,7 +1010,7 @@ pub mod tests {
             );
         }
         assert_eq!(file_data.replace(&[' ', '\t', '\r', '\n'], ""),
-                   "-----BEGINX509CRL-----WRONG1-----ENDX509CRL----------BEGINX509CRL-----WRONG2-----ENDX509CRL-----".to_string());
+                   "-----BEGINX509CRL-----WRONG1-----WRONGENDX509CRL----------BEGINX509CRL-----WRONG2-----ENDX509CRL-----".to_string());
     }
 
     #[cfg(windows)]
@@ -1139,7 +1139,7 @@ pub mod tests {
             );
         }
         assert_eq!(file_data.replace(&[' ', '\t', '\r', '\n'], ""),
-                   "-----BEGINX509CRL-----WRONG1-----ENDX509CRL----------BEGINX509CRL-----WRONG2-----ENDX509CRL-----".to_string());
+                   "-----BEGINX509CRL-----WRONG1-----WRONGENDX509CRL----------BEGINX509CRL-----WRONG2-----ENDX509CRL-----".to_string());
     }
 
     #[cfg(windows)]

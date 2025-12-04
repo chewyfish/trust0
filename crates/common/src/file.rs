@@ -659,7 +659,7 @@ mod reload_tests {
         assert_ne!(text_file.last_mtime, saved_last_mtime);
         assert!(!text_data.lock().unwrap().is_empty());
         assert_eq!(text_data.lock().unwrap().to_string().replace(&[' ', '\t', '\r', '\n'], ""),
-                   "-----BEGINX509CRL-----WRONG1-----ENDX509CRL----------BEGINX509CRL-----WRONG2-----ENDX509CRL-----".to_string());
+                   "-----BEGINX509CRL-----WRONG1-----WRONGENDX509CRL----------BEGINX509CRL-----WRONG2-----ENDX509CRL-----".to_string());
     }
 
     #[test]

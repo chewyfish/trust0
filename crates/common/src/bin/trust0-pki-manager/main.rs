@@ -4,6 +4,7 @@ use std::{fs, process};
 
 use anyhow::Result;
 use time::{Duration, OffsetDateTime};
+use trust0_common::crypto;
 use trust0_common::crypto::ca::{Certificate, KeyAlgorithm};
 use trust0_common::crypto::crl::{CertificateRevocationListBuilder, RevokedCertificateBuilder};
 use trust0_common::error::AppError;
@@ -22,6 +23,7 @@ use crate::config::{AppConfig, Command};
 /// A [`Result`] indicating the success/failure of the processing operation.
 ///
 fn process_runner(app_config: &AppConfig) -> Result<(), AppError> {
+    crypto::setup_crypto_provider();
     match app_config.args.command {
         Command::RootCaPkiCreator { .. } => process_rootca_pki_creator(app_config),
         Command::GatewayPkiCreator { .. } => process_gateway_pki_creator(app_config),

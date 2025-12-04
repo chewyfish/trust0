@@ -693,6 +693,7 @@ pub mod tests {
     use once_cell::sync::Lazy;
     use std::env;
     use std::path::PathBuf;
+    use trust0_common::crypto;
     #[cfg(feature = "postgres_db")]
     use trust0_common::model;
 
@@ -986,6 +987,8 @@ pub mod tests {
 
     #[test]
     fn tlsservercfgbld_build() {
+        crypto::setup_crypto_provider();
+
         let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_key_file_str = gateway_key_file.to_str().unwrap();
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
