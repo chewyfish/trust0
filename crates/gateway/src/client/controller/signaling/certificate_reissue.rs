@@ -143,8 +143,11 @@ impl CertReissuanceProcessor {
                     .as_str(),
                 &key_algorithm,
             )?;
-            let signer_cert_pem = certificate.serialize_certificate(&Some(signer_cert))?;
-            let signer_key_pem = certificate.serialize_private_key();
+            let signer_cert_der = signer_cert.generate_certificate(None)?;
+
+            let key_pem = certificate.serialize_private_key();
+            let cert_pem = certificate
+                .serialize_certificate(Some((&signer_cert_der, signer_cert.key_pair())))?;
 
             // Queue client-bound certificate reissue message
 
@@ -155,8 +158,8 @@ impl CertReissuanceProcessor {
                 &Some(
                     serde_json::to_value(CertificateReissueEvent::new(
                         &key_algorithm,
-                        &signer_key_pem,
-                        &signer_cert_pem,
+                        &key_pem,
+                        &cert_pem,
                     ))
                     .unwrap(),
                 ),

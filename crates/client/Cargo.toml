@@ -18,7 +18,7 @@ log = "0.4.28"
 log4rs = "1.4.0"
 once_cell = "1.21.3"
 pki-types = { package = "rustls-pki-types", version = "1.13.1", features = ["std"] }
-rcgen = { version = "0.12.1", features = ["pem"], default-features = false }
+rcgen = { version = "0.13.2", features = ["pem"], default-features = false }
 ring = "0.17.14"
 rpassword = "7.4.0"
 rustls = { version = "0.23.35", features = ["logging", "prefer-post-quantum", "std", "tls12", "ring"], default-features = false }

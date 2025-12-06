@@ -1,4 +1,5 @@
 use crate::error::AppError;
+use pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
 use rcgen::SerialNumber;
 use ring::signature::{
     EcdsaKeyPair, Ed25519KeyPair, ECDSA_P256_SHA256_ASN1_SIGNING, ECDSA_P384_SHA384_ASN1_SIGNING,
@@ -37,7 +38,7 @@ pub struct CertAccessContext {
 
 /// Trust0 entity utiliing PKI resources
 #[derive(Clone, Debug, PartialEq)]
-enum EntityType {
+pub enum EntityType {
     /// Root CA, used to sign gateway/client certs
     RootCa,
     /// Trust0 gateway
@@ -102,8 +103,9 @@ impl KeyAlgorithm {
         let pkcs8 = pkcs8.map_err(|err| {
             AppError::General(format!("Error generating PKCS8 key pair: err={:?}", &err))
         })?;
+        let private_key = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(pkcs8.as_ref()));
 
-        rcgen::KeyPair::from_der_and_sign_algo(pkcs8.as_ref(), sig_alg).map_err(|err| {
+        rcgen::KeyPair::from_der_and_sign_algo(&private_key, sig_alg).map_err(|err| {
             AppError::General(format!(
                 "Error preparing key pair for signature: err={:?}",
                 &err
@@ -119,10 +121,52 @@ pub struct Certificate {
     /// Public key algorithm
     _key_algorithm: KeyAlgorithm,
     /// [`rcgen::Certificate`] object
-    certificate: rcgen::Certificate,
+    cert_params: rcgen::CertificateParams,
+    /// [`rcgen::KeyPair`] object
+    key_pair: rcgen::KeyPair,
 }
 
 impl Certificate {
+    /// Certiticate entity type accessor
+    ///
+    /// # Returns
+    ///
+    /// A [`EntityType`] object.
+    ///
+    pub fn entity_type(&self) -> &EntityType {
+        &self.entity_type
+    }
+
+    /// Certificate public key algorithm type accessor
+    ///
+    /// # Returns
+    ///
+    /// A [`KeyAlgorithm`] object.
+    ///
+    pub fn key_algorithm(&self) -> &KeyAlgorithm {
+        &self._key_algorithm
+    }
+
+    /// Certificate parameters accessor (used to build a [`Certificate`])
+    ///
+    /// # Returns
+    ///
+    /// A [`rcgen::CertificateParams`] object.
+    ///
+    pub fn cert_params(&self) -> &rcgen::CertificateParams {
+        &self.cert_params
+    }
+
+    /// Certificate public key pair accessor
+    ///
+    /// # Returns
+    ///
+    /// A [`rcgen::KeyPair`] object.
+    ///
+    pub fn key_pair(&self) -> &rcgen::KeyPair {
+        &self.key_pair
+    }
+
     /// Returns a builder, which can create a [`Certificate`] for a Trust0 root CA
     ///
     /// # Returns
@@ -162,12 +206,53 @@ impl Certificate {
         }
     }
 
-    /// Create a PEM string pertaining to the certificate. Pass in a CA [`Certificate`]
-    /// to use in signing the generated certificate PEM.
+    /// Create a ['rcgen::Certificate'] pertaining to the certificate. Pass in a CA [`rcgen::Certificate`]
+    /// and [`rcgen::KeyPair`] to use in signing the generated certificate DER object.
     ///
     /// # Arguments
     ///
-    /// * `signing_cert` - A [`Certificate`] representing a CA certificate to use for certificate signing
+    /// * `signer` - An optional tuple containing the (CA certificate) signing
+    ///   [`rcgen::Certificate`] and [`rcgen::KeyPair`]. Not supplied for self-signed certificate generation.
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the generated [`rcgen::Certificate`] DER object.
+    ///
+    pub fn generate_certificate(
+        &self,
+        signer: Option<(&rcgen::Certificate, &rcgen::KeyPair)>,
+    ) -> Result<rcgen::Certificate, AppError> {
+        match signer {
+            Some((issuer_cert, issuer_key)) => self
+                .cert_params
+                .clone()
+                .signed_by(&self.key_pair, issuer_cert, issuer_key)
+                .map_err(|err| {
+                    AppError::General(format!(
+                        "Error building signed certificate: type={:?}, err={:?}",
+                        &self.entity_type, &err
+                    ))
+                }),
+            None => self
+                .cert_params
+                .clone()
+                .self_signed(&self.key_pair)
+                .map_err(|err| {
+                    AppError::General(format!(
+                        "Error building self-signed certificate: type={:?}, err={:?}",
+                        &self.entity_type, &err
+                    ))
+                }),
+        }
+    }
+
+    /// Create a PEM string pertaining to the certificate. Pass in a CA [`rcgen::Certificate`]
+    /// and [`rcgen::KeyPair`] to use in signing the generated certificate PEM.
+    ///
+    /// # Arguments
+    ///
+    /// * `signer` - An optional tuple containing the (CA certificate) signing
+    ///   [`rcgen::Certificate`] and [`rcgen::KeyPair`]. Not supplied for self-signed certificate generation.
     ///
     /// # Returns
     ///
@@ -175,25 +260,10 @@ impl Certificate {
     ///
     pub fn serialize_certificate(
         &self,
-        signing_cert: &Option<Certificate>,
+        signer: Option<(&rcgen::Certificate, &rcgen::KeyPair)>,
     ) -> Result<String, AppError> {
-        match signing_cert {
-            Some(signing_cert) => self
-                .certificate
-                .serialize_pem_with_signer(&signing_cert.certificate)
-                .map_err(|err| {
-                    AppError::General(format!(
-                        "Error serializing signed certificate: type={:?}, err={:?}",
-                        &self.entity_type, &err
-                    ))
-                }),
-            None => self.certificate.serialize_pem().map_err(|err| {
-                AppError::General(format!(
-                    "Error serializing certificate: type={:?}, err={:?}",
-                    &self.entity_type, &err
-                ))
-            }),
-        }
+        self.generate_certificate(signer)
+            .map(|cert| rcgen::Certificate::pem(&cert))
     }
 
     /// Create a PEM string pertaining to the certificate's key pair
@@ -203,14 +273,15 @@ impl Certificate {
     /// The generated key pair PEM string.
     ///
     pub fn serialize_private_key(&self) -> String {
-        self.certificate.serialize_private_key_pem()
+        self.key_pair.serialize_pem()
     }
 
     /// Create a PEM string pertaining to the signed certificate revocation list (CRL) object
     ///
     /// # Arguments
     ///
-    /// * `crl` - A [`rcgen::CertificateRevocationList`] object to serialize
+    /// * `crl_params` - A [`rcgen::CertificateRevocationListParams`] object to use in generating
+    ///   and serializing CRL PEM string
     ///
     /// # Returns
     ///
@@ -218,15 +289,21 @@ impl Certificate {
     ///
     pub fn serialize_certificate_revocation_list(
         &self,
-        crl: &rcgen::CertificateRevocationList,
+        crl_params: rcgen::CertificateRevocationListParams,
     ) -> Result<String, AppError> {
-        crl.serialize_pem_with_signer(&self.certificate)
-            .map_err(|err| {
-                AppError::General(format!(
-                    "Error serializing certificate revocation list: err={:?}",
-                    &err
-                ))
-            })
+        let cert = self.generate_certificate(None)?;
+        let crl = crl_params.signed_by(&cert, &self.key_pair).map_err(|err| {
+            AppError::General(format!(
+                "Error signing certificate revocation list: err={:?}",
+                &err
+            ))
+        })?;
+        crl.pem().map_err(|err| {
+            AppError::General(format!(
+                "Error serializing certificate revocation list: err={:?}",
+                &err
+            ))
+        })
     }
 }
 
@@ -352,10 +429,19 @@ impl CommonCertificateBuilder {
     ///
     /// # Returns
     ///
-    /// If valid, a tuple of the key algorithm and certificate parameters
+    /// If valid, a tuple of the [`KeyAlgorithm`], [`rcgen::CertificateParams`] and optional
+    /// [`rcgen::KeyPair`]
     ///
-    fn build(&self, errors: &mut Vec<String>) -> Option<(KeyAlgorithm, rcgen::CertificateParams)> {
+    fn build(
+        &self,
+        errors: &mut Vec<String>,
+    ) -> Option<(
+        KeyAlgorithm,
+        rcgen::CertificateParams,
+        Option<rcgen::KeyPair>,
+    )> {
         let mut cert_params = None;
+        let mut key_pair = None;
 
         // Validation
 
@@ -364,7 +450,6 @@ impl CommonCertificateBuilder {
         }
 
         if self.key_pair_pem.is_some() || self.certificate_pem.is_some() {
-            let mut key_pair = None;
             if self.key_pair_pem.is_none() {
                 errors.push(VALIDATION_MSG_KEY_PAIR_PEM_REQUIRED.to_string());
             } else {
@@ -379,7 +464,6 @@ impl CommonCertificateBuilder {
             } else if key_pair.is_some() {
                 let certificate_result = rcgen::CertificateParams::from_ca_cert_pem(
                     self.certificate_pem.as_ref().unwrap().as_str(),
-                    key_pair.unwrap(),
                 );
                 match certificate_result {
                     Ok(cp) => cert_params = Some(cp),
@@ -423,7 +507,6 @@ impl CommonCertificateBuilder {
 
         if cert_params.is_none() {
             let mut new_cert_params = rcgen::CertificateParams::default();
-            new_cert_params.alg = self.key_algorithm.as_ref().unwrap().signature_algorithm();
 
             if self.serial_number.is_some() {
                 new_cert_params.serial_number = Some(SerialNumber::from_slice(
@@ -436,15 +519,22 @@ impl CommonCertificateBuilder {
             let mut dn = rcgen::DistinguishedName::new();
             dn.push(
                 rcgen::DnType::CommonName,
-                rcgen::DnValue::PrintableString(self.dn_common_name.as_ref().unwrap().clone()),
+                rcgen::DnValue::PrintableString(
+                    rcgen::PrintableString::try_from(self.dn_common_name.as_ref().unwrap().clone())
+                        .unwrap(),
+                ),
             );
             dn.push(
                 rcgen::DnType::CountryName,
-                rcgen::DnValue::PrintableString(self.dn_country.clone()),
+                rcgen::DnValue::PrintableString(
+                    rcgen::PrintableString::try_from(self.dn_country.clone()).unwrap(),
+                ),
             );
             dn.push(
                 rcgen::DnType::OrganizationName,
-                rcgen::DnValue::PrintableString(self.dn_organization.clone()),
+                rcgen::DnValue::PrintableString(
+                    rcgen::PrintableString::try_from(self.dn_organization.clone()).unwrap(),
+                ),
             );
             new_cert_params.distinguished_name = dn;
 
@@ -454,6 +544,7 @@ impl CommonCertificateBuilder {
         Some((
             self.key_algorithm.as_ref().unwrap().clone(),
             cert_params.unwrap(),
+            key_pair,
         ))
     }
 }
@@ -633,7 +724,7 @@ impl RootCaCertificateBuilder {
             )));
         }
 
-        let (key_algorithm, mut cert_params) = common_build_response.take().unwrap();
+        let (key_algorithm, mut cert_params, key_pair) = common_build_response.take().unwrap();
 
         cert_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
         cert_params
@@ -643,19 +734,13 @@ impl RootCaCertificateBuilder {
             .key_usages
             .push(rcgen::KeyUsagePurpose::KeyCertSign);
         cert_params.key_usages.push(rcgen::KeyUsagePurpose::CrlSign);
-        if cert_params.key_pair.is_none() {
-            cert_params.key_pair = Some(key_algorithm.create_key_pair()?);
-        }
+        let key_pair = key_pair.unwrap_or(key_algorithm.create_key_pair()?);
 
         Ok(Certificate {
             entity_type: EntityType::RootCa,
-            _key_algorithm: key_algorithm.clone(),
-            certificate: rcgen::Certificate::from_params(cert_params).map_err(|err| {
-                AppError::General(format!(
-                    "Error creating root CA certificate: alg={:?}, err={:?}",
-                    &key_algorithm, &err
-                ))
-            })?,
+            _key_algorithm: key_algorithm,
+            cert_params,
+            key_pair,
         })
     }
 }
@@ -806,37 +891,36 @@ impl GatewayCertificateBuilder {
             )));
         }
 
-        let (key_algorithm, mut cert_params) = common_build_response.take().unwrap();
+        let (key_algorithm, mut cert_params, key_pair) = common_build_response.take().unwrap();
 
-        if cert_params.key_pair.is_none() {
-            cert_params.is_ca = rcgen::IsCa::NoCa;
-            cert_params.use_authority_key_identifier_extension = true;
-            cert_params
-                .key_usages
-                .push(rcgen::KeyUsagePurpose::DigitalSignature);
-            cert_params
-                .extended_key_usages
-                .push(rcgen::ExtendedKeyUsagePurpose::ClientAuth);
-            cert_params
-                .extended_key_usages
-                .push(rcgen::ExtendedKeyUsagePurpose::ServerAuth);
-            for san_dns_name in &self.san_dns_names {
+        let key_pair = key_pair.map_or_else(
+            || {
+                cert_params.is_ca = rcgen::IsCa::NoCa;
+                cert_params.use_authority_key_identifier_extension = true;
                 cert_params
-                    .subject_alt_names
-                    .push(rcgen::SanType::DnsName(san_dns_name.clone()));
-            }
-            cert_params.key_pair = Some(key_algorithm.create_key_pair()?);
-        }
+                    .key_usages
+                    .push(rcgen::KeyUsagePurpose::DigitalSignature);
+                cert_params
+                    .extended_key_usages
+                    .push(rcgen::ExtendedKeyUsagePurpose::ClientAuth);
+                cert_params
+                    .extended_key_usages
+                    .push(rcgen::ExtendedKeyUsagePurpose::ServerAuth);
+                for san_dns_name in &self.san_dns_names {
+                    cert_params.subject_alt_names.push(rcgen::SanType::DnsName(
+                        rcgen::Ia5String::try_from(san_dns_name.to_string()).unwrap(),
+                    ));
+                }
+                key_algorithm.create_key_pair()
+            },
+            |kp| Ok(kp),
+        )?;
 
         Ok(Certificate {
             entity_type: EntityType::Gateway,
             _key_algorithm: key_algorithm.clone(),
-            certificate: rcgen::Certificate::from_params(cert_params).map_err(|err| {
-                AppError::General(format!(
-                    "Error creating gateway certificate: alg={:?}, err={:?}",
-                    &key_algorithm, &err
-                ))
-            })?,
+            cert_params,
+            key_pair,
         })
     }
 }
@@ -1011,42 +1095,45 @@ impl ClientCertificateBuilder {
             )));
         }
 
-        let (key_algorithm, mut cert_params) = common_build_response.take().unwrap();
+        let (key_algorithm, mut cert_params, key_pair) = common_build_response.take().unwrap();
 
-        if cert_params.key_pair.is_none() {
-            cert_params.is_ca = rcgen::IsCa::NoCa;
-            cert_params.use_authority_key_identifier_extension = true;
-            cert_params
-                .key_usages
-                .push(rcgen::KeyUsagePurpose::DigitalSignature);
-            cert_params
-                .extended_key_usages
-                .push(rcgen::ExtendedKeyUsagePurpose::ClientAuth);
-            cert_params.key_pair = Some(key_algorithm.create_key_pair()?);
+        let key_pair = key_pair.map_or_else(
+            || {
+                cert_params.is_ca = rcgen::IsCa::NoCa;
+                cert_params.use_authority_key_identifier_extension = true;
+                cert_params
+                    .key_usages
+                    .push(rcgen::KeyUsagePurpose::DigitalSignature);
+                cert_params
+                    .extended_key_usages
+                    .push(rcgen::ExtendedKeyUsagePurpose::ClientAuth);
 
-            let access_context = CertAccessContext {
-                platform: self.san_uri_platform.as_ref().unwrap().clone(),
-                user_id: self.san_uri_user_id.unwrap(),
-            };
-            cert_params.subject_alt_names.push(rcgen::SanType::URI(
-                serde_json::to_string(&access_context).map_err(|err| {
-                    AppError::General(format!(
-                        "Error serializing client auth context: val={:?}, err={:?}",
-                        &access_context, &err
-                    ))
-                })?,
-            ));
-        }
+                let access_context = CertAccessContext {
+                    platform: self.san_uri_platform.as_ref().unwrap().clone(),
+                    user_id: self.san_uri_user_id.unwrap(),
+                };
+                cert_params.subject_alt_names.push(rcgen::SanType::URI(
+                    rcgen::Ia5String::try_from(serde_json::to_string(&access_context).map_err(
+                        |err| {
+                            AppError::General(format!(
+                                "Error serializing client auth context: val={:?}, err={:?}",
+                                &access_context, &err
+                            ))
+                        },
+                    )?)
+                    .unwrap(),
+                ));
+
+                key_algorithm.create_key_pair()
+            },
+            |kp| Ok(kp),
+        )?;
 
         Ok(Certificate {
             entity_type: EntityType::Client,
             _key_algorithm: key_algorithm.clone(),
-            certificate: rcgen::Certificate::from_params(cert_params).map_err(|err| {
-                AppError::General(format!(
-                    "Error creating client certificate: alg={:?}, err={:?}",
-                    &key_algorithm, &err
-                ))
-            })?,
+            cert_params,
+            key_pair,
         })
     }
 }
@@ -1189,6 +1276,26 @@ mod tests {
     }
 
     #[test]
+    fn cert_accessors() {
+        let sans = vec!["DNS1".to_string(), "DNS2".to_string()];
+        let expected_sans = vec![
+            rcgen::SanType::DnsName(rcgen::Ia5String::try_from("DNS1".to_string()).unwrap()),
+            rcgen::SanType::DnsName(rcgen::Ia5String::try_from("DNS2".to_string()).unwrap()),
+        ];
+        let cert = Certificate {
+            entity_type: EntityType::Client,
+            _key_algorithm: KeyAlgorithm::EcdsaP256,
+            cert_params: rcgen::CertificateParams::new(sans).unwrap(),
+            key_pair: rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).unwrap(),
+        };
+
+        assert_eq!(cert.entity_type(), &EntityType::Client);
+        assert_eq!(cert.key_algorithm(), &KeyAlgorithm::EcdsaP256);
+        assert_eq!(&cert.cert_params().subject_alt_names, &expected_sans);
+        assert_eq!(cert.key_pair().algorithm(), &rcgen::PKCS_ECDSA_P256_SHA256);
+    }
+
+    #[test]
     fn cert_root_ca_certificate_builder() {
         let builder = Certificate::root_ca_certificate_builder();
 
@@ -1253,10 +1360,20 @@ mod tests {
         let rootca_certificate = create_rootca_certificate(&KeyAlgorithm::EcdsaP384);
         let client_certificate = create_client_certificate(&KeyAlgorithm::EcdsaP384);
 
-        let result = client_certificate.serialize_certificate(&Some(rootca_certificate));
+        let rootca_certificate_der = match rootca_certificate.generate_certificate(None) {
+            Ok(cert) => cert,
+            Err(err) => {
+                panic!("Error generating issuer certificate: err={:?}", &err);
+            }
+        };
+
+        let result = client_certificate.serialize_certificate(Some((
+            &rootca_certificate_der,
+            &rootca_certificate.key_pair,
+        )));
 
         if let Err(err) = result {
-            panic!("Unexpected result: err={:?}", &err);
+            panic!("Unexpected serialization result: err={:?}", &err);
         }
     }
 
@@ -1265,10 +1382,20 @@ mod tests {
         let rootca_certificate = load_rootca_certificate(&KeyAlgorithm::EcdsaP256);
         let client_certificate = create_client_certificate(&KeyAlgorithm::EcdsaP256);
 
-        let result = client_certificate.serialize_certificate(&Some(rootca_certificate));
+        let rootca_certificate_der = match rootca_certificate.generate_certificate(None) {
+            Ok(cert) => cert,
+            Err(err) => {
+                panic!("Error generating issuer certificate: err={:?}", &err);
+            }
+        };
+
+        let result = client_certificate.serialize_certificate(Some((
+            &rootca_certificate_der,
+            &rootca_certificate.key_pair,
+        )));
 
         if let Err(err) = result {
-            panic!("Unexpected result: err={:?}", &err);
+            panic!("Unexpected serialization result: err={:?}", &err);
         }
     }
 
@@ -1276,10 +1403,10 @@ mod tests {
     fn cert_serialize_certificate_when_not_signing() {
         let client_certificate = create_client_certificate(&KeyAlgorithm::EcdsaP384);
 
-        let result = client_certificate.serialize_certificate(&None);
+        let result = client_certificate.serialize_certificate(None);
 
         if let Err(err) = result {
-            panic!("Unexpected result: err={:?}", &err);
+            panic!("Unexpected serialization result: err={:?}", &err);
         }
     }
 
@@ -1293,13 +1420,12 @@ mod tests {
     #[test]
     fn cert_serialize_certificate_revocation_list() {
         let rootca_certificate = load_rootca_certificate(&KeyAlgorithm::EcdsaP256);
-        let crl = crl::CertificateRevocationListBuilder::new()
+        let crl_params = crl::CertificateRevocationListBuilder::new()
             .crl_number(&[0u8, 1u8])
             .update_datetime(&datetime!(2024-01-01 0:00 UTC))
             .next_update_datetime(&datetime!(2024-02-01 0:00 UTC))
-            .signature_algorithm(&KeyAlgorithm::EcdsaP256)
             .key_ident_method(rcgen::KeyIdMethod::Sha256)
-            .build(vec![crl::RevokedCertificateBuilder::new()
+            .build_params(vec![crl::RevokedCertificateBuilder::new()
                 .serial_number(&[2u8, 3u8])
                 .revocation_datetime(&datetime!(2024-01-10 0:00 UTC))
                 .reason_code(&rcgen::RevocationReason::KeyCompromise)
@@ -1308,10 +1434,10 @@ mod tests {
                 .unwrap()])
             .unwrap();
 
-        let result = rootca_certificate.serialize_certificate_revocation_list(&crl);
+        let result = rootca_certificate.serialize_certificate_revocation_list(crl_params);
 
         if let Err(err) = result {
-            panic!("Unexpected result: err={:?}", &err);
+            panic!("Unexpected serialization result: err={:?}", &err);
         }
     }
 
@@ -1378,8 +1504,9 @@ mod tests {
         let certificate = result.unwrap();
         assert_eq!(certificate._key_algorithm, KeyAlgorithm::Ed25519);
         assert_eq!(certificate.entity_type, EntityType::RootCa);
+        assert_eq!(certificate.key_pair.algorithm(), &rcgen::PKCS_ED25519);
 
-        let cert_params = certificate.certificate.get_params();
+        let cert_params = &certificate.cert_params;
         assert_eq!(
             cert_params.is_ca,
             rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained)
@@ -1390,7 +1517,6 @@ mod tests {
             cert_params.serial_number.as_ref().unwrap(),
             &rcgen::SerialNumber::from_slice(&[0u8, 1u8])
         );
-        assert_eq!(cert_params.alg, &rcgen::PKCS_ED25519);
         assert_eq!(cert_params.not_after, validity_not_after);
         assert_eq!(cert_params.not_before, validity_not_before);
         assert!(cert_params.subject_alt_names.is_empty());
@@ -1417,7 +1543,9 @@ mod tests {
                 .distinguished_name
                 .get(&rcgen::DnType::CommonName)
                 .unwrap(),
-            &rcgen::DnValue::PrintableString("name1".to_string())
+            &rcgen::DnValue::PrintableString(
+                rcgen::PrintableString::try_from("name1".to_string()).unwrap()
+            )
         );
         assert!(cert_params
             .distinguished_name
@@ -1428,7 +1556,9 @@ mod tests {
                 .distinguished_name
                 .get(&rcgen::DnType::CountryName)
                 .unwrap(),
-            &rcgen::DnValue::PrintableString("country1".to_string())
+            &rcgen::DnValue::PrintableString(
+                rcgen::PrintableString::try_from("country1".to_string()).unwrap()
+            )
         );
         assert!(cert_params
             .distinguished_name
@@ -1439,7 +1569,9 @@ mod tests {
                 .distinguished_name
                 .get(&rcgen::DnType::OrganizationName)
                 .unwrap(),
-            &rcgen::DnValue::PrintableString("org1".to_string())
+            &rcgen::DnValue::PrintableString(
+                rcgen::PrintableString::try_from("org1".to_string()).unwrap()
+            )
         );
     }
 
@@ -1511,14 +1643,17 @@ mod tests {
         let certificate = result.unwrap();
         assert_eq!(certificate._key_algorithm, KeyAlgorithm::EcdsaP256);
         assert_eq!(certificate.entity_type, EntityType::RootCa);
+        assert_eq!(
+            certificate.key_pair.algorithm(),
+            &rcgen::PKCS_ECDSA_P256_SHA256
+        );
 
-        let cert_params = certificate.certificate.get_params();
+        let cert_params = &certificate.cert_params;
         assert_eq!(
             cert_params.is_ca,
             rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained)
         );
         assert!(!cert_params.use_authority_key_identifier_extension);
-        assert_eq!(cert_params.alg, &rcgen::PKCS_ECDSA_P256_SHA256);
         assert!(cert_params.subject_alt_names.is_empty());
 
         let expected_key_usages = HashSet::from([
@@ -1600,8 +1735,12 @@ mod tests {
         let certificate = result.unwrap();
         assert_eq!(certificate._key_algorithm, KeyAlgorithm::EcdsaP256);
         assert_eq!(certificate.entity_type, EntityType::Gateway);
+        assert_eq!(
+            certificate.key_pair.algorithm(),
+            &rcgen::PKCS_ECDSA_P256_SHA256
+        );
 
-        let cert_params = certificate.certificate.get_params();
+        let cert_params = &certificate.cert_params;
         assert_eq!(cert_params.is_ca, rcgen::IsCa::NoCa);
         assert!(cert_params.use_authority_key_identifier_extension);
         assert!(cert_params.serial_number.is_some());
@@ -1609,7 +1748,6 @@ mod tests {
             cert_params.serial_number.as_ref().unwrap(),
             &rcgen::SerialNumber::from_slice(&[0u8, 1u8])
         );
-        assert_eq!(cert_params.alg, &rcgen::PKCS_ECDSA_P256_SHA256);
         assert_eq!(cert_params.not_after, validity_not_after);
         assert_eq!(cert_params.not_before, validity_not_before);
 
@@ -1634,11 +1772,10 @@ mod tests {
             );
         }
 
-        let expected_san_values: HashSet<rcgen::SanType> = HashSet::from_iter(
-            san_dns_names
-                .iter()
-                .map(|dns_name| rcgen::SanType::DnsName(dns_name.clone())),
-        );
+        let expected_san_values: HashSet<rcgen::SanType> =
+            HashSet::from_iter(san_dns_names.iter().map(|dns_name| {
+                rcgen::SanType::DnsName(rcgen::Ia5String::try_from(dns_name.clone()).unwrap())
+            }));
         let san_values = HashSet::from_iter(cert_params.subject_alt_names.iter().cloned());
         if !san_values.eq(&expected_san_values) {
             panic!(
@@ -1656,7 +1793,9 @@ mod tests {
                 .distinguished_name
                 .get(&rcgen::DnType::CommonName)
                 .unwrap(),
-            &rcgen::DnValue::PrintableString("name1".to_string())
+            &rcgen::DnValue::PrintableString(
+                rcgen::PrintableString::try_from("name1".to_string()).unwrap()
+            )
         );
         assert!(cert_params
             .distinguished_name
@@ -1667,7 +1806,9 @@ mod tests {
                 .distinguished_name
                 .get(&rcgen::DnType::CountryName)
                 .unwrap(),
-            &rcgen::DnValue::PrintableString("country1".to_string())
+            &rcgen::DnValue::PrintableString(
+                rcgen::PrintableString::try_from("country1".to_string()).unwrap()
+            )
         );
         assert!(cert_params
             .distinguished_name
@@ -1678,7 +1819,9 @@ mod tests {
                 .distinguished_name
                 .get(&rcgen::DnType::OrganizationName)
                 .unwrap(),
-            &rcgen::DnValue::PrintableString("org1".to_string())
+            &rcgen::DnValue::PrintableString(
+                rcgen::PrintableString::try_from("org1".to_string()).unwrap()
+            )
         );
     }
 
@@ -1751,8 +1894,12 @@ mod tests {
         let certificate = result.unwrap();
         assert_eq!(certificate._key_algorithm, KeyAlgorithm::EcdsaP384);
         assert_eq!(certificate.entity_type, EntityType::Client);
+        assert_eq!(
+            certificate.key_pair.algorithm(),
+            &rcgen::PKCS_ECDSA_P384_SHA384
+        );
 
-        let cert_params = certificate.certificate.get_params();
+        let cert_params = &certificate.cert_params;
         assert_eq!(cert_params.is_ca, rcgen::IsCa::NoCa);
         assert!(cert_params.use_authority_key_identifier_extension);
         assert!(cert_params.serial_number.is_some());
@@ -1760,7 +1907,6 @@ mod tests {
             cert_params.serial_number.as_ref().unwrap(),
             &rcgen::SerialNumber::from_slice(&[0u8, 1u8])
         );
-        assert_eq!(cert_params.alg, &rcgen::PKCS_ECDSA_P384_SHA384);
         assert_eq!(cert_params.not_after, validity_not_after);
         assert_eq!(cert_params.not_before, validity_not_before);
         assert!(!cert_params.subject_alt_names.is_empty());
@@ -1784,10 +1930,13 @@ mod tests {
         }
 
         let expected_san_values = HashSet::from([rcgen::SanType::URI(
-            serde_json::to_string(&CertAccessContext {
-                user_id: 100,
-                platform: "Linux".to_string(),
-            })
+            rcgen::Ia5String::try_from(
+                serde_json::to_string(&CertAccessContext {
+                    user_id: 100,
+                    platform: "Linux".to_string(),
+                })
+                .unwrap(),
+            )
             .unwrap(),
         )]);
         let san_values = HashSet::from_iter(cert_params.subject_alt_names.iter().cloned());
@@ -1807,7 +1956,9 @@ mod tests {
                 .distinguished_name
                 .get(&rcgen::DnType::CommonName)
                 .unwrap(),
-            &rcgen::DnValue::PrintableString("name1".to_string())
+            &rcgen::DnValue::PrintableString(
+                rcgen::PrintableString::try_from("name1".to_string()).unwrap()
+            )
         );
         assert!(cert_params
             .distinguished_name
@@ -1818,7 +1969,9 @@ mod tests {
                 .distinguished_name
                 .get(&rcgen::DnType::CountryName)
                 .unwrap(),
-            &rcgen::DnValue::PrintableString("country1".to_string())
+            &rcgen::DnValue::PrintableString(
+                rcgen::PrintableString::try_from("country1".to_string()).unwrap()
+            )
         );
         assert!(cert_params
             .distinguished_name
@@ -1829,7 +1982,9 @@ mod tests {
                 .distinguished_name
                 .get(&rcgen::DnType::OrganizationName)
                 .unwrap(),
-            &rcgen::DnValue::PrintableString("org1".to_string())
+            &rcgen::DnValue::PrintableString(
+                rcgen::PrintableString::try_from("org1".to_string()).unwrap()
+            )
         );
     }
 }

@@ -3,8 +3,8 @@ use crate::error::AppError;
 use crate::{crypto, file};
 use pki_types::{pem::PemObject, CertificateRevocationListDer};
 use rcgen::{
-    CertificateRevocationList, CertificateRevocationListParams, CrlIssuingDistributionPoint,
-    KeyIdMethod, RevocationReason, RevokedCertParams, SerialNumber,
+    CertificateRevocationListParams, CrlIssuingDistributionPoint, KeyIdMethod, RevocationReason,
+    RevokedCertParams, SerialNumber,
 };
 use std::ops::DerefMut;
 use std::path::PathBuf;
@@ -22,7 +22,6 @@ const VALIDATION_MSG_CRL_NUMBER_REQUIRED: &str = "CRL Number required";
 const VALIDATION_MSG_CRL_NUMBER_LIMIT_EXCEEDED: &str = "CRL Number may not exceed 20 octets";
 const VALIDATION_MSG_UPDATE_DATETIME_REQUIRED: &str = "Update Datetime required";
 const VALIDATION_MSG_NEXT_UPDATE_DATETIME_REQUIRED: &str = "Next Update Datetime required";
-const VALIDATION_MSG_SIGNATURE_ALGORITHM_REQUIRED: &str = "Signature Algorithm required";
 const VALIDATION_MSG_KEY_IDENTIFIER_METHOD_REQUIRED: &str = "Key Identifier Method required";
 
 /// Builder for a revoked certificate (to be added to a CRL)
@@ -173,8 +172,6 @@ pub struct CertificateRevocationListBuilder {
     next_update_datetime: Option<OffsetDateTime>,
     /// (Optional) CRL extension that identifies the CRL distribution point and scope for a particular CRL
     issuing_distribution: Option<CrlIssuingDistributionPoint>,
-    /// Algorithm used by the CRL issuer to sign the certificate list
-    signature_algorithm: Option<ca::KeyAlgorithm>,
     /// Means of identifying the public key corresponding to the private key used to sign a CRL
     key_ident_method: Option<KeyIdMethod>,
 }
@@ -192,7 +189,6 @@ impl CertificateRevocationListBuilder {
             update_datetime: None,
             next_update_datetime: None,
             issuing_distribution: None,
-            signature_algorithm: None,
             key_ident_method: None,
         }
     }
@@ -260,21 +256,6 @@ impl CertificateRevocationListBuilder {
         self
     }
 
-    /// Sets the signature algorithm
-    ///
-    /// # Arguments
-    ///
-    /// * `signature_algorithm` - Algorithm used by the CRL issuer to sign the certificate list
-    ///
-    /// # Returns
-    ///
-    /// [`Self`] for further function invocation.
-    ///
-    pub fn signature_algorithm(&mut self, signature_algorithm: &ca::KeyAlgorithm) -> &mut Self {
-        self.signature_algorithm = Some(signature_algorithm.clone());
-        self
-    }
-
     /// Sets the key identifier method
     ///
     /// # Arguments
@@ -290,20 +271,20 @@ impl CertificateRevocationListBuilder {
         self
     }
 
-    /// Invoke the build for the supplied data.
+    /// Build [`CertificateRevocationListParams`] object for the supplied data.
     ///
     /// # Arguments
     ///
-    /// * `revoked_certificates` - List of revoked certificates (possibly empty)
+    /// * `revoked_certificates` - List of revoked certificates ([`RevokedCertParams`])
     ///
     /// # Returns
     ///
-    /// A [`Result`] containing a newly constructed [`CertificateRevocationList`] object.
+    /// A [`Result`] containing a newly constructed [`CertificateRevocationListParams`] object.
     ///
-    pub fn build(
+    pub fn build_params(
         &mut self,
         revoked_certificates: Vec<RevokedCertParams>,
-    ) -> Result<CertificateRevocationList, AppError> {
+    ) -> Result<CertificateRevocationListParams, AppError> {
         // Validation
         let mut errors = Vec::new();
 
@@ -318,9 +299,6 @@ impl CertificateRevocationListBuilder {
         if self.next_update_datetime.is_none() {
             errors.push(VALIDATION_MSG_NEXT_UPDATE_DATETIME_REQUIRED.to_string());
         }
-        if self.signature_algorithm.is_none() {
-            errors.push(VALIDATION_MSG_SIGNATURE_ALGORITHM_REQUIRED.to_string());
-        }
         if self.key_ident_method.is_none() {
             errors.push(VALIDATION_MSG_KEY_IDENTIFIER_METHOD_REQUIRED.to_string());
         }
@@ -332,28 +310,15 @@ impl CertificateRevocationListBuilder {
             )));
         }
 
-        // Valid, set up attributes
+        // Valid, set up params
 
-        let crl_params = CertificateRevocationListParams {
+        Ok(CertificateRevocationListParams {
             this_update: self.update_datetime.unwrap(),
             next_update: self.next_update_datetime.unwrap(),
             crl_number: SerialNumber::from_slice(self.crl_number.as_ref().unwrap().as_slice()),
             issuing_distribution_point: self.issuing_distribution.take(),
             revoked_certs: revoked_certificates,
-            alg: self
-                .signature_algorithm
-                .as_ref()
-                .unwrap()
-                .signature_algorithm(),
             key_identifier_method: self.key_ident_method.as_ref().unwrap().clone(),
-        };
-
-        CertificateRevocationList::from_params(crl_params).map_err(|err| {
-            AppError::General(format!(
-                "Error creating certificate revocation list: num={:?}, err={:?}",
-                self.crl_number.as_ref().unwrap(),
-                &err
-            ))
         })
     }
 }
@@ -595,22 +560,20 @@ pub mod tests {
         assert!(builder.update_datetime.is_none());
         assert!(builder.next_update_datetime.is_none());
         assert!(builder.issuing_distribution.is_none());
-        assert!(builder.signature_algorithm.is_none());
         assert!(builder.key_ident_method.is_none());
     }
 
     #[test]
-    fn certrevokelist_build_when_missing_all_required_data() {
+    fn certrevokelist_build_params_when_missing_all_required_data() {
         let mut builder = CertificateRevocationListBuilder {
             crl_number: None,
             update_datetime: None,
             next_update_datetime: None,
             issuing_distribution: None,
-            signature_algorithm: None,
             key_ident_method: None,
         };
 
-        let result = builder.build(vec![]);
+        let result = builder.build_params(vec![]);
 
         if result.is_ok() {
             panic!("Unexpected successful result");
@@ -620,24 +583,22 @@ pub mod tests {
         assert!(err_str.contains(VALIDATION_MSG_CRL_NUMBER_REQUIRED));
         assert!(err_str.contains(VALIDATION_MSG_UPDATE_DATETIME_REQUIRED));
         assert!(err_str.contains(VALIDATION_MSG_NEXT_UPDATE_DATETIME_REQUIRED));
-        assert!(err_str.contains(VALIDATION_MSG_SIGNATURE_ALGORITHM_REQUIRED));
         assert!(err_str.contains(VALIDATION_MSG_KEY_IDENTIFIER_METHOD_REQUIRED));
     }
 
     #[test]
-    fn certrevokelist_build_when_invalid_serial_number() {
+    fn certrevokelist_build_params_when_invalid_serial_number() {
         let mut builder = CertificateRevocationListBuilder {
             crl_number: None,
             update_datetime: Some(OffsetDateTime::now_utc()),
             next_update_datetime: Some(OffsetDateTime::now_utc()),
             issuing_distribution: None,
-            signature_algorithm: Some(ca::KeyAlgorithm::EcdsaP256),
             key_ident_method: Some(KeyIdMethod::Sha256),
         };
 
         builder.crl_number(&[0u8; SERIAL_NUMBER_MAX_OCTETS + 1].to_vec());
 
-        let result = builder.build(vec![]);
+        let result = builder.build_params(vec![]);
 
         if result.is_ok() {
             panic!("Unexpected successful result");
@@ -648,14 +609,13 @@ pub mod tests {
     }
 
     #[test]
-    fn certrevokelist_build_when_all_valid() {
+    fn certrevokelist_build_params_when_all_valid() {
         let dist_pt_uris = vec!["https://example.com/crl".to_string()];
         let mut builder = CertificateRevocationListBuilder {
             crl_number: None,
             update_datetime: None,
             next_update_datetime: None,
             issuing_distribution: None,
-            signature_algorithm: None,
             key_ident_method: None,
         };
 
@@ -669,9 +629,8 @@ pub mod tests {
                 },
                 scope: Some(CrlScope::UserCertsOnly),
             })
-            .signature_algorithm(&ca::KeyAlgorithm::EcdsaP256)
             .key_ident_method(KeyIdMethod::Sha256)
-            .build(vec![RevokedCertificateBuilder::new()
+            .build_params(vec![RevokedCertificateBuilder::new()
                 .serial_number(&[2u8, 3u8])
                 .revocation_datetime(&datetime!(2024-01-10 0:00 UTC))
                 .reason_code(&RevocationReason::KeyCompromise)
@@ -683,29 +642,18 @@ pub mod tests {
             panic!("Unexpected result: err={:?}", &err);
         }
 
-        let crl = result.unwrap();
+        let crl_params = result.unwrap();
 
         assert_eq!(
-            &crl.get_params().crl_number,
+            &crl_params.crl_number,
             &SerialNumber::from_slice(&[0u8, 1u8])
         );
-        assert_eq!(
-            &crl.get_params().this_update,
-            &datetime!(2024-01-01 0:00 UTC)
-        );
-        assert_eq!(
-            &crl.get_params().next_update,
-            &datetime!(2024-02-01 0:00 UTC)
-        );
-        assert_eq!(crl.get_params().alg, &rcgen::PKCS_ECDSA_P256_SHA256);
-        assert_eq!(crl.get_params().key_identifier_method, KeyIdMethod::Sha256);
+        assert_eq!(&crl_params.this_update, &datetime!(2024-01-01 0:00 UTC));
+        assert_eq!(&crl_params.next_update, &datetime!(2024-02-01 0:00 UTC));
+        assert_eq!(crl_params.key_identifier_method, KeyIdMethod::Sha256);
 
-        assert!(crl.get_params().issuing_distribution_point.is_some());
-        let issue_dist_pt = crl
-            .get_params()
-            .issuing_distribution_point
-            .as_ref()
-            .unwrap();
+        assert!(crl_params.issuing_distribution_point.is_some());
+        let issue_dist_pt = crl_params.issuing_distribution_point.as_ref().unwrap();
         assert_eq!(issue_dist_pt.distribution_point.uris, dist_pt_uris);
         assert!(issue_dist_pt.scope.is_some());
         assert_eq!(
@@ -713,8 +661,8 @@ pub mod tests {
             &CrlScope::UserCertsOnly
         );
 
-        assert_eq!(crl.get_params().revoked_certs.len(), 1);
-        let revoked_cert = crl.get_params().revoked_certs.get(0).unwrap();
+        assert_eq!(crl_params.revoked_certs.len(), 1);
+        let revoked_cert = crl_params.revoked_certs.get(0).unwrap();
         assert_eq!(
             &revoked_cert.serial_number,
             &SerialNumber::from_slice(&[2u8, 3u8])
