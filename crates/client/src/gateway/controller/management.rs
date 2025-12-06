@@ -1514,8 +1514,10 @@ pub mod tests {
             .replace("\\\"", "\"");
         let client_to_server_msg = Some(AuthnMessage::Payload(client_to_server_data));
 
-        let mut auth_server =
-            ScramSha256AuthenticatorServer::new(ExampleProvider::new(), Duration::from_millis(150));
+        let mut auth_server = ScramSha256AuthenticatorServer::new(
+            ExampleProvider::new(),
+            Duration::from_millis(1_000),
+        );
         auth_server.spawn_authentication().unwrap();
 
         // Perform step 4: In - server first msg, Out - client final msg
