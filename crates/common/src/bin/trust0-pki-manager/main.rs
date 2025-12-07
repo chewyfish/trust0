@@ -375,10 +375,9 @@ fn create_certificate_pem_file(
                         &err
                     ))
                 })?;
-            let key = signer_cert.key_pair();
             fs::write(
                 file,
-                certificate.serialize_certificate(Some((&cert, &key)))?,
+                certificate.serialize_certificate(Some((&cert, signer_cert.key_pair())))?,
             )
         }
         None => fs::write(file, certificate.serialize_certificate(None)?),

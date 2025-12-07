@@ -913,7 +913,7 @@ impl GatewayCertificateBuilder {
                 }
                 key_algorithm.create_key_pair()
             },
-            |kp| Ok(kp),
+            Ok,
         )?;
 
         Ok(Certificate {
@@ -1126,7 +1126,7 @@ impl ClientCertificateBuilder {
 
                 key_algorithm.create_key_pair()
             },
-            |kp| Ok(kp),
+            Ok,
         )?;
 
         Ok(Certificate {
