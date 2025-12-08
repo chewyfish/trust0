@@ -365,22 +365,13 @@ fn create_certificate_pem_file(
     create_parent_directories(file)?;
     match signer_certificate {
         Some(signer_cert) => {
-            let cert = signer_cert
-                .cert_params()
-                .clone()
-                .self_signed(signer_cert.key_pair())
-                .map_err(|err| {
-                    AppError::General(format!(
-                        "Error building self-signed certificate: err={:?}",
-                        &err
-                    ))
-                })?;
-            fs::write(
-                file,
-                certificate.serialize_certificate(Some((&cert, signer_cert.key_pair())))?,
-            )
+            let signer = signer_cert.build_issuer()?;
+            fs::write(file, certificate.serialize_certificate(Some(&signer))?)
         }
-        None => fs::write(file, certificate.serialize_certificate(None)?),
+        None => fs::write(
+            file,
+            certificate.serialize_certificate::<rcgen::KeyPair>(None)?,
+        ),
     }
     .map_err(|err| {
         AppError::General(format!(

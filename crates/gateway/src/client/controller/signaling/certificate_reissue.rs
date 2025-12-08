@@ -143,11 +143,10 @@ impl CertReissuanceProcessor {
                     .as_str(),
                 &key_algorithm,
             )?;
-            let signer_cert_der = signer_cert.generate_certificate(None)?;
+            let signer = signer_cert.build_issuer()?;
 
             let key_pem = certificate.serialize_private_key();
-            let cert_pem = certificate
-                .serialize_certificate(Some((&signer_cert_der, signer_cert.key_pair())))?;
+            let cert_pem = certificate.serialize_certificate(Some(&signer))?;
 
             // Queue client-bound certificate reissue message
 

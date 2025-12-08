@@ -499,7 +499,7 @@ pub mod tests {
             invalidity_datetime: Some(OffsetDateTime::now_utc()),
         };
 
-        builder.serial_number(&[0u8; SERIAL_NUMBER_MAX_OCTETS + 1].to_vec());
+        builder.serial_number([0u8; SERIAL_NUMBER_MAX_OCTETS + 1].as_ref());
 
         let result = builder.build();
 
@@ -596,7 +596,7 @@ pub mod tests {
             key_ident_method: Some(KeyIdMethod::Sha256),
         };
 
-        builder.crl_number(&[0u8; SERIAL_NUMBER_MAX_OCTETS + 1].to_vec());
+        builder.crl_number([0u8; SERIAL_NUMBER_MAX_OCTETS + 1].as_ref());
 
         let result = builder.build_params(vec![]);
 
@@ -662,7 +662,7 @@ pub mod tests {
         );
 
         assert_eq!(crl_params.revoked_certs.len(), 1);
-        let revoked_cert = crl_params.revoked_certs.get(0).unwrap();
+        let revoked_cert = crl_params.revoked_certs.first().unwrap();
         assert_eq!(
             &revoked_cert.serial_number,
             &SerialNumber::from_slice(&[2u8, 3u8])
@@ -697,7 +697,7 @@ pub mod tests {
             crl_filepath_str.to_string()
         );
         assert!(crl_file.crl_list.lock().unwrap().is_empty());
-        assert_eq!(*crl_file.reloading.lock().unwrap(), false);
+        assert!(!*crl_file.reloading.lock().unwrap());
     }
 
     #[test]
@@ -800,7 +800,7 @@ pub mod tests {
         let crl_filepath_str = crl_filepath.to_str().unwrap().to_string();
         let crl_list = Arc::new(Mutex::new(vec![]));
         let last_mtime = file::file_mtime(crl_filepath.as_path()).unwrap();
-        let saved_last_mtime = last_mtime.clone();
+        let saved_last_mtime = last_mtime;
 
         let mut crl_file = CRLFile {
             path: crl_filepath,
@@ -818,7 +818,7 @@ pub mod tests {
         }
         let was_reloaded = result.unwrap();
 
-        assert_eq!(was_reloaded, false);
+        assert!(!was_reloaded);
         assert_eq!(crl_file.last_mtime, saved_last_mtime);
         assert!(crl_list.lock().unwrap().is_empty());
     }
@@ -829,7 +829,7 @@ pub mod tests {
         let crl_filepath_str = crl_filepath.to_str().unwrap().to_string();
         let crl_list = Arc::new(Mutex::new(vec![]));
         let last_mtime = SystemTime::now();
-        let saved_last_mtime = last_mtime.clone();
+        let saved_last_mtime = last_mtime;
 
         let mut crl_file = CRLFile {
             path: crl_filepath,
@@ -847,7 +847,7 @@ pub mod tests {
         }
         let was_reloaded = result.unwrap();
 
-        assert_eq!(was_reloaded, true);
+        assert!(was_reloaded);
         assert_ne!(crl_file.last_mtime, saved_last_mtime);
         assert!(!crl_list.lock().unwrap().is_empty());
     }
