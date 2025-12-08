@@ -157,7 +157,7 @@ pub mod tests {
             );
         }
         let client_binary_file_meta = client_binary_file_meta.unwrap();
-        assert_eq!(client_binary_file_meta.len(), 110); // with CRLF, use 116
+        assert_eq!(client_binary_file_meta.len(), 115); // with CRLF, use 116
 
         // client key file
         let client_key_file_meta = fs::metadata(dest_client_key_file_path.as_path());

@@ -1,8 +1,8 @@
+use std::fs;
 use std::io::{BufReader, Read};
-use std::{fs, io};
 
 use anyhow::Result;
-use pki_types::{CertificateDer, PrivateKeyDer};
+use pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer};
 
 use crate::error::AppError;
 
@@ -34,26 +34,25 @@ pub fn verify_certificates(filepath: &str) -> Result<String, AppError> {
 /// A [`Result`] containing the certificates in the file, if it is a valid certificate file
 ///
 pub fn load_certificates(filepath: &str) -> Result<Vec<CertificateDer<'static>>, AppError> {
-    match fs::File::open(filepath).map_err(|err| {
-        AppError::General(format!(
-            "Failed to open certificates file: file={}, err={:?}",
-            &filepath, &err
-        ))
-    }) {
-        Ok(cert_file) => {
-            let mut reader = BufReader::new(cert_file);
-            let certs = rustls_pemfile::certs(&mut reader);
-            let certs_result: Result<Vec<CertificateDer<'static>>, io::Error> =
-                certs.into_iter().collect();
-            match certs_result {
-                Ok(certs) => Ok(certs),
-                Err(err) => Err(AppError::General(format!(
-                    "Failed parsing certificates: file={}, err={:?}",
-                    filepath, &err
-                ))),
-            }
+    let certs_result = CertificateDer::pem_file_iter(filepath);
+    match certs_result {
+        Ok(certs_results) => {
+            let certs = certs_results
+                .map(|result| {
+                    result.map_err(|err| {
+                        AppError::General(format!(
+                            "Error reading certificate entries: file={:?}, err={:?}",
+                            &filepath, &err
+                        ))
+                    })
+                })
+                .collect::<anyhow::Result<Vec<CertificateDer<'static>>, AppError>>()?;
+            Ok(certs)
         }
-        Err(err) => Err(err),
+        Err(err) => Err(AppError::General(format!(
+            "Failed parsing certificate(s): file={}, err={:?}",
+            filepath, &err
+        ))),
     }
 }
 
@@ -93,19 +92,12 @@ pub fn load_private_key(filepath: &str) -> Result<PrivateKeyDer<'static>, AppErr
     }) {
         Ok(key_file) => {
             let mut reader = BufReader::new(key_file);
-            match rustls_pemfile::private_key(&mut reader) {
-                Ok(key_option) => match key_option {
-                    Some(key) => Ok(key),
-                    None => Err(AppError::General(format!(
-                        "No private key found: file={}",
-                        &filepath
-                    ))),
-                },
-                Err(err) => Err(AppError::General(format!(
+            PrivateKeyDer::from_pem_reader(&mut reader).map_err(|err| {
+                AppError::General(format!(
                     "Invalid key file: file={}, err={:?}",
                     &filepath, &err
-                ))),
-            }
+                ))
+            })
         }
         Err(err) => Err(err),
     }

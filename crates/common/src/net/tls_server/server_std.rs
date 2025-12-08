@@ -495,8 +495,8 @@ pub trait ServerVisitor: Send {
 pub mod tests {
     use super::*;
     use crate::control::pdu::MessageFrame;
-    use crate::crypto::alpn;
     use crate::crypto::file::{load_certificates, load_private_key};
+    use crate::crypto::{self, alpn};
     use crate::net::stream_utils;
     use crate::net::tls_client::client_std;
     use crate::net::tls_server::conn_std::ConnectionEvent;
@@ -746,6 +746,8 @@ pub mod tests {
 
     #[test]
     fn server_poll_new_connections_when_connection_request() {
+        crypto::setup_crypto_provider();
+
         let tcp_listener = TcpListener::bind("localhost:0").unwrap();
         tcp_listener.set_nonblocking(true).unwrap();
         let server_port = tcp_listener.local_addr().unwrap().port();
@@ -1010,6 +1012,8 @@ pub mod tests {
 
     #[test]
     fn srvvisit_trait_defaults() {
+        crypto::setup_crypto_provider();
+
         struct ServerVisitorImpl {}
         impl ServerVisitor for ServerVisitorImpl {
             fn create_client_conn(

@@ -69,6 +69,7 @@ pub mod tests {
     use std::time::Duration;
     use trust0_common::control::pdu::MessageFrame;
     use trust0_common::control::tls;
+    use trust0_common::crypto;
     use trust0_common::crypto::file::{load_certificates, load_private_key};
 
     const CERTFILE_ROOTCA_PATHPARTS: [&str; 3] =
@@ -102,6 +103,8 @@ pub mod tests {
     pub fn create_tls_server_config(
         alpn_protocols: Vec<Vec<u8>>,
     ) -> Result<ServerConfig, anyhow::Error> {
+        crypto::setup_crypto_provider();
+
         let rootca_cert_file: PathBuf = CERTFILE_ROOTCA_PATHPARTS.iter().collect();
         let rootca_cert = load_certificates(rootca_cert_file.to_str().as_ref().unwrap())?;
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();

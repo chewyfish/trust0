@@ -1,6 +1,6 @@
 [package]
 name = "trust0-common"
-version = "1.1.0"
+version = "1.1.1"
 description = "Trust0 SDP Shared Codebase"
 repository = "https://github.com/chewyfish/trust0"
 edition = "2021"
@@ -18,30 +18,29 @@ hex = "0.4.3"
 log = { version = "0.4.28" }
 log4rs = "1.4.0"
 mio = { version = "1.1.0", features = ["net", "os-poll"] }
-oid-registry = "0.6.1"
+oid-registry = "0.8.1"
 once_cell = "1.21.3"
-pki-types = { package = "rustls-pki-types", version = "1.0.1", features = [ "std" ] }
-rcgen = {  version = "0.12.1", features = [ "pem", "x509-parser" ] }
+pki-types = { package = "rustls-pki-types", version = "1.13.1", features = [ "std", "alloc" ] }
+rcgen = {  version = "0.14.5", features = [ "pem", "x509-parser" ] }
 regex = "1.12.2"
-ring = "0.17.7"
+ring = "0.17.14"
 rpassword = "7.4.0"
-rustls = { version = "0.22.1", features = [ "logging", "read_buf" ] }
-rustls-pemfile = "2.0.0"
+rustls = { version = "0.23.35", features = ["logging", "std", "tls12", "read_buf", "ring"], default-features = false }
 sct = "0.7.1"
 scram = "0.6.0"
 serde = { version = "*", features = ["derive"] }
 serde_derive = "*"
 serde_json = { version = "*", features = ["arbitrary_precision"] }
-shlex = "1.2.0"
+shlex = "1.3.0"
 time = { version = "0.3.44", default-features = false }
-webpki-roots = "0.26.0"
+webpki-roots = "0.26.11"
 winapi = { version = "0.3.9", features = ["winnt"] }
 windows-acl = "0.3.0"
-x509-parser = { version = "0.15.1", features = ["verify"] }
+x509-parser = { version = "0.18.0", features = ["verify"] }
 
 [dev-dependencies]
 mockall = "0.14.0"
-pem = "3.0.3"
+pem = "3.0.6"
 
 [[bin]]
 name = "trust0-client-installer"

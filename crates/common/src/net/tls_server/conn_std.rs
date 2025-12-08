@@ -524,6 +524,7 @@ pub trait ConnectionVisitor: Send {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::crypto;
     use crate::net::tls_server::server_std::tests::create_tls_server_config;
     use mockall::{mock, predicate};
     use std::io::ErrorKind;
@@ -577,6 +578,8 @@ pub mod tests {
 
     #[test]
     fn conn_new() {
+        crypto::setup_crypto_provider();
+
         let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
         let session_addrs = ("addr1".to_string(), "addr2".to_string());
 

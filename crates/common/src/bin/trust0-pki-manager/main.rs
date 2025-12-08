@@ -4,6 +4,7 @@ use std::{fs, process};
 
 use anyhow::Result;
 use time::{Duration, OffsetDateTime};
+use trust0_common::crypto;
 use trust0_common::crypto::ca::{Certificate, KeyAlgorithm};
 use trust0_common::crypto::crl::{CertificateRevocationListBuilder, RevokedCertificateBuilder};
 use trust0_common::error::AppError;
@@ -22,6 +23,7 @@ use crate::config::{AppConfig, Command};
 /// A [`Result`] indicating the success/failure of the processing operation.
 ///
 fn process_runner(app_config: &AppConfig) -> Result<(), AppError> {
+    crypto::setup_crypto_provider();
     match app_config.args.command {
         Command::RootCaPkiCreator { .. } => process_rootca_pki_creator(app_config),
         Command::GatewayPkiCreator { .. } => process_gateway_pki_creator(app_config),
@@ -267,7 +269,6 @@ fn process_certificate_revocation_list_creator(app_config: &AppConfig) -> Result
                 config::KeyAlgorithm::EcdsaP384 => rcgen::KeyIdMethod::Sha384,
                 config::KeyAlgorithm::Ed25519 => rcgen::KeyIdMethod::Sha512,
             };
-            let signature_algorithm: KeyAlgorithm = (*signature_algorithm).into();
 
             // Create revoked certificates list
             let mut revoked_certs = Vec::new();
@@ -287,13 +288,12 @@ fn process_certificate_revocation_list_creator(app_config: &AppConfig) -> Result
 
             // Create CRL object
             let mut crl_builder = CertificateRevocationListBuilder::new();
-            let crl = crl_builder
+            let crl_params = crl_builder
                 .crl_number(crl_number.as_slice())
                 .update_datetime(update_datetime)
                 .next_update_datetime(next_update_datetime)
-                .signature_algorithm(&signature_algorithm)
                 .key_ident_method(key_identifier)
-                .build(revoked_certs)?;
+                .build_params(revoked_certs)?;
 
             let rootca_certificate = load_existing_rootca_certificate(
                 rootca_cert_file,
@@ -301,7 +301,7 @@ fn process_certificate_revocation_list_creator(app_config: &AppConfig) -> Result
                 &key_algorithm,
             )?;
 
-            let crl_pem = rootca_certificate.serialize_certificate_revocation_list(&crl)?;
+            let crl_pem = rootca_certificate.serialize_certificate_revocation_list(crl_params)?;
 
             // Persist CRL file
 
@@ -363,7 +363,17 @@ fn create_certificate_pem_file(
     file: &str,
 ) -> Result<(), AppError> {
     create_parent_directories(file)?;
-    fs::write(file, certificate.serialize_certificate(signer_certificate)?).map_err(|err| {
+    match signer_certificate {
+        Some(signer_cert) => {
+            let signer = signer_cert.build_issuer()?;
+            fs::write(file, certificate.serialize_certificate(Some(&signer))?)
+        }
+        None => fs::write(
+            file,
+            certificate.serialize_certificate::<rcgen::KeyPair>(None)?,
+        ),
+    }
+    .map_err(|err| {
         AppError::General(format!(
             "Error writing certificate file: file={}, err={:?}",
             file, &err

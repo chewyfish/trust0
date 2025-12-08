@@ -8,6 +8,7 @@ use std::{process, thread};
 
 use anyhow::Result;
 
+use trust0_common::crypto;
 use trust0_common::error::AppError;
 use trust0_common::logging::{error, LogLevel, LOG};
 use trust0_common::target;
@@ -35,6 +36,8 @@ fn process_runner() -> Result<(), AppError> {
         process::exit(0);
     })
     .map_err(|err| AppError::General(format!("Error setting Ctrl-C handler: err={:?}", &err)))?;
+
+    crypto::setup_crypto_provider();
 
     processor.start()
 }
