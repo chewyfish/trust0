@@ -962,6 +962,7 @@ pub mod tests {
         message_outbox: Arc<Mutex<VecDeque<Vec<u8>>>>,
     ) -> Result<ManagementController, AppError> {
         let mut app_config = config::tests::create_app_config_with_repos(
+            config::GatewayType::Client,
             user_repo.clone(),
             service_repo.clone(),
             Arc::new(Mutex::new(MockRoleRepo::new())),

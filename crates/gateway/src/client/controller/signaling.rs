@@ -270,6 +270,7 @@ pub mod tests {
     #[test]
     fn sigcontrol_new_with_ca_enabled() {
         let mut app_config = config::tests::create_app_config_with_repos(
+            config::GatewayType::Client,
             Arc::new(Mutex::new(MockUserRepo::new())),
             Arc::new(Mutex::new(MockServiceRepo::new())),
             Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -311,6 +312,7 @@ pub mod tests {
     #[test]
     fn sigcontrol_new_with_ca_disabled() {
         let mut app_config = config::tests::create_app_config_with_repos(
+            config::GatewayType::Client,
             Arc::new(Mutex::new(MockUserRepo::new())),
             Arc::new(Mutex::new(MockServiceRepo::new())),
             Arc::new(Mutex::new(MockRoleRepo::new())),

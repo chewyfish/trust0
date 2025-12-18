@@ -463,6 +463,7 @@ mod tests {
         user_control_plane: Option<(i64, Arc<Mutex<dyn MessageProcessor>>)>,
     ) -> Result<ClientConnVisitor, AppError> {
         let app_config = Arc::new(config::tests::create_app_config_with_repos(
+            config::GatewayType::Client,
             user_repo,
             service_repo,
             role_repo,

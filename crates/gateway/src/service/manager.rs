@@ -448,6 +448,7 @@ pub mod tests {
 
     fn create_gw_service_mgr(use_shared_port: bool) -> GatewayServiceMgr {
         let mut app_config = config::tests::create_app_config_with_repos(
+            config::GatewayType::Service,
             Arc::new(Mutex::new(MockUserRepo::new())),
             Arc::new(Mutex::new(MockServiceRepo::new())),
             Arc::new(Mutex::new(MockRoleRepo::new())),

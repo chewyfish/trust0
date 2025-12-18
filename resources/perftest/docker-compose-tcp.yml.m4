@@ -4,7 +4,7 @@ services:
 
   t0perf-t0gateway1:
     image: trust0-gateway:latest
-    command: --config-file /app/config/t0perf-t0gateway1.rc
+    command: --config-file /app/config/t0perf-t0gateway1.rc full-gateway
     user: xUID:xGID
     volumes:
       - xPERFTEST_BUILD_DIR:/app/config
