@@ -69,7 +69,7 @@ impl CertReissuanceProcessor {
                 .not_after
                 .to_datetime()
                 .checked_sub(Duration::days(
-                    app_config.ca_reissuance_threshold_days as i64,
+                    app_config.ca_reissuance_threshold_days.unwrap() as i64,
                 ))
                 .unwrap(),
             recheck_cycle_iterations,
@@ -89,11 +89,11 @@ impl CertReissuanceProcessor {
         if now_datetime > self.cert_reissue_datetime {
             // Create new certificate/key pair objects
 
-            let key_algorithm = self.app_config.ca_key_algorithm.into();
+            let key_algorithm = self.app_config.ca_key_algorithm.unwrap().into();
             let validity_not_before = now_datetime;
             let validity_not_after = now_datetime
                 .checked_add(Duration::days(
-                    self.app_config.ca_validity_period_days as i64,
+                    self.app_config.ca_validity_period_days.unwrap() as i64,
                 ))
                 .unwrap();
             let subj_common_name = self
@@ -135,12 +135,8 @@ impl CertReissuanceProcessor {
             // Create certificate/key pair PEM strings
 
             let signer_cert = Self::load_existing_rootca_certificate(
-                self.app_config.ca_signer_cert_file.as_str(),
-                self.app_config
-                    .ca_signer_key_file
-                    .as_ref()
-                    .unwrap()
-                    .as_str(),
+                self.app_config.ca_root_cert_file.as_str(),
+                self.app_config.ca_root_key_file.as_ref().unwrap().as_str(),
                 &key_algorithm,
             )?;
             let signer = signer_cert.build_issuer()?;
@@ -281,13 +277,14 @@ mod tests {
     #[test]
     fn certreissueproc_new() {
         let mut app_config = config::tests::create_app_config_with_repos(
+            config::GatewayType::Client,
             Arc::new(Mutex::new(MockUserRepo::new())),
             Arc::new(Mutex::new(MockServiceRepo::new())),
             Arc::new(Mutex::new(MockRoleRepo::new())),
             Arc::new(Mutex::new(MockAccessRepo::new())),
         )
         .unwrap();
-        app_config.ca_reissuance_threshold_days = 20;
+        app_config.ca_reissuance_threshold_days = Some(20);
         let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
         let device = Device::new(certs).unwrap();
@@ -313,15 +310,16 @@ mod tests {
         let rootca_key_file: PathBuf = KEYFILE_ROOTCA_PATHPARTS.iter().collect();
         let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let mut app_config = config::tests::create_app_config_with_repos(
+            config::GatewayType::Client,
             Arc::new(Mutex::new(MockUserRepo::new())),
             Arc::new(Mutex::new(MockServiceRepo::new())),
             Arc::new(Mutex::new(MockRoleRepo::new())),
             Arc::new(Mutex::new(MockAccessRepo::new())),
         )
         .unwrap();
-        app_config.ca_reissuance_threshold_days = 20;
-        app_config.ca_signer_cert_file = rootca_certs_file.to_str().unwrap().to_string();
-        app_config.ca_signer_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
+        app_config.ca_reissuance_threshold_days = Some(20);
+        app_config.ca_root_cert_file = rootca_certs_file.to_str().unwrap().to_string();
+        app_config.ca_root_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
         let device = Device::new(certs).unwrap();
 
@@ -352,15 +350,16 @@ mod tests {
         let rootca_key_file: PathBuf = KEYFILE_ROOTCA_PATHPARTS.iter().collect();
         let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let mut app_config = config::tests::create_app_config_with_repos(
+            config::GatewayType::Client,
             Arc::new(Mutex::new(MockUserRepo::new())),
             Arc::new(Mutex::new(MockServiceRepo::new())),
             Arc::new(Mutex::new(MockRoleRepo::new())),
             Arc::new(Mutex::new(MockAccessRepo::new())),
         )
         .unwrap();
-        app_config.ca_reissuance_threshold_days = 20;
-        app_config.ca_signer_cert_file = rootca_certs_file.to_str().unwrap().to_string();
-        app_config.ca_signer_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
+        app_config.ca_reissuance_threshold_days = Some(20);
+        app_config.ca_root_cert_file = rootca_certs_file.to_str().unwrap().to_string();
+        app_config.ca_root_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
         let device = Device::new(certs).unwrap();
 
@@ -388,17 +387,18 @@ mod tests {
         let rootca_key_file: PathBuf = KEYFILE_ROOTCA_PATHPARTS.iter().collect();
         let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let mut app_config = config::tests::create_app_config_with_repos(
+            config::GatewayType::Client,
             Arc::new(Mutex::new(MockUserRepo::new())),
             Arc::new(Mutex::new(MockServiceRepo::new())),
             Arc::new(Mutex::new(MockRoleRepo::new())),
             Arc::new(Mutex::new(MockAccessRepo::new())),
         )
         .unwrap();
-        app_config.ca_reissuance_threshold_days = 30;
-        app_config.ca_validity_period_days = 360;
-        app_config.ca_key_algorithm = config::KeyAlgorithm::EcdsaP384;
-        app_config.ca_signer_cert_file = rootca_certs_file.to_str().unwrap().to_string();
-        app_config.ca_signer_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
+        app_config.ca_reissuance_threshold_days = Some(30);
+        app_config.ca_validity_period_days = Some(360);
+        app_config.ca_key_algorithm = Some(config::KeyAlgorithm::EcdsaP384);
+        app_config.ca_root_cert_file = rootca_certs_file.to_str().unwrap().to_string();
+        app_config.ca_root_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
         let device = Device::new(certs).unwrap();
 
@@ -426,17 +426,18 @@ mod tests {
         let rootca_key_file: PathBuf = KEYFILE_ROOTCA_PATHPARTS.iter().collect();
         let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let mut app_config = config::tests::create_app_config_with_repos(
+            config::GatewayType::Client,
             Arc::new(Mutex::new(MockUserRepo::new())),
             Arc::new(Mutex::new(MockServiceRepo::new())),
             Arc::new(Mutex::new(MockRoleRepo::new())),
             Arc::new(Mutex::new(MockAccessRepo::new())),
         )
         .unwrap();
-        app_config.ca_reissuance_threshold_days = 30;
-        app_config.ca_validity_period_days = 360;
-        app_config.ca_key_algorithm = config::KeyAlgorithm::EcdsaP384;
-        app_config.ca_signer_cert_file = rootca_certs_file.to_str().unwrap().to_string();
-        app_config.ca_signer_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
+        app_config.ca_reissuance_threshold_days = Some(30);
+        app_config.ca_validity_period_days = Some(360);
+        app_config.ca_key_algorithm = Some(config::KeyAlgorithm::EcdsaP384);
+        app_config.ca_root_cert_file = rootca_certs_file.to_str().unwrap().to_string();
+        app_config.ca_root_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
         let device = Device::new(certs).unwrap();
 
@@ -468,17 +469,18 @@ mod tests {
         let rootca_key_file: PathBuf = KEYFILE_ROOTCA_PATHPARTS.iter().collect();
         let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let mut app_config = config::tests::create_app_config_with_repos(
+            config::GatewayType::Client,
             Arc::new(Mutex::new(MockUserRepo::new())),
             Arc::new(Mutex::new(MockServiceRepo::new())),
             Arc::new(Mutex::new(MockRoleRepo::new())),
             Arc::new(Mutex::new(MockAccessRepo::new())),
         )
         .unwrap();
-        app_config.ca_reissuance_threshold_days = 30;
-        app_config.ca_validity_period_days = 360;
-        app_config.ca_key_algorithm = config::KeyAlgorithm::EcdsaP384;
-        app_config.ca_signer_cert_file = rootca_certs_file.to_str().unwrap().to_string();
-        app_config.ca_signer_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
+        app_config.ca_reissuance_threshold_days = Some(30);
+        app_config.ca_validity_period_days = Some(360);
+        app_config.ca_key_algorithm = Some(config::KeyAlgorithm::EcdsaP384);
+        app_config.ca_root_cert_file = rootca_certs_file.to_str().unwrap().to_string();
+        app_config.ca_root_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
         let device = Device::new(certs).unwrap();
 

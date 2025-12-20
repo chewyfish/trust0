@@ -56,7 +56,7 @@ pub struct AppConfigArgs {
     #[arg(required=true, short='c', long="auth-cert-file", env, value_parser=trust0_common::crypto::file::verify_certificates)]
     pub auth_cert_file: String,
 
-    /// Read root certificates from <CA_ROOT_CERT_FILE>
+    /// Trust0 CA root certificate(s) from <CA_ROOT_CERT_FILE>
     #[arg(required=true, short='r', long="ca-root-cert-file", env, value_parser=trust0_common::crypto::file::verify_certificates)]
     pub ca_root_cert_file: String,
 

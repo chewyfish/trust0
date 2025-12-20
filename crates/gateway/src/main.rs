@@ -10,9 +10,12 @@ use anyhow::Result;
 
 use trust0_common::crypto;
 use trust0_common::error::AppError;
-use trust0_common::logging::{error, LogLevel, LOG};
+use trust0_common::logging::{debug, error, LogLevel, LOG};
 use trust0_common::target;
 use trust0_gateway::api::{AppConfig, ComponentLifecycle, MainProcessor};
+
+const DEFAULT_PROGRAM_NAME: &str = env!("CARGO_PKG_NAME");
+const DEFAULT_PROGRAM_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn process_runner() -> Result<(), AppError> {
     let app_config = AppConfig::new()?;
@@ -24,6 +27,14 @@ fn process_runner() -> Result<(), AppError> {
             &LogLevel::INFO
         },
         None,
+    );
+
+    debug(
+        &target!(),
+        &format!(
+            "{} v{}: {}",
+            DEFAULT_PROGRAM_NAME, DEFAULT_PROGRAM_VERSION, &app_config
+        ),
     );
 
     let mut processor = MainProcessor::new(app_config);

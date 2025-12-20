@@ -239,15 +239,17 @@ impl server_std::ServerVisitor for UdpGatewayProxyServerVisitor {
                 ))
             })?;
 
-        let udp_socket =
-            UdpSocket::bind(format!("{}:0", &self.app_config.gateway_service_reply_host)).map_err(
-                |err| {
-                    AppError::General(format!(
-                        "Error binding service reply UDP socket: reply_host={}, err={:?}",
-                        &self.app_config.gateway_service_reply_host, &err
-                    ))
-                },
-            )?;
+        let udp_socket = UdpSocket::bind(format!(
+            "{}:0",
+            self.app_config.gateway_service_reply_host.as_ref().unwrap()
+        ))
+        .map_err(|err| {
+            AppError::General(format!(
+                "Error binding service reply UDP socket: reply_host={}, err={:?}",
+                self.app_config.gateway_service_reply_host.as_ref().unwrap(),
+                &err
+            ))
+        })?;
 
         for host_addr in resolved_host.into_iter() {
             let remote_addr = SocketAddr::new(host_addr, self.service.port);
@@ -478,6 +480,7 @@ pub mod tests {
     fn udpgwproxy_new() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -513,6 +516,7 @@ pub mod tests {
     fn udpsvrproxyvisit_new() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -548,6 +552,7 @@ pub mod tests {
     fn udpsvrproxyvisit_create_client_conn() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -618,6 +623,7 @@ pub mod tests {
     fn udpsvrproxyvisit_on_server_msg_provider() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -686,6 +692,7 @@ pub mod tests {
     fn udpsvrproxyvisit_on_conn_accepted_when_service_unresolvable() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -749,6 +756,7 @@ pub mod tests {
     fn udpsvrproxyvisit_on_conn_accepted_when_successful() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -850,6 +858,7 @@ pub mod tests {
     fn udpsvrproxyvisit_accessors_and_mutators() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -935,6 +944,7 @@ pub mod tests {
     fn udpsvrproxyvisit_shutdown_connections_when_no_user_supplied() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -1047,6 +1057,7 @@ pub mod tests {
     fn udpsvrproxyvisit_shutdown_connections_when_user_supplied() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -1181,6 +1192,7 @@ pub mod tests {
     fn udpsvrproxyvisit_shutdown_connection_when_proxy_key_known() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -1337,6 +1349,7 @@ pub mod tests {
     fn udpsvrproxyvisit_shutdown_connection_when_proxy_key_unknown() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),

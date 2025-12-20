@@ -47,6 +47,9 @@ use trust0_common::crypto::{alpn, ca};
 use trust0_common::error::AppError;
 use trust0_common::file::ReloadableFile;
 
+#[cfg(test)]
+static mut COMMAND_LINE_ARGS: Vec<String> = vec![];
+
 #[cfg(windows)]
 pub const LINE_ENDING: &'static str = "\r\n";
 #[cfg(not(windows))]
@@ -119,6 +122,31 @@ const INMEMDB_ACCESS_FILENAME: &str = "trust0-db-access.json";
 const INMEMDB_ROLE_FILENAME: &str = "trust0-db-role.json";
 const INMEMDB_SERVICE_FILENAME: &str = "trust0-db-service.json";
 const INMEMDB_USER_FILENAME: &str = "trust0-db-user.json";
+
+/// Gateway instatiation type
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
+pub enum GatewayType {
+    /// Client and service gateway
+    Full,
+    /// Client gateway
+    Client,
+    /// Service gateway
+    Service,
+}
+
+impl fmt::Display for GatewayType {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            formatter,
+            "{}",
+            match self {
+                GatewayType::Full => "full-gateway",
+                GatewayType::Client => "client-gateway",
+                GatewayType::Service => "service-gateway",
+            }
+        )
+    }
+}
 
 /// Datasource configuration for the trust framework entities
 #[derive(Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
@@ -259,14 +287,10 @@ pub struct AppConfigArgs {
     #[arg(required=true, short='k', long="key-file", env, value_parser=trust0_common::crypto::file::verify_private_key_file, verbatim_doc_comment)]
     pub key_file: String,
 
-    /// Accept client authentication certificates signed by those roots provided in <AUTH_CERT_FILE>
-    #[arg(required=true, short='a', long="auth-cert-file", env, value_parser=trust0_common::crypto::file::verify_certificates)]
-    pub auth_cert_file: String,
-
-    /// Public key pair corresponding to <AUTH_CERT_FILE> certificates, used to sign client authentication certificates.
-    /// This is not required, is CA is not enabled (<CA_ENABLED>)
-    #[arg(required=false, long="auth-key-file", env, value_parser=trust0_common::crypto::file::verify_private_key_file, verbatim_doc_comment)]
-    pub auth_key_file: Option<String>,
+    /// Trust0 CA root certificate(s) from <CA_ROOT_CERT_FILE>. Certificate (and corresponding key
+    /// pair) is used in signing Trust0 client authentication certificates.
+    #[arg(required=true, short='a', long="ca-root-cert-file", env, value_parser=trust0_common::crypto::file::verify_certificates)]
+    pub ca_root_cert_file: String,
 
     /// Perform client certificate revocation checking using the DER-encoded <CRL_FILE(s)>. Will update list during runtime, if file has changed.
     #[arg(required=false, long="crl-file", env, value_parser=trust0_common::crypto::file::verify_crl_list)]
@@ -288,16 +312,6 @@ pub struct AppConfigArgs {
     #[arg(required=false, long="gateway-service-ports", env, value_parser=crate::config::AppConfig::parse_gateway_service_ports)]
     pub gateway_service_ports: Option<(u16, u16)>,
 
-    /// Hostname/ip of this gateway, which is routable by UDP services, used in UDP socket replies. If not supplied, then "127.0.0.1" will be used (if necessary)
-    #[arg(required = false, long = "gateway-service-reply-host", env)]
-    pub gateway_service_reply_host: Option<String>,
-
-    /// Secondary authentication mechanism (in addition to client certificate authentication)
-    /// Current schemes: 'insecure': No authentication, all privileged actions allowed
-    ///                  'scram-sha256': SCRAM SHA256 using credentials stored in user repository
-    #[arg(required = false, long = "mfa-scheme", default_value_t = trust0_common::authn::authenticator::AuthnType::Insecure, env, verbatim_doc_comment)]
-    pub mfa_scheme: AuthnType,
-
     /// Enable verbose logging
     #[arg(required = false, long = "verbose", env)]
     pub verbose: bool,
@@ -317,9 +331,102 @@ pub struct AppConfigArgs {
     #[arg(required = false, long = "db-connect", env, verbatim_doc_comment)]
     pub db_connect: Option<String>,
 
+    /// Print help
+    #[clap(long, action = clap::ArgAction::HelpLong)]
+    help: Option<bool>,
+
+    /// Gateway type sub-command
+    #[command(subcommand)]
+    gateway_type: GatewayTypeCommand,
+}
+
+/// Gateway type: client or service or both
+#[derive(Subcommand)]
+pub enum GatewayTypeCommand {
+    /// Client/service gateway type
+    #[command(name = "full-gateway")]
+    Full(FullGatewayCommandArgs),
+    /// Client gateway type
+    #[cfg(not(test))]
+    Client(ClientGatewayCommandArgs),
+    #[cfg(test)]
+    #[command(name = "client-gateway")]
+    Client(ClientGatewayCommandArgs),
+    /// Service gateway type
+    #[cfg(not(test))]
+    Service(ServiceGatewayCommandArgs),
+    #[cfg(test)]
+    #[command(name = "service-gateway")]
+    Service(ServiceGatewayCommandArgs),
+}
+
+/// Full (client/service) gateway type sub-command arguments
+#[derive(Args)]
+pub struct FullGatewayCommandArgs {
+    #[command(flatten)]
+    pub client_args: ClientGatewayArgs,
+
+    #[command(flatten)]
+    pub service_args: ServiceGatewayArgs,
+
+    /// Print help
+    #[clap(long, action = clap::ArgAction::HelpLong)]
+    help: Option<bool>,
+}
+
+/// Client gateway type sub-command arguments
+#[derive(Args)]
+pub struct ClientGatewayCommandArgs {
+    /// Connect to service gateway <SERVICE_GATEWAY_HOST>
+    #[arg(required = true, long = "service-gateway-host", env)]
+    pub service_gateway_host: String,
+
+    /// Connect to service gateway <SERVICE_GATEWAY_PORT>
+    #[arg(
+        required = true,
+        long = "service-gateway-port",
+        env,
+        default_value_t = 443
+    )]
+    pub service_gateway_port: u16,
+
+    #[command(flatten)]
+    pub client_args: ClientGatewayArgs,
+
+    /// Print help
+    #[clap(long, action = clap::ArgAction::HelpLong)]
+    help: Option<bool>,
+}
+
+/// Service gateway type sub-command arguments
+#[derive(Args)]
+pub struct ServiceGatewayCommandArgs {
+    #[command(flatten)]
+    pub service_args: ServiceGatewayArgs,
+
+    /// Print help
+    #[clap(long, action = clap::ArgAction::HelpLong)]
+    help: Option<bool>,
+}
+
+/// Client gateway type arguments
+#[derive(Args)]
+pub struct ClientGatewayArgs {
+    /// Secondary authentication mechanism (in addition to client certificate authentication)
+    /// Current schemes: 'insecure': No authentication, all privileged actions allowed
+    ///                  'scram-sha256': SCRAM SHA256 using credentials stored in user repository
+    #[arg(required = false, long = "mfa-scheme", default_value_t = trust0_common::authn::authenticator::AuthnType::Insecure, env, verbatim_doc_comment)]
+    pub mfa_scheme: AuthnType,
+
     /// [CA] Enable certificate authority. This will dynamically issue expiring certificates to clients.
     #[arg(required = false, long = "ca-enabled", default_value_t = false, env)]
     pub ca_enabled: bool,
+
+    /// Trust0 public key pair corresponding to CA root certificate(s) from <CA_ROOT_CERT_FILE>
+    /// Key pair is used in signing client authentication certificates.
+    /// This is not required, is CA is not enabled (<CA_ENABLED>)
+    #[arg(required=false, long="ca-root-key-file", env, value_parser=trust0_common::crypto::file::verify_private_key_file, verbatim_doc_comment)]
+    pub ca_root_key_file: Option<String>,
 
     /// [CA] Public key algorithm used by certificate authority for new client certificates. (Requires CA to be enabled)
     #[arg(
@@ -347,10 +454,14 @@ pub struct AppConfigArgs {
         env,
     )]
     pub ca_reissuance_threshold_days: u16,
+}
 
-    /// Print help
-    #[clap(long, action = clap::ArgAction::HelpLong)]
-    help: Option<bool>,
+/// Service gateway type arguments
+#[derive(Args)]
+pub struct ServiceGatewayArgs {
+    /// Hostname/ip of this gateway, which is routable by UDP services, used in UDP socket replies. If not supplied, then "127.0.0.1" will be used (if necessary)
+    #[arg(required = false, long = "gateway-service-reply-host", env)]
+    pub gateway_service_reply_host: Option<String>,
 }
 
 /// TLS server configuration builder
@@ -422,6 +533,7 @@ impl TlsServerConfigBuilder {
 
 /// Main application configuration/context struct
 pub struct AppConfig {
+    pub gateway_type: GatewayType,
     pub server_host: String,
     pub server_port: u16,
     pub tls_server_config_builder: TlsServerConfigBuilder,
@@ -432,17 +544,45 @@ pub struct AppConfig {
     pub service_repo: Arc<Mutex<dyn ServiceRepository>>,
     pub role_repo: Arc<Mutex<dyn RoleRepository>>,
     pub user_repo: Arc<Mutex<dyn UserRepository>>,
+    pub service_gateway_host: Option<String>,
+    pub service_gateway_port: Option<u16>,
     pub gateway_service_host: Option<String>,
     pub gateway_service_ports: Option<(u16, u16)>,
-    pub gateway_service_reply_host: String,
+    pub gateway_service_reply_host: Option<String>,
     pub mask_addresses: bool,
     pub ca_enabled: bool,
-    pub ca_signer_cert_file: String,
-    pub ca_signer_key_file: Option<String>,
-    pub ca_key_algorithm: KeyAlgorithm,
-    pub ca_validity_period_days: u16,
-    pub ca_reissuance_threshold_days: u16,
+    pub ca_root_cert_file: String,
+    pub ca_root_key_file: Option<String>,
+    pub ca_key_algorithm: Option<KeyAlgorithm>,
+    pub ca_validity_period_days: Option<u16>,
+    pub ca_reissuance_threshold_days: Option<u16>,
     pub dns_client: Resolver,
+}
+
+impl fmt::Display for AppConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            formatter,
+            "AppConfig(type={},host={},port={},mfa={},verb={},svcgw-host={:?},svcgw-port={:?},svc-host={:?},svc-port={:?},svc-reply={:?},mask-addr={},ca={},ca-crt={},ca-key={:?},ca-keyalg={:?},ca-valid={:?},ca-reiss={:?})",
+            &self.gateway_type,
+            &self.server_host,
+            &self.server_port,
+            &self.mfa_scheme,
+            &self.verbose_logging,
+            &self.service_gateway_host,
+            &self.service_gateway_port,
+            &self.gateway_service_host,
+            &self.gateway_service_ports,
+            &self.gateway_service_reply_host,
+            &self.mask_addresses,
+            &self.ca_enabled,
+            &self.ca_root_cert_file,
+            &self.ca_root_key_file,
+            &self.ca_key_algorithm,
+            &self.ca_validity_period_days,
+            &self.ca_reissuance_threshold_days
+        )
+    }
 }
 
 impl AppConfig {
@@ -465,6 +605,13 @@ impl AppConfig {
         // Parse process arguments
         let config_args = Self::parse_config();
 
+        // Determine gateway type
+        let gateway_type = match &config_args.gateway_type {
+            GatewayTypeCommand::Full(_) => GatewayType::Full,
+            GatewayTypeCommand::Client(_) => GatewayType::Client,
+            GatewayTypeCommand::Service(_) => GatewayType::Service,
+        };
+
         // Datasource repositories
         let repositories = Self::create_datasource_repositories(
             &config_args.datasource,
@@ -473,7 +620,7 @@ impl AppConfig {
         )?;
 
         // Create TLS server configuration builder
-        let auth_certs = load_certificates(&config_args.auth_cert_file).unwrap();
+        let auth_certs = load_certificates(&config_args.ca_root_cert_file).unwrap();
         let certs = load_certificates(&config_args.cert_file).unwrap();
         let key = load_private_key(&config_args.key_file).unwrap();
 
@@ -512,6 +659,59 @@ impl AppConfig {
             alpn_protocols,
         };
 
+        // Gateway type-specific config
+        let mfa_scheme;
+        let service_gateway_host;
+        let service_gateway_port;
+        let ca_enabled;
+        let ca_root_key_file;
+        let ca_key_algorithm;
+        let ca_validity_period_days;
+        let ca_reissuance_threshold_days;
+        let gateway_service_reply_host;
+
+        match config_args.gateway_type {
+            GatewayTypeCommand::Full(args) => {
+                mfa_scheme = args.client_args.mfa_scheme;
+                service_gateway_host = None;
+                service_gateway_port = None;
+                ca_enabled = args.client_args.ca_enabled;
+                ca_root_key_file = args.client_args.ca_root_key_file.clone();
+                ca_key_algorithm = Some(args.client_args.ca_key_algorithm);
+                ca_validity_period_days = Some(args.client_args.ca_validity_period_days);
+                ca_reissuance_threshold_days = Some(args.client_args.ca_reissuance_threshold_days);
+                gateway_service_reply_host = args
+                    .service_args
+                    .gateway_service_reply_host
+                    .or(Some("127.0.0.1".to_string()));
+            }
+            GatewayTypeCommand::Client(args) => {
+                mfa_scheme = args.client_args.mfa_scheme;
+                service_gateway_host = Some(args.service_gateway_host.clone());
+                service_gateway_port = Some(args.service_gateway_port);
+                ca_enabled = args.client_args.ca_enabled;
+                ca_root_key_file = args.client_args.ca_root_key_file.clone();
+                ca_key_algorithm = Some(args.client_args.ca_key_algorithm);
+                ca_validity_period_days = Some(args.client_args.ca_validity_period_days);
+                ca_reissuance_threshold_days = Some(args.client_args.ca_reissuance_threshold_days);
+                gateway_service_reply_host = None;
+            }
+            GatewayTypeCommand::Service(args) => {
+                mfa_scheme = AuthnType::Insecure;
+                service_gateway_host = None;
+                service_gateway_port = None;
+                ca_enabled = false;
+                ca_root_key_file = None;
+                ca_key_algorithm = None;
+                ca_validity_period_days = None;
+                ca_reissuance_threshold_days = None;
+                gateway_service_reply_host = args
+                    .service_args
+                    .gateway_service_reply_host
+                    .or(Some("127.0.0.1".to_string()));
+            }
+        }
+
         // Miscellaneous
         let dns_client = Resolver::from_system_conf().map_err(|err| {
             AppError::General(format!("Error instantiating DNS resolver: err={:?}", &err))
@@ -519,28 +719,29 @@ impl AppConfig {
 
         // Instantiate AppConfig
         Ok(AppConfig {
+            gateway_type,
             server_host: config_args.host,
             server_port: config_args.port,
             tls_server_config_builder,
             crl_reloader_loading,
-            mfa_scheme: config_args.mfa_scheme,
+            mfa_scheme,
             verbose_logging: config_args.verbose,
             access_repo: repositories.0,
             service_repo: repositories.1,
             role_repo: repositories.2,
             user_repo: repositories.3,
+            service_gateway_host,
+            service_gateway_port,
             gateway_service_host: config_args.gateway_service_host,
             gateway_service_ports: config_args.gateway_service_ports,
-            gateway_service_reply_host: config_args
-                .gateway_service_reply_host
-                .unwrap_or("127.0.0.1".to_string()),
+            gateway_service_reply_host,
             mask_addresses: !config_args.no_mask_addresses,
-            ca_enabled: config_args.ca_enabled,
-            ca_signer_cert_file: config_args.auth_cert_file.clone(),
-            ca_signer_key_file: config_args.auth_key_file.clone(),
-            ca_key_algorithm: config_args.ca_key_algorithm,
-            ca_validity_period_days: config_args.ca_validity_period_days,
-            ca_reissuance_threshold_days: config_args.ca_reissuance_threshold_days,
+            ca_enabled,
+            ca_root_cert_file: config_args.ca_root_cert_file.clone(),
+            ca_root_key_file,
+            ca_key_algorithm,
+            ca_validity_period_days,
+            ca_reissuance_threshold_days,
             dns_client,
         })
     }
@@ -673,7 +874,10 @@ impl AppConfig {
     #[cfg(test)]
     #[inline(always)]
     fn parse_config() -> AppConfigArgs {
-        AppConfigArgs::parse_from::<Vec<_>, String>(vec![])
+        unsafe {
+            #[allow(static_mut_refs)]
+            AppConfigArgs::parse_from::<Vec<_>, String>(COMMAND_LINE_ARGS.to_vec())
+        }
     }
 }
 
@@ -716,6 +920,7 @@ pub mod tests {
     // =====
 
     pub fn create_app_config_with_repos(
+        gateway_type: GatewayType,
         user_repo: Arc<Mutex<dyn UserRepository>>,
         service_repo: Arc<Mutex<dyn ServiceRepository>>,
         role_repo: Arc<Mutex<dyn RoleRepository>>,
@@ -743,7 +948,47 @@ pub mod tests {
             AppError::General(format!("Error instantiating DNS resolver: err={:?}", &err))
         })?;
 
+        let service_gateway_host;
+        let service_gateway_port;
+        let gateway_service_reply_host;
+        let ca_root_key_file;
+        let ca_key_algorithm;
+        let ca_validity_period_days;
+        let ca_reissuance_threshold_days;
+        match &gateway_type {
+            GatewayType::Full => {
+                service_gateway_host = None;
+                service_gateway_port = None;
+                gateway_service_reply_host = Some("127.0.0.1".to_string());
+                ca_root_key_file = Some("".to_string());
+                ca_key_algorithm = Some(Default::default());
+                ca_validity_period_days = Some(DEFAULT_CA_CERTIFICATE_VALIDITY_PERIOD_DAYS);
+                ca_reissuance_threshold_days =
+                    Some(DEFAULT_CA_CERTIFICATE_REISSUANCE_THRESHOLD_DAYS);
+            }
+            GatewayType::Client => {
+                service_gateway_host = Some("10.0.0.1".to_string());
+                service_gateway_port = Some(0u16);
+                gateway_service_reply_host = None;
+                ca_root_key_file = Some("".to_string());
+                ca_key_algorithm = Some(Default::default());
+                ca_validity_period_days = Some(DEFAULT_CA_CERTIFICATE_VALIDITY_PERIOD_DAYS);
+                ca_reissuance_threshold_days =
+                    Some(DEFAULT_CA_CERTIFICATE_REISSUANCE_THRESHOLD_DAYS);
+            }
+            GatewayType::Service => {
+                service_gateway_host = None;
+                service_gateway_port = None;
+                gateway_service_reply_host = Some("127.0.0.1".to_string());
+                ca_root_key_file = None;
+                ca_key_algorithm = None;
+                ca_validity_period_days = None;
+                ca_reissuance_threshold_days = None;
+            }
+        }
+
         Ok(AppConfig {
+            gateway_type,
             server_host: "127.0.0.1".to_string(),
             server_port: 2000,
             tls_server_config_builder,
@@ -754,16 +999,18 @@ pub mod tests {
             service_repo,
             role_repo,
             user_repo,
+            service_gateway_host,
+            service_gateway_port,
             gateway_service_host: None,
             gateway_service_ports: None,
-            gateway_service_reply_host: "127.0.0.1".to_string(),
+            gateway_service_reply_host,
             mask_addresses: false,
             ca_enabled: false,
-            ca_signer_cert_file: "".to_string(),
-            ca_signer_key_file: None,
-            ca_key_algorithm: Default::default(),
-            ca_validity_period_days: 0,
-            ca_reissuance_threshold_days: 0,
+            ca_root_cert_file: "".to_string(),
+            ca_root_key_file,
+            ca_key_algorithm,
+            ca_validity_period_days,
+            ca_reissuance_threshold_days,
             dns_client,
         })
     }
@@ -774,11 +1021,11 @@ pub mod tests {
         env::remove_var("PORT");
         env::remove_var("KEY_FILE");
         env::remove_var("CERT_FILE");
-        env::remove_var("AUTH_CERT_FILE");
-        env::remove_var("AUTH_KEY_FILE");
         env::remove_var("PROTOCOL_VERSION");
         env::remove_var("CIPHER_SUITE");
-        env::remove_var("ICKETS");
+        env::remove_var("TICKETS");
+        env::remove_var("SERVICE_GATEWAY_HOST");
+        env::remove_var("SERVICE_GATEWAY_PORT");
         env::remove_var("GATEWAY_SERVICE_HOST");
         env::remove_var("GATEWAY_SERVICE_PORTS");
         env::remove_var("GATEWAY_SERVICE_REPLY_HOST");
@@ -787,14 +1034,71 @@ pub mod tests {
         env::remove_var("DATASOURCE");
         env::remove_var("DB_CONNECT");
         env::remove_var("CA_ENABLED");
+        env::remove_var("CA_ROOT_CERT_FILE");
+        env::remove_var("CA_ROOT_KEY_FILE");
         env::remove_var("CA_KEY_ALGORITHM");
         env::remove_var("CA_VALIDITY_PERIOD_DAYS");
         env::remove_var("CA_REISSUANCE_THRESHOLD_DAYS");
         env::remove_var("VERBOSE");
     }
 
+    fn setup_all_env_vars(
+        gateway_type: &GatewayType,
+        key_file: &str,
+        cert_file: &str,
+        ca_root_key_file: &str,
+        ca_root_cert_file: &str,
+    ) -> Result<AppConfig, AppError> {
+        let db_dir: PathBuf = DB_DIR_PATHPARTS.iter().collect();
+        let db_dir = db_dir.to_str().unwrap();
+
+        let mutex = TEST_MUTEX.clone();
+        let _lock = mutex.lock().unwrap();
+
+        #[allow(static_mut_refs)]
+        unsafe {
+            COMMAND_LINE_ARGS.clear();
+            COMMAND_LINE_ARGS.push(env!["CARGO_PKG_NAME"].to_string());
+            COMMAND_LINE_ARGS.push(gateway_type.to_string());
+        }
+
+        clear_env_vars();
+        env::set_var("HOST", "127.0.0.1");
+        env::set_var("PORT", "8000");
+        env::set_var("KEY_FILE", key_file);
+        env::set_var("CERT_FILE", cert_file);
+        env::set_var("PROTOCOL_VERSION", "1.3");
+        env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
+        env::set_var("TICKETS", "true");
+        env::set_var("SERVICE_GATEWAY_HOST", "10.0.0.1");
+        env::set_var("SERVICE_GATEWAY_PORT", "2000");
+        env::set_var("GATEWAY_SERVICE_HOST", "gwhost1");
+        env::set_var("GATEWAY_SERVICE_PORTS", "8000-8010");
+        env::set_var("GATEWAY_SERVICE_REPLY_HOST", "gwhost2");
+        env::set_var("NO_MASK_ADDRESSES", "true");
+        env::set_var("MODE", "control-plane");
+        env::set_var("DATASOURCE", "in-memory-db");
+        env::set_var("DB_CONNECT", db_dir);
+        env::set_var("CA_ENABLED", "true");
+        env::set_var("CA_ROOT_CERT_FILE", ca_root_cert_file);
+        env::set_var("CA_ROOT_KEY_FILE", ca_root_key_file);
+        env::set_var("CA_KEY_ALGORITHM", "ecdsa-p384");
+        env::set_var("CA_VALIDITY_PERIOD_DAYS", "200");
+        env::set_var("CA_REISSUANCE_THRESHOLD_DAYS", "30");
+        env::set_var("VERBOSE", "true");
+
+        AppConfig::new()
+    }
+
     // tests
     // =====
+
+    #[test]
+    fn gwtype_display() {
+        assert_eq!(format!("{}", GatewayType::Full), "full-gateway");
+        assert_eq!(format!("{}", GatewayType::Client), "client-gateway");
+        assert_eq!(format!("{}", GatewayType::Service), "service-gateway");
+    }
 
     #[test]
     fn keyalg_into_ca_key_algorithm() {
@@ -850,69 +1154,143 @@ pub mod tests {
     }
 
     #[test]
-    fn appcfg_new_when_all_supplied_and_valid() {
+    fn appcfg_new_fullgw_when_all_supplied_and_valid() {
         let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_key_file_str = gateway_key_file.to_str().unwrap();
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_cert_file_str = gateway_cert_file.to_str().unwrap();
-        let db_dir: PathBuf = DB_DIR_PATHPARTS.iter().collect();
-        let db_dir_str = db_dir.to_str().unwrap();
-        let result;
-        {
-            let mutex = TEST_MUTEX.clone();
-            let _lock = mutex.lock().unwrap();
-            clear_env_vars();
-            env::set_var("HOST", "127.0.0.1");
-            env::set_var("PORT", "8000");
-            env::set_var("KEY_FILE", gateway_key_file_str);
-            env::set_var("CERT_FILE", gateway_cert_file_str);
-            env::set_var("AUTH_CERT_FILE", gateway_cert_file_str);
-            env::set_var("AUTH_KEY_FILE", gateway_key_file_str);
-            env::set_var("PROTOCOL_VERSION", "1.3");
-            env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
-            env::set_var("ICKETS", "true");
-            env::set_var("GATEWAY_SERVICE_HOST", "gwhost1");
-            env::set_var("GATEWAY_SERVICE_PORTS", "8000-8010");
-            env::set_var("GATEWAY_SERVICE_REPLY_HOST", "gwhost2");
-            env::set_var("NO_MASK_ADDRESSES", "true");
-            env::set_var("MODE", "control-plane");
-            env::set_var("DATASOURCE", "in-memory-db");
-            env::set_var("DB_CONNECT", db_dir_str);
-            env::set_var("CA_ENABLED", "true");
-            env::set_var("CA_KEY_ALGORITHM", "ecdsa-p384");
-            env::set_var("CA_VALIDITY_PERIOD_DAYS", "200");
-            env::set_var("CA_REISSUANCE_THRESHOLD_DAYS", "30");
-            env::set_var("VERBOSE", "true");
-
-            result = AppConfig::new();
-        }
+        let result = setup_all_env_vars(
+            &GatewayType::Full,
+            gateway_key_file_str,
+            gateway_cert_file_str,
+            gateway_key_file_str,
+            gateway_cert_file_str,
+        );
 
         if let Err(err) = result {
             panic!("Unexpected result: err={:?}", &err);
         }
         let config = result.unwrap();
 
+        assert_eq!(config.gateway_type, GatewayType::Full);
         assert_eq!(config.server_host, "127.0.0.1");
         assert_eq!(config.server_port, 8000);
+        assert!(config.service_gateway_host.is_none());
+        assert!(config.service_gateway_port.is_none());
         assert!(config.gateway_service_host.is_some());
         assert_eq!(config.gateway_service_host.unwrap(), "gwhost1".to_string());
         assert!(config.gateway_service_ports.is_some());
         assert_eq!(config.gateway_service_ports.unwrap(), (8000, 8010));
         assert!(!config.mask_addresses);
-        assert_eq!(config.gateway_service_reply_host, "gwhost2".to_string());
-        assert!(config.ca_enabled);
+        assert!(config.gateway_service_reply_host.is_some());
         assert_eq!(
-            config.ca_signer_cert_file,
-            gateway_cert_file_str.to_string()
+            config.gateway_service_reply_host.unwrap(),
+            "gwhost2".to_string()
         );
-        assert!(config.ca_signer_key_file.is_some());
+        assert!(config.ca_enabled);
+        assert_eq!(config.ca_root_cert_file, gateway_cert_file_str.to_string());
+        assert!(config.ca_root_key_file.is_some());
         assert_eq!(
-            config.ca_signer_key_file.as_ref().unwrap(),
+            config.ca_root_key_file.as_ref().unwrap(),
             &gateway_key_file_str.to_string()
         );
-        assert_eq!(config.ca_key_algorithm, KeyAlgorithm::EcdsaP384);
-        assert_eq!(config.ca_validity_period_days, 200);
-        assert_eq!(config.ca_reissuance_threshold_days, 30);
+        assert!(config.ca_key_algorithm.is_some());
+        assert_eq!(config.ca_key_algorithm.unwrap(), KeyAlgorithm::EcdsaP384);
+        assert!(config.ca_validity_period_days.is_some());
+        assert_eq!(config.ca_validity_period_days.unwrap(), 200);
+        assert!(config.ca_reissuance_threshold_days.is_some());
+        assert_eq!(config.ca_reissuance_threshold_days.unwrap(), 30);
+        assert!(config.verbose_logging);
+    }
+
+    #[test]
+    fn appcfg_new_cligw_when_all_supplied_and_valid() {
+        let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
+        let gateway_key_file_str = gateway_key_file.to_str().unwrap();
+        let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
+        let gateway_cert_file_str = gateway_cert_file.to_str().unwrap();
+        let result = setup_all_env_vars(
+            &GatewayType::Client,
+            gateway_key_file_str,
+            gateway_cert_file_str,
+            gateway_key_file_str,
+            gateway_cert_file_str,
+        );
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+        let config = result.unwrap();
+
+        assert_eq!(config.gateway_type, GatewayType::Client);
+        assert_eq!(config.server_host, "127.0.0.1");
+        assert_eq!(config.server_port, 8000);
+        assert!(config.service_gateway_host.is_some());
+        assert_eq!(config.service_gateway_host.unwrap(), "10.0.0.1");
+        assert!(config.service_gateway_port.is_some());
+        assert_eq!(config.service_gateway_port.unwrap(), 2000);
+        assert!(config.gateway_service_host.is_some());
+        assert_eq!(config.gateway_service_host.unwrap(), "gwhost1".to_string());
+        assert!(config.gateway_service_ports.is_some());
+        assert_eq!(config.gateway_service_ports.unwrap(), (8000, 8010));
+        assert!(!config.mask_addresses);
+        assert!(config.gateway_service_reply_host.is_none());
+        assert!(config.ca_enabled);
+        assert_eq!(config.ca_root_cert_file, gateway_cert_file_str.to_string());
+        assert!(config.ca_root_key_file.is_some());
+        assert_eq!(
+            config.ca_root_key_file.as_ref().unwrap(),
+            &gateway_key_file_str.to_string()
+        );
+        assert!(config.ca_key_algorithm.is_some());
+        assert_eq!(config.ca_key_algorithm.unwrap(), KeyAlgorithm::EcdsaP384);
+        assert!(config.ca_validity_period_days.is_some());
+        assert_eq!(config.ca_validity_period_days.unwrap(), 200);
+        assert!(config.ca_reissuance_threshold_days.is_some());
+        assert_eq!(config.ca_reissuance_threshold_days.unwrap(), 30);
+        assert!(config.verbose_logging);
+    }
+
+    #[test]
+    fn appcfg_new_svcgw_when_all_supplied_and_valid() {
+        let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
+        let gateway_key_file_str = gateway_key_file.to_str().unwrap();
+        let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
+        let gateway_cert_file_str = gateway_cert_file.to_str().unwrap();
+        let result = setup_all_env_vars(
+            &GatewayType::Service,
+            gateway_key_file_str,
+            gateway_cert_file_str,
+            gateway_key_file_str,
+            gateway_cert_file_str,
+        );
+
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+        let config = result.unwrap();
+
+        assert_eq!(config.gateway_type, GatewayType::Service);
+        assert_eq!(config.server_host, "127.0.0.1");
+        assert_eq!(config.server_port, 8000);
+        assert!(config.service_gateway_host.is_none());
+        assert!(config.service_gateway_port.is_none());
+        assert!(config.gateway_service_host.is_some());
+        assert_eq!(config.gateway_service_host.unwrap(), "gwhost1".to_string());
+        assert!(config.gateway_service_ports.is_some());
+        assert_eq!(config.gateway_service_ports.unwrap(), (8000, 8010));
+        assert!(!config.mask_addresses);
+        assert!(config.gateway_service_reply_host.is_some());
+        assert_eq!(
+            config.gateway_service_reply_host.unwrap(),
+            "gwhost2".to_string()
+        );
+        assert!(!config.ca_enabled);
+        assert_eq!(config.ca_root_cert_file, gateway_cert_file_str.to_string());
+        assert!(config.ca_root_key_file.is_none());
+        assert!(config.ca_key_algorithm.is_none());
+        assert!(config.ca_validity_period_days.is_none());
+        assert!(config.ca_reissuance_threshold_days.is_none());
         assert!(config.verbose_logging);
     }
 
@@ -930,16 +1308,24 @@ pub mod tests {
         {
             let mutex = TEST_MUTEX.clone();
             let _lock = mutex.lock().unwrap();
+
+            #[allow(static_mut_refs)]
+            unsafe {
+                COMMAND_LINE_ARGS.clear();
+                COMMAND_LINE_ARGS.push(env!["CARGO_PKG_NAME"].to_string());
+                COMMAND_LINE_ARGS.push(GatewayType::Full.to_string());
+            }
+
             clear_env_vars();
             env::set_var("CONFIG_FILE", config_file_str);
             env::set_var("HOST", "127.0.0.1");
             env::set_var("KEY_FILE", gateway_key_file_str);
             env::set_var("CERT_FILE", gateway_cert_file_str);
-            env::set_var("AUTH_CERT_FILE", gateway_cert_file_str);
-            env::set_var("AUTH_KEY_FILE", gateway_key_file_str);
+            env::set_var("CA_ROOT_CERT_FILE", gateway_cert_file_str);
+            env::set_var("CA_ROOT_KEY_FILE", gateway_key_file_str);
             env::set_var("PROTOCOL_VERSION", "1.3");
             env::set_var("CIPHER_SUITE", "TLS13_AES_256_GCM_SHA384");
-            env::set_var("ICKETS", "true");
+            env::set_var("TICKETS", "true");
             env::set_var("GATEWAY_SERVICE_PORTS", "8000-8010");
             env::set_var("GATEWAY_SERVICE_REPLY_HOST", "gwhost2");
             env::set_var("NO_MASK_ADDRESSES", "true");
@@ -957,29 +1343,36 @@ pub mod tests {
 
         assert_eq!(config.server_host, "127.0.0.1");
         assert_eq!(config.server_port, 8888);
+        assert_eq!(config.gateway_type, GatewayType::Full);
+        assert!(config.service_gateway_host.is_none());
+        assert!(config.service_gateway_port.is_none());
         assert!(config.gateway_service_host.is_some());
         assert_eq!(config.gateway_service_host.unwrap(), "gwhost1a".to_string());
         assert!(config.gateway_service_ports.is_some());
         assert_eq!(config.gateway_service_ports.unwrap(), (8000, 8010));
         assert!(!config.mask_addresses);
-        assert_eq!(config.gateway_service_reply_host, "gwhost2".to_string());
-        assert!(!config.ca_enabled);
+        assert!(config.gateway_service_reply_host.is_some());
         assert_eq!(
-            config.ca_signer_cert_file,
-            gateway_cert_file_str.to_string()
+            config.gateway_service_reply_host.unwrap(),
+            "gwhost2".to_string()
         );
-        assert!(config.ca_signer_key_file.is_some());
+        assert!(!config.ca_enabled);
+        assert_eq!(config.ca_root_cert_file, gateway_cert_file_str.to_string());
+        assert!(config.ca_root_key_file.is_some());
         assert_eq!(
-            config.ca_signer_key_file.as_ref().unwrap(),
+            config.ca_root_key_file.as_ref().unwrap(),
             &gateway_key_file_str.to_string()
         );
-        assert_eq!(config.ca_key_algorithm, DEFAULT_CA_KEY_ALGORITHM);
+        assert!(config.ca_key_algorithm.is_some());
+        assert_eq!(config.ca_key_algorithm.unwrap(), DEFAULT_CA_KEY_ALGORITHM);
+        assert!(config.ca_validity_period_days.is_some());
         assert_eq!(
-            config.ca_validity_period_days,
+            config.ca_validity_period_days.unwrap(),
             DEFAULT_CA_CERTIFICATE_VALIDITY_PERIOD_DAYS
         );
+        assert!(config.ca_reissuance_threshold_days.is_some());
         assert_eq!(
-            config.ca_reissuance_threshold_days,
+            config.ca_reissuance_threshold_days.unwrap(),
             DEFAULT_CA_CERTIFICATE_REISSUANCE_THRESHOLD_DAYS
         );
         assert!(config.verbose_logging);

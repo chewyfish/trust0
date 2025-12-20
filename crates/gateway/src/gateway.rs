@@ -249,6 +249,7 @@ pub mod tests {
     fn gateway_new() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Full,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -273,6 +274,7 @@ pub mod tests {
     fn servervisit_new() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Full,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -290,6 +292,7 @@ pub mod tests {
     fn servervisit_get_service_proxy_when_existent() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Full,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -317,6 +320,7 @@ pub mod tests {
     fn servervisit_get_service_proxy_when_nonexistent() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Full,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -344,6 +348,7 @@ pub mod tests {
     fn servervisit_set_shutdown_requested() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Full,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -367,6 +372,7 @@ pub mod tests {
     fn servervisit_get_shutdown_requested() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Full,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -387,6 +393,7 @@ pub mod tests {
     fn servervisit_create_client_conn_when_alpn_is_control_plane() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Full,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -428,6 +435,7 @@ pub mod tests {
     fn servervisit_create_client_conn_when_alpn_is_service() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Full,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -487,6 +495,7 @@ pub mod tests {
     fn servervisit_on_server_msg_provider() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Full,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -539,6 +548,7 @@ pub mod tests {
     fn servervisit_on_conn_accepted_when_alpn_is_control_plane() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Full,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),

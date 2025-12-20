@@ -22,12 +22,22 @@ The gateway needs to be configured with the:
 * PKI certificates/keys (CA certificate, mTLS auth certificate, and its own certificate/key)
 * DB access information (may be left out, but client connections would be prohibited)
 
-Additional configuration is explained in the following usage display:
+Currently there is one type of gateway, which has the responsibility of serving Trust0 clients and proxying corresponding client service connections. In the near future, additional types will be added to divide this responsibility between serving clients (client gateway) and delegating connections to services (service gateway). Likewise client gateways will connect to service gateways to forward client service connnection traffic. This will allow for DMZ (and similar) network deployments.
+
+The following details the gateway invocation (common, full-gateway, client-gateway and service-gateway):
+
+#### Common invocation usage
 
 ```
 Runs a Trust0 gateway server on <HOST>:<PORT>
 
-Usage: trust0-gateway [OPTIONS] --host <HOST> --port <PORT> --cert-file <CERT_FILE> --key-file <KEY_FILE> --auth-cert-file <AUTH_CERT_FILE> --gateway-service-host <GATEWAY_SERVICE_HOST>
+Usage: trust0-gateway [OPTIONS] --host <HOST> --port <PORT> --cert-file <CERT_FILE> --key-file <KEY_FILE> --ca-root-cert-file <CA_ROOT_CERT_FILE> --gateway-service-host <GATEWAY_SERVICE_HOST> <COMMAND>
+
+Commands:
+  full-gateway     Client/service gateway type
+  client-gateway   Client gateway type
+  service-gateway  Service gateway type
+  help             Print this message or the help of the given subcommand(s)
 
 Options:
   -f, --config-file <CONFIG_FILE>
@@ -60,16 +70,10 @@ Options:
           
           [env: KEY_FILE=]
 
-  -a, --auth-cert-file <AUTH_CERT_FILE>
-          Accept client authentication certificates signed by those roots provided in <AUTH_CERT_FILE>
+  -a, --ca-root-cert-file <CA_ROOT_CERT_FILE>
+          Trust0 CA root certificate(s) from <CA_ROOT_CERT_FILE>. Certificate (and corresponding key pair) is used in signing Trust0 client authentication certificates
           
-          [env: AUTH_CERT_FILE=]
-
-      --auth-key-file <AUTH_KEY_FILE>
-          Public key pair corresponding to <AUTH_CERT_FILE> certificates, used to sign client authentication certificates.
-          This is not required, is CA is not enabled (<CA_ENABLED>)
-          
-          [env: AUTH_KEY_FILE=]
+          [env: CA_ROOT_CERT_FILE=]
 
       --crl-file <CRL_FILE>
           Perform client certificate revocation checking using the DER-encoded <CRL_FILE(s)>. Will update list during runtime, if file has changed
@@ -96,19 +100,6 @@ Options:
           
           [env: GATEWAY_SERVICE_PORTS=]
 
-      --gateway-service-reply-host <GATEWAY_SERVICE_REPLY_HOST>
-          Hostname/ip of this gateway, which is routable by UDP services, used in UDP socket replies. If not supplied, then "127.0.0.1" will be used (if necessary)
-          
-          [env: GATEWAY_SERVICE_REPLY_HOST=]
-
-      --mfa-scheme <MFA_SCHEME>
-          Secondary authentication mechanism (in addition to client certificate authentication)
-          Current schemes: 'insecure': No authentication, all privileged actions allowed
-                           'scram-sha256': SCRAM SHA256 using credentials stored in user repository
-          
-          [env: MFA_SCHEME=]
-          [default: insecure]
-
       --verbose
           Enable verbose logging
           
@@ -122,14 +113,12 @@ Options:
       --datasource <DATASOURCE>
           DB datasource type
 
-          [env: DATASOURCE=]
-          [default: in-memory-db]
-
           Possible values:
           - in-memory-db: In-memory DB, with a simple backing persistence store. Entity store connect string is file path to directory holding JSON record files
-          - mysql-db:     MySQL DB (only shown when gateway built with 'mysql-db' feature)
-          - postgres-db:  Postgres DB (only shown when gateway built with 'postgres-db' feature)
           - no-db:        No DB configured, used in testing (internally empty in-memory DB structures are used)
+          
+          [env: DATASOURCE=]
+          [default: in-memory-db]
 
       --db-connect <DB_CONNECT>
           DB entity store connect specifier string. Specification format is dependent on <DATASOURCE> type.
@@ -139,21 +128,122 @@ Options:
           
           [env: DB_CONNECT=]
 
+      --help
+          Print help
+
+  -V, --version
+          Print version
+```
+
+#### Full-gateway invocation usage
+
+```
+Client/service gateway type
+
+Usage: trust0-gateway --host <HOST> --port <PORT> --cert-file <CERT_FILE> --key-file <KEY_FILE> --ca-root-cert-file <CA_ROOT_CERT_FILE> --gateway-service-host <GATEWAY_SERVICE_HOST> full-gateway [OPTIONS]
+
+Options:
+      --mfa-scheme <MFA_SCHEME>
+          Secondary authentication mechanism (in addition to client certificate authentication)
+          Current schemes: 'insecure': No authentication, all privileged actions allowed
+                           'scram-sha256': SCRAM SHA256 using credentials stored in user repository
+          
+          [env: MFA_SCHEME=]
+          [default: insecure]
+
       --ca-enabled
           [CA] Enable certificate authority. This will dynamically issue expiring certificates to clients
           
           [env: CA_ENABLED=]
 
+      --ca-root-key-file <CA_ROOT_KEY_FILE>
+          Trust0 public key pair corresponding to CA root certificate(s) from <CA_ROOT_CERT_FILE>
+          Key pair is used in signing client authentication certificates.
+          This is not required, is CA is not enabled (<CA_ENABLED>)
+          
+          [env: CA_ROOT_KEY_FILE=]
+
       --ca-key-algorithm <CA_KEY_ALGORITHM>
           [CA] Public key algorithm used by certificate authority for new client certificates. (Requires CA to be enabled)
-          
-          [env: CA_KEY_ALGORITHM=]
-          [default: ed25519]
 
           Possible values:
           - ecdsa-p256: Elliptic curve P-256
           - ecdsa-p384: Elliptic curve P-384
           - ed25519:    Edwards curve DSA Ed25519
+          
+          [env: CA_KEY_ALGORITHM=]
+          [default: ed25519]
+
+      --ca-validity-period-days <CA_VALIDITY_PERIOD_DAYS>
+          [CA] Client certificate validity period as expressed in number of days (Requires CA to be enabled)
+          
+          [env: CA_VALIDITY_PERIOD_DAYS=]
+          [default: 365]
+
+      --ca-reissuance-threshold-days <CA_REISSUANCE_THRESHOLD_DAYS>
+          [CA] Certificate re-issuance time period (before certificate expiry) threshold in days (Requires CA to be enabled)
+          
+          [env: CA_REISSUANCE_THRESHOLD_DAYS=]
+          [default: 20]
+
+      --gateway-service-reply-host <GATEWAY_SERVICE_REPLY_HOST>
+          Hostname/ip of this gateway, which is routable by UDP services, used in UDP socket replies. If not supplied, then "127.0.0.1" will be used (if necessary)
+          
+          [env: GATEWAY_SERVICE_REPLY_HOST=]
+
+      --help
+          Print help
+```
+
+#### Client-gateway invocation usage (future release)
+
+```
+Client gateway type
+
+Usage: trust0-gateway --host <HOST> --port <PORT> --cert-file <CERT_FILE> --key-file <KEY_FILE> --ca-root-cert-file <CA_ROOT_CERT_FILE> --gateway-service-host <GATEWAY_SERVICE_HOST> client-gateway [OPTIONS] --service-gateway-host <SERVICE_GATEWAY_HOST> --service-gateway-port <SERVICE_GATEWAY_PORT>
+
+Options:
+      --service-gateway-host <SERVICE_GATEWAY_HOST>
+          Connect to service gateway <SERVICE_GATEWAY_HOST>
+          
+          [env: SERVICE_GATEWAY_HOST=]
+
+      --service-gateway-port <SERVICE_GATEWAY_PORT>
+          Connect to service gateway <SERVICE_GATEWAY_PORT>
+          
+          [env: SERVICE_GATEWAY_PORT=]
+          [default: 443]
+
+      --mfa-scheme <MFA_SCHEME>
+          Secondary authentication mechanism (in addition to client certificate authentication)
+          Current schemes: 'insecure': No authentication, all privileged actions allowed
+                           'scram-sha256': SCRAM SHA256 using credentials stored in user repository
+          
+          [env: MFA_SCHEME=]
+          [default: insecure]
+
+      --ca-enabled
+          [CA] Enable certificate authority. This will dynamically issue expiring certificates to clients
+          
+          [env: CA_ENABLED=]
+
+      --ca-root-key-file <CA_ROOT_KEY_FILE>
+          Trust0 public key pair corresponding to CA root certificate(s) from <CA_ROOT_CERT_FILE>
+          Key pair is used in signing client authentication certificates.
+          This is not required, is CA is not enabled (<CA_ENABLED>)
+          
+          [env: CA_ROOT_KEY_FILE=]
+
+      --ca-key-algorithm <CA_KEY_ALGORITHM>
+          [CA] Public key algorithm used by certificate authority for new client certificates. (Requires CA to be enabled)
+
+          Possible values:
+          - ecdsa-p256: Elliptic curve P-256
+          - ecdsa-p384: Elliptic curve P-384
+          - ed25519:    Edwards curve DSA Ed25519
+          
+          [env: CA_KEY_ALGORITHM=]
+          [default: ed25519]
 
       --ca-validity-period-days <CA_VALIDITY_PERIOD_DAYS>
           [CA] Client certificate validity period as expressed in number of days (Requires CA to be enabled)
@@ -169,15 +259,27 @@ Options:
 
       --help
           Print help
+```
 
-  -V, --version
-          Print version
+#### Service-gateway invocation usage (future release)
+
+```
+Service gateway type
+
+Usage: trust0-gateway --host <HOST> --port <PORT> --cert-file <CERT_FILE> --key-file <KEY_FILE> --ca-root-cert-file <CA_ROOT_CERT_FILE> --gateway-service-host <GATEWAY_SERVICE_HOST> service-gateway [OPTIONS]
+
+Options:
+      --gateway-service-reply-host <GATEWAY_SERVICE_REPLY_HOST>
+          Hostname/ip of this gateway, which is routable by UDP services, used in UDP socket replies. If not supplied, then "127.0.0.1" will be used (if necessary) [env: GATEWAY_SERVICE_REPLY_HOST=]
+
+      --help
+          Print help
 ```
 
 Here is an example invocation (taken from the provided [Chat TCP](./Examples.md#example---chat-tcp-service) example):
 
 ```
-<TRUST0_REPO>/example$ <TRUST0_REPO>/target/debug/trust0-gateway --host localhost --port 8400 --cert-file target/example-gateway.local.crt.pem --key-file target/example-gateway.local.key.pem --auth-cert-file target/example-ca.local.crt.pem --gateway-service-host localhost  --datasource in-memory-db --access-db-connect example-db-access.json --service-db-connect target/example-db-service.json --user-db-connect example-db-user.json
+<TRUST0_REPO>/example$ <TRUST0_REPO>/target/debug/trust0-gateway --host localhost --port 8400 --cert-file target/example-gateway.local.crt.pem --key-file target/example-gateway.local.key.pem --ca-root-cert-file target/example-ca.local.crt.pem --gateway-service-host localhost --datasource in-memory-db --access-db-connect example-db-access.json --service-db-connect target/example-db-service.json --user-db-connect example-db-user.json full-gateway
 ```
 
 ### Trust0 Client

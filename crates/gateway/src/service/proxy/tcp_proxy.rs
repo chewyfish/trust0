@@ -472,6 +472,7 @@ pub mod tests {
     fn tcpgwproxy_new() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -507,6 +508,7 @@ pub mod tests {
     fn tcpsvrproxyvisit_new() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -542,6 +544,7 @@ pub mod tests {
     fn tcpsvrproxyvisit_create_client_conn() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -612,6 +615,7 @@ pub mod tests {
     fn tcpsvrproxyvisit_on_server_msg_provider() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -680,6 +684,7 @@ pub mod tests {
     fn tcpsvrproxyvisit_on_conn_accepted_when_service_unresolvable() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -743,6 +748,7 @@ pub mod tests {
     fn tcpsvrproxyvisit_on_conn_accepted_when_successful() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -844,6 +850,7 @@ pub mod tests {
     fn tcpsvrproxyvisit_accessors_and_mutators() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -929,6 +936,7 @@ pub mod tests {
     fn tcpsvrproxyvisit_shutdown_connections_when_no_user_supplied() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -1041,6 +1049,7 @@ pub mod tests {
     fn tcpsvrproxyvisit_shutdown_connections_when_user_supplied() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -1175,6 +1184,7 @@ pub mod tests {
     fn tcpsvrproxyvisit_shutdown_connection_when_proxy_key_known() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -1331,6 +1341,7 @@ pub mod tests {
     fn tcpsvrproxyvisit_shutdown_connection_when_proxy_key_unknown() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
+                config::GatewayType::Service,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),

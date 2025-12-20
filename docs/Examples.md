@@ -23,6 +23,8 @@ The following examples are provided in the `examples` directory:
 * [Reissue Certificate](#example---reissue-certificate)
 * [Revoke Certificate](#example---revoke-certificate)
 
+:warning: Example screencasts below use earlier gateway (pre-gateway types) invocation usage
+
 Platforms tested:
 
 * Linux - Fedora 39

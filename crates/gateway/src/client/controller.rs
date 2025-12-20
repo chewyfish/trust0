@@ -465,6 +465,7 @@ pub mod tests {
         let service_repo: Arc<Mutex<dyn ServiceRepository>> = Arc::new(Mutex::new(service_repo));
         let user_repo: Arc<Mutex<dyn UserRepository>> = Arc::new(Mutex::new(MockUserRepo::new()));
         let mut app_config = config::tests::create_app_config_with_repos(
+            config::GatewayType::Client,
             user_repo.clone(),
             service_repo.clone(),
             Arc::new(Mutex::new(MockRoleRepo::new())),
