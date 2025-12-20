@@ -340,16 +340,22 @@ pub struct AppConfigArgs {
     gateway_type: GatewayTypeCommand,
 }
 
-/// Gateway type: client or service
+/// Gateway type: client or service or both
 #[derive(Subcommand)]
 pub enum GatewayTypeCommand {
     /// Client/service gateway type
     #[command(name = "full-gateway")]
     Full(FullGatewayCommandArgs),
     /// Client gateway type
+    #[cfg(not(test))]
+    Client(ClientGatewayCommandArgs),
+    #[cfg(test)]
     #[command(name = "client-gateway")]
     Client(ClientGatewayCommandArgs),
     /// Service gateway type
+    #[cfg(not(test))]
+    Service(ServiceGatewayCommandArgs),
+    #[cfg(test)]
     #[command(name = "service-gateway")]
     Service(ServiceGatewayCommandArgs),
 }
