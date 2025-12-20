@@ -1,6 +1,6 @@
 [package]
 name = "trust0-gateway"
-version = "1.1.1"
+version = "1.1.2"
 description = "Trust0 SDP Service Proxy Gateway"
 repository = "https://github.com/chewyfish/trust0"
 edition = "2021"
@@ -36,7 +36,7 @@ serde_derive = "*"
 serde_json = { version = "*", features = ["arbitrary_precision"] }
 shlex = "1.3.0"
 time = { version = "0.3.44", default-features = false }
-trust0-common = { version = "1.1.1", path = "../common" }
+trust0-common = { version = "1.1.2", path = "../common" }
 webpki-roots = "0.26.11"
 x509-parser = "0.18.0"
 
