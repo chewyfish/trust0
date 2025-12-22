@@ -452,13 +452,13 @@ mod tests {
         verify_certificates, verify_crl_list, verify_private_key_file,
     };
 
-    const CERTFILE_ROOTCAT_PATHPARTS: [&str; 3] = [
+    const CERTFILE_ROOTCA_PATHPARTS: [&str; 3] = [
         env!("CARGO_MANIFEST_DIR"),
         "testdata",
         "ca-generated-rootca-ecdsa256.crt.pem",
     ];
 
-    const KEYFILE_ROOTCAT_PATHPARTS: [&str; 3] = [
+    const KEYFILE_ROOTCA_PATHPARTS: [&str; 3] = [
         env!("CARGO_MANIFEST_DIR"),
         "testdata",
         "ca-generated-rootca-ecdsa256.key.pem",
@@ -514,9 +514,9 @@ mod tests {
 
     #[test]
     fn main_process_runner_when_gateway_pki_creator_and_all_valid() {
-        let rootca_cert_filepath: PathBuf = CERTFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_cert_filepath: PathBuf = CERTFILE_ROOTCA_PATHPARTS.iter().collect();
         let rootca_cert_filepath_str = rootca_cert_filepath.to_str().unwrap();
-        let rootca_key_filepath: PathBuf = KEYFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_key_filepath: PathBuf = KEYFILE_ROOTCA_PATHPARTS.iter().collect();
         let rootca_key_filepath_str = rootca_key_filepath.to_str().unwrap();
         let expected_cert_file = setup_new_file_path("gateway.crt.pem");
         let expected_key_file = setup_new_file_path("gateway.key.pem");
@@ -561,9 +561,9 @@ mod tests {
 
     #[test]
     fn main_process_runner_when_client_pki_creator_and_all_valid() {
-        let rootca_cert_filepath: PathBuf = CERTFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_cert_filepath: PathBuf = CERTFILE_ROOTCA_PATHPARTS.iter().collect();
         let rootca_cert_filepath_str = rootca_cert_filepath.to_str().unwrap();
-        let rootca_key_filepath: PathBuf = KEYFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_key_filepath: PathBuf = KEYFILE_ROOTCA_PATHPARTS.iter().collect();
         let rootca_key_filepath_str = rootca_key_filepath.to_str().unwrap();
         let expected_cert_file = setup_new_file_path("client.crt.pem");
         let expected_key_file = setup_new_file_path("client.key.pem");
@@ -609,9 +609,9 @@ mod tests {
 
     #[test]
     fn main_process_runner_when_cert_revoke_list_creator_and_ecdsap256_and_all_valid() {
-        let rootca_cert_filepath: PathBuf = CERTFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_cert_filepath: PathBuf = CERTFILE_ROOTCA_PATHPARTS.iter().collect();
         let rootca_cert_filepath_str = rootca_cert_filepath.to_str().unwrap();
-        let rootca_key_filepath: PathBuf = KEYFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_key_filepath: PathBuf = KEYFILE_ROOTCA_PATHPARTS.iter().collect();
         let rootca_key_filepath_str = rootca_key_filepath.to_str().unwrap();
         let expected_file = setup_new_file_path("crl.pem");
 
@@ -651,9 +651,9 @@ mod tests {
 
     #[test]
     fn main_process_runner_when_cert_revoke_list_creator_and_ecdsap384_and_all_valid() {
-        let rootca_cert_filepath: PathBuf = CERTFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_cert_filepath: PathBuf = CERTFILE_ROOTCA_PATHPARTS.iter().collect();
         let rootca_cert_filepath_str = rootca_cert_filepath.to_str().unwrap();
-        let rootca_key_filepath: PathBuf = KEYFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_key_filepath: PathBuf = KEYFILE_ROOTCA_PATHPARTS.iter().collect();
         let rootca_key_filepath_str = rootca_key_filepath.to_str().unwrap();
         let expected_file = setup_new_file_path("crl.pem");
 
@@ -693,9 +693,9 @@ mod tests {
 
     #[test]
     fn main_process_runner_when_cert_revoke_list_creator_and_ed25519_and_all_valid() {
-        let rootca_cert_filepath: PathBuf = CERTFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_cert_filepath: PathBuf = CERTFILE_ROOTCA_PATHPARTS.iter().collect();
         let rootca_cert_filepath_str = rootca_cert_filepath.to_str().unwrap();
-        let rootca_key_filepath: PathBuf = KEYFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_key_filepath: PathBuf = KEYFILE_ROOTCA_PATHPARTS.iter().collect();
         let rootca_key_filepath_str = rootca_key_filepath.to_str().unwrap();
         let expected_file = setup_new_file_path("crl.pem");
 

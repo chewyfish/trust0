@@ -193,10 +193,10 @@ mod tests {
         let certs = result.unwrap();
 
         assert_eq!(certs.len(), 1);
-        assert!(certs.get(0).is_some());
+        assert!(certs.first().is_some());
         assert_eq!(
-            calculate_hash(certs.get(0).unwrap().as_bytes()),
-            4742559486257069929
+            calculate_hash(certs.first().unwrap().as_bytes()),
+            6660496563736508537
         );
     }
 
@@ -277,7 +277,7 @@ mod tests {
 
         assert_eq!(
             calculate_hash(result.unwrap().secret_der()),
-            6990430383764372935
+            12864274759142106441
         );
     }
 

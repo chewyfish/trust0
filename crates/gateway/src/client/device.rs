@@ -199,6 +199,7 @@ mod tests {
     use super::*;
     use ::time::macros::datetime;
     use std::path::PathBuf;
+    use trust0_common::crypto::ca::EntityType;
     use trust0_common::crypto::file::load_certificates;
 
     const CERTFILE_CLIENT_UID100_PATHPARTS: [&str; 3] = [
@@ -208,6 +209,8 @@ mod tests {
     ];
     const CERTFILE_NON_CLIENT_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "non-client.crt.pem"];
+    const CERTFILE_GATEWAY_PATHPARTS: [&str; 3] =
+        [env!("CARGO_MANIFEST_DIR"), "testdata", "gateway.crt.pem"];
 
     #[test]
     fn device_new_fn_when_valid_client_cert() -> Result<(), AppError> {
@@ -217,13 +220,8 @@ mod tests {
         let device_result = Device::new(certs);
 
         if let Ok(device) = &device_result {
-            assert_eq!(
-                device.cert_serial_num,
-                vec![
-                    116u8, 198u8, 8u8, 125u8, 113u8, 69u8, 193u8, 99u8, 4u8, 11u8, 25u8, 228u8,
-                    105u8, 11u8, 99u8, 229u8, 219u8, 34u8, 148u8, 112u8
-                ]
-            );
+            assert_eq!(device.cert_serial_num, vec![3u8, 232u8]);
+            assert_eq!(device.cert_access_context.entity_type, EntityType::Client);
             assert_eq!(device.cert_access_context.user_id, 100);
             assert_eq!(device.cert_access_context.platform, "Linux");
             return Ok(());
@@ -263,10 +261,28 @@ mod tests {
     }
 
     #[test]
+    fn device_new_fn_when_valid_gateway_cert() -> Result<(), AppError> {
+        let certs_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
+
+        let device_result = Device::new(certs);
+
+        if let Ok(device) = &device_result {
+            assert_eq!(device.cert_serial_num, vec![3u8, 231u8]);
+            assert_eq!(device.cert_access_context.entity_type, EntityType::Gateway);
+            assert_eq!(device.cert_access_context.user_id, 0);
+            assert_eq!(device.cert_access_context.platform, "");
+            return Ok(());
+        }
+
+        panic!("Unexpected result: val={:?}", &device_result);
+    }
+
+    #[test]
     fn device_new_fn_when_no_certificates() -> Result<(), AppError> {
         let device_result = Device::new(vec![]);
 
-        if let Err(_) = &device_result {
+        if device_result.is_err() {
             return Ok(());
         }
 
@@ -287,13 +303,10 @@ mod tests {
                     CERT_OID_COMMON_NAME.to_string(),
                     vec!["example-client.local".to_string()]
                 ),
-                (CERT_OID_DEPARTMENT.to_string(), vec!["IT1".to_string()]),
                 (
                     CERT_OID_ORGANIZATION.to_string(),
                     vec!["Example1".to_string()]
                 ),
-                (CERT_OID_LOCALITY.to_string(), vec!["Nowhere1".to_string()]),
-                (CERT_OID_STATE.to_string(), vec!["CA".to_string()]),
                 (CERT_OID_COUNTRY.to_string(), vec!["US".to_string()]),
             ])
         );
@@ -301,28 +314,23 @@ mod tests {
             device.get_cert_alt_subj(),
             &HashMap::from([(
                 "URI".to_string(),
-                vec![r#"{"userId":100,"platform":"Linux"}"#.to_string()]
+                vec![r#"{"entityType":"client","platform":"Linux","userId":100}"#.to_string()]
             ),])
         );
         assert_eq!(
             device.get_cert_access_context(),
             CertAccessContext {
+                entity_type: EntityType::Client,
                 user_id: 100,
                 platform: "Linux".to_string()
             }
         );
-        assert_eq!(
-            device.get_cert_serial_num(),
-            &vec![
-                116u8, 198u8, 8u8, 125u8, 113u8, 69u8, 193u8, 99u8, 4u8, 11u8, 25u8, 228u8, 105u8,
-                11u8, 99u8, 229u8, 219u8, 34u8, 148u8, 112u8
-            ]
-        );
+        assert_eq!(device.cert_serial_num, vec![3u8, 232u8]);
         assert_eq!(
             device.get_cert_validity(),
             &Validity {
-                not_before: ASN1Time::from(datetime!(2024-01-16 0:57:52.0 +00:00:00)),
-                not_after: ASN1Time::from(datetime!(2025-01-15 0:57:52.0 +00:00:00)),
+                not_before: ASN1Time::from(datetime!(2025-12-21 19:04:45.0 +00:00:00)),
+                not_after: ASN1Time::from(datetime!(2100-01-01 0:00:00.0 +00:00:00)),
             }
         );
 
