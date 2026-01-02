@@ -55,6 +55,7 @@ impl UdpGatewayProxy {
                 server_visitor,
                 &app_config.server_host,
                 proxy_port,
+                false,
             ),
         }
     }

@@ -44,6 +44,7 @@ impl Gateway {
                 visitor,
                 &app_config.server_host,
                 app_config.server_port,
+                false,
             ),
         }
     }
