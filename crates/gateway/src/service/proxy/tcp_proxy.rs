@@ -189,6 +189,7 @@ impl server_std::ServerVisitor for TcpGatewayProxyServerVisitor {
     fn create_client_conn(
         &mut self,
         tls_conn: TlsServerConnection,
+        _client_msg: Option<tls::message::SessionMessage>,
     ) -> Result<conn_std::Connection, AppError> {
         let (conn_visitor, user_id, alpn_protocol) =
             self.process_connection_authorization(&tls_conn)?;
@@ -578,20 +579,23 @@ pub mod tests {
             proxy_keys_by_user: HashMap::new(),
         };
 
-        if let Err(err) = server_visitor.create_client_conn(StreamOwned::new(
-            rustls::ServerConnection::new(Arc::new(
-                proxy_base::tests::create_tls_server_config(vec![
-                    alpn::Protocol::create_service_protocol(200).into_bytes(),
-                ])
+        if let Err(err) = server_visitor.create_client_conn(
+            StreamOwned::new(
+                rustls::ServerConnection::new(Arc::new(
+                    proxy_base::tests::create_tls_server_config(vec![
+                        alpn::Protocol::create_service_protocol(200).into_bytes(),
+                    ])
+                    .unwrap(),
+                ))
                 .unwrap(),
-            ))
-            .unwrap(),
-            stream_utils::clone_std_tcp_stream(
-                &connected_tcp_stream.server_stream.0,
-                "tcp-proxy-server",
-            )
-            .unwrap(),
-        )) {
+                stream_utils::clone_std_tcp_stream(
+                    &connected_tcp_stream.server_stream.0,
+                    "tcp-proxy-server",
+                )
+                .unwrap(),
+            ),
+            None,
+        ) {
             panic!("Unexpected result: err={:?}", &err);
         }
 
@@ -717,20 +721,23 @@ pub mod tests {
         };
 
         let client_conn = server_visitor
-            .create_client_conn(StreamOwned::new(
-                rustls::ServerConnection::new(Arc::new(
-                    proxy_base::tests::create_tls_server_config(vec![
-                        alpn::Protocol::create_service_protocol(200).into_bytes(),
-                    ])
+            .create_client_conn(
+                StreamOwned::new(
+                    rustls::ServerConnection::new(Arc::new(
+                        proxy_base::tests::create_tls_server_config(vec![
+                            alpn::Protocol::create_service_protocol(200).into_bytes(),
+                        ])
+                        .unwrap(),
+                    ))
                     .unwrap(),
-                ))
-                .unwrap(),
-                stream_utils::clone_std_tcp_stream(
-                    &connected_tcp_stream.server_stream.0,
-                    "test-tcp-proxy-server",
-                )
-                .unwrap(),
-            ))
+                    stream_utils::clone_std_tcp_stream(
+                        &connected_tcp_stream.server_stream.0,
+                        "test-tcp-proxy-server",
+                    )
+                    .unwrap(),
+                ),
+                None,
+            )
             .unwrap();
 
         match server_visitor.on_conn_accepted(client_conn) {
@@ -793,20 +800,23 @@ pub mod tests {
         };
 
         let client_conn = server_visitor
-            .create_client_conn(StreamOwned::new(
-                rustls::ServerConnection::new(Arc::new(
-                    proxy_base::tests::create_tls_server_config(vec![
-                        alpn::Protocol::create_service_protocol(200).into_bytes(),
-                    ])
+            .create_client_conn(
+                StreamOwned::new(
+                    rustls::ServerConnection::new(Arc::new(
+                        proxy_base::tests::create_tls_server_config(vec![
+                            alpn::Protocol::create_service_protocol(200).into_bytes(),
+                        ])
+                        .unwrap(),
+                    ))
                     .unwrap(),
-                ))
-                .unwrap(),
-                stream_utils::clone_std_tcp_stream(
-                    &connected_tcp_stream.server_stream.0,
-                    "test-tcp-proxy-server",
-                )
-                .unwrap(),
-            ))
+                    stream_utils::clone_std_tcp_stream(
+                        &connected_tcp_stream.server_stream.0,
+                        "test-tcp-proxy-server",
+                    )
+                    .unwrap(),
+                ),
+                None,
+            )
             .unwrap();
 
         if let Err(err) = server_visitor.on_conn_accepted(client_conn) {

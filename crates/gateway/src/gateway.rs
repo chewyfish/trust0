@@ -6,13 +6,13 @@ use std::sync::{Arc, Mutex};
 use anyhow::Result;
 use rustls::server::Accepted;
 use rustls::{ServerConfig, ServerConnection};
-use trust0_common::control::tls;
 
 use crate::client::connection::ClientConnVisitor;
 use crate::client::controller::ControlPlaneServerVisitor;
 use crate::config::{self, AppConfig};
 use crate::service::manager::ServiceMgr;
 use crate::service::proxy::proxy_base::GatewayServiceProxyVisitor;
+use trust0_common::control::tls;
 use trust0_common::crypto::alpn::Protocol;
 use trust0_common::error::AppError;
 #[cfg(not(test))]
@@ -154,6 +154,7 @@ impl server_std::ServerVisitor for ServerVisitor {
     fn create_client_conn(
         &mut self,
         tls_conn: TlsServerConnection,
+        client_msg: Option<tls::message::SessionMessage>,
     ) -> Result<conn_std::Connection, AppError> {
         let protocol;
         #[cfg(not(test))]
@@ -165,12 +166,14 @@ impl server_std::ServerVisitor for ServerVisitor {
             protocol = Some(self.testing_data.get("alpn_protocol").unwrap().clone());
         }
         match ClientConnVisitor::parse_alpn_protocol(&protocol)? {
-            Protocol::ControlPlane => self.control_plane_visitor.create_client_conn(tls_conn),
+            Protocol::ControlPlane => self
+                .control_plane_visitor
+                .create_client_conn(tls_conn, client_msg),
             Protocol::Service(service_id) => self
                 .get_service_proxy(service_id)?
                 .lock()
                 .unwrap()
-                .create_client_conn(tls_conn),
+                .create_client_conn(tls_conn, client_msg),
         }
     }
 
@@ -413,17 +416,20 @@ pub mod tests {
             .testing_data
             .insert("alpn_protocol".to_string(), alpn_protocol.clone());
 
-        let client_conn_result = server_visitor.create_client_conn(StreamOwned::new(
-            ServerConnection::new(Arc::new(
-                proxy_base::tests::create_tls_server_config(vec![alpn_protocol]).unwrap(),
-            ))
-            .unwrap(),
-            stream_utils::clone_std_tcp_stream(
-                &connected_tcp_stream.server_stream.0,
-                "test-t0g-conn",
-            )
-            .unwrap(),
-        ));
+        let client_conn_result = server_visitor.create_client_conn(
+            StreamOwned::new(
+                ServerConnection::new(Arc::new(
+                    proxy_base::tests::create_tls_server_config(vec![alpn_protocol]).unwrap(),
+                ))
+                .unwrap(),
+                stream_utils::clone_std_tcp_stream(
+                    &connected_tcp_stream.server_stream.0,
+                    "test-t0g-conn",
+                )
+                .unwrap(),
+            ),
+            None,
+        );
 
         if let Err(err) = &client_conn_result {
             if err.get_code().unwrap_or(0) != config::RESPCODE_0420_INVALID_CLIENT_CERTIFICATE {
@@ -449,9 +455,9 @@ pub mod tests {
         let mut proxy_visitor = MockGwSvcProxyVisitor::new();
         proxy_visitor
             .expect_create_client_conn()
-            .with(predicate::always())
+            .with(predicate::always(), predicate::always())
             .times(1)
-            .return_once(|_| {
+            .return_once(|_, _| {
                 Err(AppError::GenWithCodeAndMsg(
                     1,
                     "Work on this later to return successful result".to_string(),
@@ -473,17 +479,20 @@ pub mod tests {
             .testing_data
             .insert("alpn_protocol".to_string(), alpn_protocol.clone());
 
-        let client_conn_result = server_visitor.create_client_conn(StreamOwned::new(
-            ServerConnection::new(Arc::new(
-                proxy_base::tests::create_tls_server_config(vec![alpn_protocol]).unwrap(),
-            ))
-            .unwrap(),
-            stream_utils::clone_std_tcp_stream(
-                &connected_tcp_stream.server_stream.0,
-                "test-t0g-conn",
-            )
-            .unwrap(),
-        ));
+        let client_conn_result = server_visitor.create_client_conn(
+            StreamOwned::new(
+                ServerConnection::new(Arc::new(
+                    proxy_base::tests::create_tls_server_config(vec![alpn_protocol]).unwrap(),
+                ))
+                .unwrap(),
+                stream_utils::clone_std_tcp_stream(
+                    &connected_tcp_stream.server_stream.0,
+                    "test-t0g-conn",
+                )
+                .unwrap(),
+            ),
+            None,
+        );
 
         if let Err(err) = &client_conn_result {
             if err.get_code().unwrap_or(0) != 1 {

@@ -16,6 +16,7 @@ use crate::repository::service_repo::ServiceRepository;
 use crate::repository::user_repo::UserRepository;
 use crate::service::manager::ServiceMgr;
 use trust0_common::control::pdu::{ControlChannel, MessageFrame};
+use trust0_common::control::tls;
 use trust0_common::error::AppError;
 use trust0_common::net::tls_server::conn_std::TlsServerConnection;
 use trust0_common::net::tls_server::{conn_std, server_std};
@@ -281,6 +282,7 @@ impl server_std::ServerVisitor for ControlPlaneServerVisitor {
     fn create_client_conn(
         &mut self,
         tls_conn: TlsServerConnection,
+        _client_msg: Option<tls::message::SessionMessage>,
     ) -> Result<conn_std::Connection, AppError> {
         let mut conn_visitor = ClientConnVisitor::new(&self.app_config, &self.service_mgr);
 

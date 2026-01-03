@@ -29,7 +29,6 @@ pub struct Client {
     /// Corresponding [`conn_std::Connection`] object for server connection
     connection: Option<conn_std::Connection>,
     #[cfg(test)]
-    #[allow(dead_code)]
     /// Store information to be scrutinized by tests
     testing_data: Arc<Mutex<HashMap<String, String>>>,
 }
@@ -141,6 +140,18 @@ impl Client {
 
         let server_msg = self.sessmsg_exchanger.read_session_message(&mut tls_conn)?;
 
+        if let Some(client_msg) = self.visitor.on_client_msg_provider(&tls_conn)? {
+            #[cfg(test)]
+            {
+                self.testing_data.lock().unwrap().insert(
+                    "CliMsg".to_string(),
+                    serde_json::to_string(&client_msg).unwrap(),
+                );
+            }
+            self.sessmsg_exchanger
+                .write_session_message(&mut tls_conn, &client_msg)?;
+        }
+
         let connection = self.visitor.create_server_conn(tls_conn, server_msg)?;
 
         info(&target!(), &format!("Connected: addr={:?}", server_addr));
@@ -197,6 +208,23 @@ pub trait ClientVisitor: Send {
         tls_conn: TlsClientConnection,
         server_msg: Option<tls::message::SessionMessage>,
     ) -> Result<conn_std::Connection, AppError>;
+
+    /// Connection client message provider handler
+    ///
+    /// # Arguments
+    ///
+    /// * `tls_conn`: TLS connection object to use in creating server connection
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing an optional [`tls::message::SessionMessage`] object to be sent immediately after handshaking.
+    ///
+    fn on_client_msg_provider(
+        &mut self,
+        _tls_conn: &TlsClientConnection,
+    ) -> Result<Option<tls::message::SessionMessage>, AppError> {
+        Ok(None)
+    }
 
     /// TLS handshaking event handler
     ///
@@ -398,9 +426,13 @@ pub mod tests {
     fn client_connect() {
         crypto::setup_crypto_provider();
 
+        let client_msg_provided = Arc::new(Mutex::new(false));
+        let testing_data = Arc::new(Mutex::new(HashMap::new()));
+
         struct TestClientVisitor {
             conn_created: Arc<Mutex<bool>>,
             conn_connected: Arc<Mutex<bool>>,
+            client_msg_provided: Arc<Mutex<bool>>,
             server_msg: Arc<Mutex<Option<tls::message::SessionMessage>>>,
         }
 
@@ -425,6 +457,26 @@ pub mod tests {
                 )
             }
 
+            fn on_client_msg_provider(
+                &mut self,
+                _tls_conn: &TlsClientConnection,
+            ) -> Result<Option<tls::message::SessionMessage>, AppError> {
+                *self.client_msg_provided.lock().unwrap() = true;
+                Ok(Some(tls::message::SessionMessage::new(
+                    &tls::message::DataType::ClientAccessContext,
+                    &Some(
+                        serde_json::to_value(tls::message::ClientAccessContext {
+                            access: crypto::ca::CertAccessContext {
+                                user_id: 100,
+                                entity_type: crypto::ca::EntityType::Client,
+                                platform: "plat1".to_string(),
+                            },
+                        })
+                        .unwrap(),
+                    ),
+                )))
+            }
+
             fn on_connected(&mut self) -> Result<(), AppError> {
                 *self.conn_connected.lock().unwrap() = true;
                 Ok(())
@@ -437,6 +489,7 @@ pub mod tests {
         let client_visitor = TestClientVisitor {
             conn_created: conn_created.clone(),
             conn_connected: conn_connected.clone(),
+            client_msg_provided: client_msg_provided.clone(),
             server_msg: server_msg.clone(),
         };
 
@@ -453,7 +506,7 @@ pub mod tests {
                 expect_inbound_msg: true,
             },
             connection: None,
-            testing_data: Arc::new(Mutex::new(HashMap::new())),
+            testing_data: testing_data.clone(),
         };
 
         if let Err(err) = client.connect() {
@@ -474,6 +527,36 @@ pub mod tests {
                 ),
             )
         );
+
+        assert!(*client_msg_provided.lock().unwrap());
+        assert!(testing_data.lock().unwrap().contains_key("CliMsg"));
+        let client_msg_json_result = serde_json::from_str::<tls::message::SessionMessage>(
+            testing_data.lock().unwrap().get("CliMsg").unwrap().as_str(),
+        );
+        if let Err(err) = client_msg_json_result {
+            panic!(
+                "Unexpected client msg frame JSON parse result: err={:?}",
+                &err
+            );
+        }
+
+        assert_eq!(
+            client_msg_json_result.unwrap(),
+            tls::message::SessionMessage::new(
+                &tls::message::DataType::ClientAccessContext,
+                &Some(
+                    serde_json::to_value(tls::message::ClientAccessContext {
+                        access: crypto::ca::CertAccessContext {
+                            user_id: 100,
+                            entity_type: crypto::ca::EntityType::Client,
+                            platform: "plat1".to_string(),
+                        },
+                    })
+                    .unwrap(),
+                ),
+            )
+        );
+
         assert!(*conn_created.lock().unwrap());
         assert!(*conn_connected.lock().unwrap());
     }

@@ -142,7 +142,7 @@ pub mod tests {
     mock! {
         pub GwSvcProxyVisitor {}
         impl server_std::ServerVisitor for GwSvcProxyVisitor {
-            fn create_client_conn(&mut self, tls_conn: conn_std::TlsServerConnection) -> Result<conn_std::Connection, AppError>;
+            fn create_client_conn(&mut self, tls_conn: conn_std::TlsServerConnection, client_msg: Option<tls::message::SessionMessage>) -> Result<conn_std::Connection, AppError>;
             fn on_tls_handshaking(&mut self, _accepted: &Accepted) -> Result<ServerConfig, AppError>;
             fn on_server_msg_provider(
                 &mut self,
