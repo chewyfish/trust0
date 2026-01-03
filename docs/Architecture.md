@@ -151,12 +151,22 @@ Certificates/keys required by Trust0 Client/Gateway execution
 Additionally, client (X.509) certificates are created w/a subject alternative name (SAN) field containing a JSON structure as follows:
 
 ```
-URI = {"userId": <USER_ID>, "platform": <DEVICE_PLATFORM>"}
+URI = {
+  "entityType": "<ENTITY_TYPE>",
+  "userId": <USER_ID>,
+  "platform": "<DEVICE_PLATFORM>"
+  }
 ```
 
 This allows the gateway to identify the user by their "userId" value (currently platform is not used).
 
 Subsequently, it will check the respective [User Table](#user-table) record for the current status (values: `active`, `inactive`) and allow or prohibit the user connection accordingly.
+
+"entityType" refers to the respective Trust0 entities: `rootca`, `gateway` and `client`.
+
+A future release will allow Trust0 gateways to proxy service connections to other gateways on behalf of an authorized client user. Likewise this access context structure utilizing the `gateway` entity type will be leveraged for the purposes of this kind of service authorization.
+
+Since the `gateway` certificate does not have this user access context information in its SAN field, it utilizes a TLS handshaking session message (upon connection) to pass along the corresponding user access context to the service gateway for each specific proxied user service connection.
 
 #### Secondary Authentication
 
