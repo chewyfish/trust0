@@ -1,16 +1,16 @@
 use std::collections::HashMap;
-use std::io::Write;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::{io, thread};
 
-use crate::control::{pdu, tls};
 use anyhow::Result;
 use rustls::server::{Accepted, Acceptor};
 
+use crate::control::tls;
 use crate::error::AppError;
 use crate::logging::{error, info};
+use crate::net::stream_utils::SessionMsgExchanger;
 use crate::net::tls_server::conn_std::{self, TlsServerConnection};
 use crate::target;
 
@@ -31,9 +31,11 @@ pub struct Server {
     closing: bool,
     /// Indicates that the server has closed/shutdown
     closed: bool,
+    /// Session message exchanger
+    sessmsg_exchanger: SessionMsgExchanger,
     #[cfg(test)]
     /// Store information to be scrutinized by tests
-    testing_data: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    testing_data: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl Server {
@@ -44,6 +46,7 @@ impl Server {
     /// * `visitor` - Server visitor pattern object
     /// * `server_host` - Address host to use in bound socket
     /// * `server_port` - Address port to use in listener socket address
+    /// * `expect_client_msg` - Upon handshake completion, retrieve initial client message (if applicable)
     ///
     /// # Returns
     ///
@@ -53,6 +56,7 @@ impl Server {
         visitor: Arc<Mutex<dyn ServerVisitor>>,
         server_host: &str,
         server_port: u16,
+        expect_client_msg: bool,
     ) -> Self {
         Self {
             visitor,
@@ -61,6 +65,9 @@ impl Server {
             polling: false,
             closing: false,
             closed: false,
+            sessmsg_exchanger: SessionMsgExchanger {
+                expect_inbound_msg: expect_client_msg,
+            },
             #[cfg(test)]
             testing_data: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -144,7 +151,7 @@ impl Server {
         );
 
         loop {
-            // Accept new connection (non-blocking
+            // Accept new connection (non-blocking)
             if let Err(err) = self.accept() {
                 match err {
                     AppError::WouldBlock => {}
@@ -297,8 +304,10 @@ impl Server {
 
         let listen_addr = self.listen_addr.clone();
         let visitor = self.visitor.clone();
+        let sessmsg_exchanger = self.sessmsg_exchanger.clone();
+
         #[allow(clippy::type_complexity)]
-        let testing_data: Option<Arc<Mutex<HashMap<String, Vec<u8>>>>>;
+        let testing_data: Option<Arc<Mutex<HashMap<String, String>>>>;
         #[cfg(test)]
         {
             testing_data = Some(self.testing_data.clone());
@@ -309,6 +318,8 @@ impl Server {
         }
 
         let _ = thread::spawn(move || {
+            let conn_context_log =
+                format!("server_addr={:?}, peer_addr={:?}", &listen_addr, &peer_addr);
             let reattempt_delay = Duration::from_millis(CONN_COMPLETION_REATTEMPT_DELAY_MSECS);
             for attempt in 0..CONN_COMPLETION_MAX_ATTEMPTS {
                 match tls_srv_conn.complete_io(&mut tcp_stream) {
@@ -318,8 +329,8 @@ impl Server {
                         error(
                             &target!(),
                             &format!(
-                                "Error completing TLS connection: server_addr={:?}, peer_addr={:?}, err={:?}",
-                                &listen_addr, &peer_addr, &err
+                                "Error completing TLS connection: {}, err={:?}",
+                                &conn_context_log, &err
                             ),
                         );
                         return;
@@ -329,8 +340,8 @@ impl Server {
                     error(
                         &target!(),
                         &format!(
-                            "Exhausted attempting to complete TLS connection: server_addr={:?}, peer_addr={:?}",
-                            &listen_addr, &peer_addr
+                            "Exhausted attempting to complete TLS connection: {}",
+                            &conn_context_log
                         ),
                     );
                     return;
@@ -339,35 +350,53 @@ impl Server {
             }
 
             let mut tls_conn = rustls::StreamOwned::new(tls_srv_conn, tcp_stream);
-
             if let Some(server_msg) = server_msg {
-                let pdu_message_frame: pdu::MessageFrame = server_msg.try_into().unwrap();
-                if let Some(testing_data) = testing_data {
+                if let Some(testing_data) = &testing_data {
                     testing_data.lock().unwrap().insert(
-                        "SvrMsgFrame".to_string(),
-                        serde_json::to_vec(&pdu_message_frame).unwrap(),
+                        "SvrMsg".to_string(),
+                        serde_json::to_string(&server_msg).unwrap(),
                     );
                 }
-                if let Err(err) = tls_conn.write_all(&pdu_message_frame.build_pdu().unwrap()) {
+                if let Err(err) =
+                    sessmsg_exchanger.write_session_message(&mut tls_conn, &server_msg)
+                {
                     error(
                         &target!(),
                         &format!(
-                            "Error writing server message: server_addr={:?}, peer_addr={:?}, err={:?}",
-                            &listen_addr, &peer_addr, &err
+                            "Error writing server session messages: {}, err={:?}",
+                            &conn_context_log, &err
                         ),
                     );
                     return;
                 }
             }
 
-            let connection = match visitor.lock().unwrap().create_client_conn(tls_conn) {
+            let client_msg = match sessmsg_exchanger.read_session_message(&mut tls_conn) {
+                Ok(client_msg) => client_msg,
+                Err(err) => {
+                    error(
+                        &target!(),
+                        &format!(
+                            "Error reading client session message: {}, err={:?}",
+                            &conn_context_log, &err
+                        ),
+                    );
+                    return;
+                }
+            };
+
+            let connection = match visitor
+                .lock()
+                .unwrap()
+                .create_client_conn(tls_conn, client_msg)
+            {
                 Ok(connection) => connection,
                 Err(err) => {
                     error(
                         &target!(),
                         &format!(
-                            "Error creating TLS connection: server_addr={:?}, peer_addr={:?}, err={:?}",
-                            &listen_addr, &peer_addr, &err
+                            "Error creating TLS connection: {}, err={:?}",
+                            &conn_context_log, &err
                         ),
                     );
                     return;
@@ -410,6 +439,7 @@ pub trait ServerVisitor: Send {
     /// # Arguments
     ///
     /// * `tls_conn` - TLS connection
+    /// * `client_msg`: Optional initial message from client
     ///
     /// # Returns
     ///
@@ -418,6 +448,7 @@ pub trait ServerVisitor: Send {
     fn create_client_conn(
         &mut self,
         tls_conn: TlsServerConnection,
+        client_msg: Option<tls::message::SessionMessage>,
     ) -> Result<conn_std::Connection, AppError>;
 
     /// Server listener bound event handler
@@ -494,7 +525,6 @@ pub trait ServerVisitor: Send {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::control::pdu::MessageFrame;
     use crate::crypto::file::{load_certificates, load_private_key};
     use crate::crypto::{self, alpn};
     use crate::net::stream_utils;
@@ -533,7 +563,8 @@ pub mod tests {
     mock! {
         pub ServerVisit {}
         impl ServerVisitor for ServerVisit {
-            fn create_client_conn(&mut self, tls_conn: TlsServerConnection) -> Result<conn_std::Connection, AppError>;
+            fn create_client_conn(&mut self, tls_conn: TlsServerConnection, client_msg: Option<tls::message::SessionMessage>,
+            ) -> Result<conn_std::Connection, AppError>;
             fn on_listening(&mut self) -> Result<(), AppError>;
             fn on_tls_handshaking(&mut self, _accepted: &Accepted) -> Result<rustls::ServerConfig, AppError>;
             fn on_server_msg_provider(
@@ -610,7 +641,7 @@ pub mod tests {
         tls_client_config: rustls::ClientConfig,
         server_host: &str,
         server_port: u16,
-    ) -> Result<(rustls::ClientConnection, TcpStream), anyhow::Error> {
+    ) -> Result<rustls::StreamOwned<rustls::ClientConnection, TcpStream>> {
         let server_name = ServerName::try_from(server_host.to_string())?;
         let server_addr = (server_host, server_port)
             .to_socket_addrs()?
@@ -620,7 +651,31 @@ pub mod tests {
             rustls::ClientConnection::new(Arc::new(tls_client_config), server_name)?;
         let mut tcp_stream = TcpStream::connect(server_addr)?;
         let _ = tls_cli_conn.complete_io(&mut tcp_stream)?;
-        Ok((tls_cli_conn, tcp_stream))
+        let mut tls_conn = rustls::StreamOwned::new(tls_cli_conn, tcp_stream);
+
+        let sessmsg_exchanger = SessionMsgExchanger {
+            expect_inbound_msg: true,
+        };
+
+        let _server_msg = sessmsg_exchanger.read_session_message(&mut tls_conn)?;
+        sessmsg_exchanger.write_session_message(
+            &mut tls_conn,
+            &tls::message::SessionMessage::new(
+                &tls::message::DataType::ClientAccessContext,
+                &Some(
+                    serde_json::to_value(tls::message::ClientAccessContext {
+                        access: crypto::ca::CertAccessContext {
+                            user_id: 100,
+                            entity_type: crypto::ca::EntityType::Client,
+                            platform: "plat1".to_string(),
+                        },
+                    })
+                    .unwrap(),
+                ),
+            ),
+        )?;
+
+        Ok(tls_conn)
     }
 
     // tests
@@ -629,10 +684,16 @@ pub mod tests {
     fn server_new() {
         let server_visitor: Arc<Mutex<dyn ServerVisitor>> =
             Arc::new(Mutex::new(MockServerVisit::new()));
-        let server = Server::new(server_visitor, "127.0.0.1", 1234);
+        let server = Server::new(server_visitor, "127.0.0.1", 1234, true);
 
         assert!(server.tcp_listener.is_none());
         assert_eq!(server.listen_addr, "127.0.0.1:1234");
+        assert_eq!(
+            server.sessmsg_exchanger,
+            SessionMsgExchanger {
+                expect_inbound_msg: true
+            }
+        );
         assert!(!server.polling);
         assert!(!server.closing);
         assert!(!server.closed);
@@ -652,6 +713,9 @@ pub mod tests {
             polling: false,
             closing: false,
             closed: false,
+            sessmsg_exchanger: SessionMsgExchanger {
+                expect_inbound_msg: true,
+            },
             testing_data: Arc::new(Mutex::new(HashMap::new())),
         };
 
@@ -674,6 +738,9 @@ pub mod tests {
             polling: false,
             closing: false,
             closed: false,
+            sessmsg_exchanger: SessionMsgExchanger {
+                expect_inbound_msg: false,
+            },
             testing_data: Arc::new(Mutex::new(HashMap::new())),
         };
 
@@ -698,6 +765,9 @@ pub mod tests {
             polling: true,
             closing: false,
             closed: false,
+            sessmsg_exchanger: SessionMsgExchanger {
+                expect_inbound_msg: true,
+            },
             testing_data: Arc::new(Mutex::new(HashMap::new())),
         };
 
@@ -731,6 +801,9 @@ pub mod tests {
             polling: false,
             closing: false,
             closed: false,
+            sessmsg_exchanger: SessionMsgExchanger {
+                expect_inbound_msg: true,
+            },
             testing_data: Arc::new(Mutex::new(HashMap::new())),
         };
 
@@ -754,6 +827,7 @@ pub mod tests {
         let conn_created = Arc::new(Mutex::new(false));
         let conn_handshaking = Arc::new(Mutex::new(false));
         let server_msg_provided = Arc::new(Mutex::new(false));
+        let client_msg = Arc::new(Mutex::new(None));
         let conn_accepted = Arc::new(Mutex::new(false));
         let shutdown = Arc::new(Mutex::new(false));
         let testing_data = Arc::new(Mutex::new(HashMap::new()));
@@ -762,6 +836,7 @@ pub mod tests {
             conn_created: Arc<Mutex<bool>>,
             conn_handshaking: Arc<Mutex<bool>>,
             server_msg_provided: Arc<Mutex<bool>>,
+            client_msg: Arc<Mutex<Option<tls::message::SessionMessage>>>,
             conn_accepted: Arc<Mutex<bool>>,
             shutdown: Arc<Mutex<bool>>,
             connection_event_sender: Option<mpsc::Sender<ConnectionEvent>>,
@@ -770,6 +845,7 @@ pub mod tests {
             fn create_client_conn(
                 &mut self,
                 tls_conn: TlsServerConnection,
+                client_msg: Option<tls::message::SessionMessage>,
             ) -> Result<conn_std::Connection, AppError> {
                 let mut conn_visitor = conn_std::tests::MockConnVisit::new();
                 conn_visitor
@@ -799,6 +875,7 @@ pub mod tests {
                     false,
                 );
                 *self.conn_created.lock().unwrap() = true;
+                *self.client_msg.lock().unwrap() = client_msg;
                 Ok(conn)
             }
 
@@ -850,6 +927,7 @@ pub mod tests {
             conn_created: conn_created.clone(),
             conn_handshaking: conn_handshaking.clone(),
             server_msg_provided: server_msg_provided.clone(),
+            client_msg: client_msg.clone(),
             conn_accepted: conn_accepted.clone(),
             shutdown: shutdown.clone(),
             connection_event_sender: None,
@@ -862,6 +940,9 @@ pub mod tests {
             polling: false,
             closing: false,
             closed: false,
+            sessmsg_exchanger: SessionMsgExchanger {
+                expect_inbound_msg: true,
+            },
             testing_data: testing_data.clone(),
         }));
         let server_copy = server.clone();
@@ -873,7 +954,7 @@ pub mod tests {
         });
 
         thread::sleep(Duration::from_millis(100));
-        let (_cli_tls_conn, _cli_tcp_stream) = connect_to_tls_server(
+        let _ = connect_to_tls_server(
             client_std::tests::create_tls_client_config().unwrap(),
             "localhost",
             server_port,
@@ -886,35 +967,45 @@ pub mod tests {
         assert!(*server_msg_provided.lock().unwrap());
         assert!(*conn_accepted.lock().unwrap());
 
-        assert!(testing_data.lock().unwrap().contains_key("SvrMsgFrame"));
-        let msg_frame_json_result = serde_json::from_slice::<MessageFrame>(
-            testing_data
-                .lock()
-                .unwrap()
-                .get("SvrMsgFrame")
-                .unwrap()
-                .iter()
-                .as_slice(),
+        assert!(testing_data.lock().unwrap().contains_key("SvrMsg"));
+        let server_msg_json_result = serde_json::from_str::<tls::message::SessionMessage>(
+            testing_data.lock().unwrap().get("SvrMsg").unwrap().as_str(),
         );
-        if let Err(err) = msg_frame_json_result {
+        if let Err(err) = server_msg_json_result {
             panic!(
                 "Unexpected server msg frame JSON parse result: err={:?}",
                 &err
             );
         }
+
         assert_eq!(
-            msg_frame_json_result.unwrap(),
-            MessageFrame::new(
-                pdu::ControlChannel::TLS,
-                pdu::CODE_OK,
-                &None,
-                &Some(serde_json::to_value(tls::message::DataType::Trust0Connection).unwrap()),
+            server_msg_json_result.unwrap(),
+            tls::message::SessionMessage::new(
+                &tls::message::DataType::Trust0Connection,
                 &Some(
                     serde_json::to_value(tls::message::Trust0Connection::new(&(
                         "addr1".to_string(),
-                        "addr2".to_string()
+                        "addr2".to_string(),
                     )))
-                    .unwrap()
+                    .unwrap(),
+                ),
+            )
+        );
+
+        assert!(client_msg.lock().unwrap().is_some());
+        assert_eq!(
+            client_msg.lock().unwrap().as_ref().unwrap(),
+            &tls::message::SessionMessage::new(
+                &tls::message::DataType::ClientAccessContext,
+                &Some(
+                    serde_json::to_value(tls::message::ClientAccessContext {
+                        access: crypto::ca::CertAccessContext {
+                            user_id: 100,
+                            entity_type: crypto::ca::EntityType::Client,
+                            platform: "plat1".to_string(),
+                        },
+                    })
+                    .unwrap(),
                 ),
             )
         );
@@ -945,6 +1036,9 @@ pub mod tests {
             polling: false,
             closing: false,
             closed: false,
+            sessmsg_exchanger: SessionMsgExchanger {
+                expect_inbound_msg: true,
+            },
             testing_data: Arc::new(Mutex::new(HashMap::new())),
         };
 
@@ -962,14 +1056,17 @@ pub mod tests {
             polling: false,
             closing: false,
             closed: false,
+            sessmsg_exchanger: SessionMsgExchanger {
+                expect_inbound_msg: true,
+            },
             testing_data: Arc::new(Mutex::new(HashMap::new())),
         };
 
         server.shutdown();
 
-        assert_eq!(server.closing, true);
-        assert_eq!(server.closed, true);
-        assert_eq!(server.polling, false);
+        assert!(server.closing);
+        assert!(server.closed);
+        assert!(!server.polling);
         assert!(server.tcp_listener.is_none());
     }
 
@@ -982,14 +1079,17 @@ pub mod tests {
             polling: true,
             closing: false,
             closed: false,
+            sessmsg_exchanger: SessionMsgExchanger {
+                expect_inbound_msg: true,
+            },
             testing_data: Arc::new(Mutex::new(HashMap::new())),
         };
 
         server.shutdown();
 
-        assert_eq!(server.closing, false);
-        assert_eq!(server.closed, false);
-        assert_eq!(server.polling, false);
+        assert!(!server.closing);
+        assert!(!server.closed);
+        assert!(!server.polling);
         assert!(server.tcp_listener.is_none());
     }
 
@@ -1002,12 +1102,15 @@ pub mod tests {
             polling: true,
             closing: false,
             closed: false,
+            sessmsg_exchanger: SessionMsgExchanger {
+                expect_inbound_msg: true,
+            },
             testing_data: Arc::new(Mutex::new(HashMap::new())),
         };
 
         server.stop_poller();
 
-        assert_eq!(server.polling, false);
+        assert!(!server.polling);
     }
 
     #[test]
@@ -1019,6 +1122,7 @@ pub mod tests {
             fn create_client_conn(
                 &mut self,
                 _tls_conn: TlsServerConnection,
+                _client_msg: Option<tls::message::SessionMessage>,
             ) -> Result<conn_std::Connection, AppError> {
                 Err(AppError::General("Not to be tested".to_string()))
             }

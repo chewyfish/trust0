@@ -1,4 +1,3 @@
-use crate::error::AppError;
 use pki_types::{pem::PemObject, CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use rcgen::SerialNumber;
 use ring::signature::{
@@ -7,6 +6,8 @@ use ring::signature::{
 use serde_derive::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use x509_parser::nom::AsBytes;
+
+use crate::error::AppError;
 
 const DEFAULT_DISTINGUISHED_NAME_COUNTRY_NAME: &str = "NA";
 const DEFAULT_DISTINGUISHED_NAME_ORGANIZATION_NAME: &str = "NA";
@@ -27,25 +28,32 @@ const VALIDATION_MSG_DN_COMMON_NAME_REQUIRED: &str = "DN Common Name required";
 const VALIDATION_MSG_SAN_URI_USER_ID_REQUIRED: &str = "SAN URI User ID is required";
 const VALIDATION_MSG_SAN_URI_PLATFORM_REQUIRED: &str = "SAN URI Platform is required";
 
+/// Trust0 entity utiliing PKI resources
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub enum EntityType {
+    /// Root CA, used to sign gateway/client certs
+    #[serde(rename = "rootca")]
+    RootCa,
+    /// Trust0 gateway
+    #[serde(rename = "gateway")]
+    Gateway,
+    /// Trust0 client
+    #[serde(rename = "client")]
+    #[default]
+    Client,
+}
+
 /// User/device access context, stored as JSON in client certificate's SAN URI entry
 #[derive(Serialize, Deserialize, Clone, Default, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CertAccessContext {
-    /// DB User ID for user
-    pub user_id: i64,
+    /// Trust0 entity type
+    #[serde(default)]
+    pub entity_type: EntityType,
     /// Machine architecture platform hosting certificate
     pub platform: String,
-}
-
-/// Trust0 entity utiliing PKI resources
-#[derive(Clone, Debug, PartialEq)]
-pub enum EntityType {
-    /// Root CA, used to sign gateway/client certs
-    RootCa,
-    /// Trust0 gateway
-    Gateway,
-    /// Trust0 client
-    Client,
+    /// DB User ID for user (for client certs)
+    pub user_id: i64,
 }
 
 /// Supported public key algorithms
@@ -786,6 +794,19 @@ impl RootCaCertificateBuilder {
                 .key_usages
                 .push(rcgen::KeyUsagePurpose::KeyCertSign);
             cert_params.key_usages.push(rcgen::KeyUsagePurpose::CrlSign);
+            let access_context = CertAccessContext {
+                entity_type: EntityType::RootCa,
+                ..Default::default()
+            };
+            let access_context_ser = serde_json::to_string(&access_context).map_err(|err| {
+                AppError::General(format!(
+                    "Error serializing cert access context: val={:?}, err={:?}",
+                    &access_context, &err
+                ))
+            })?;
+            cert_params.subject_alt_names.push(rcgen::SanType::URI(
+                access_context_ser.as_str().try_into().unwrap(),
+            ));
         }
 
         let key_pair = key_pair.unwrap_or(key_algorithm.create_key_pair()?);
@@ -959,6 +980,19 @@ impl GatewayCertificateBuilder {
             cert_params
                 .extended_key_usages
                 .push(rcgen::ExtendedKeyUsagePurpose::ServerAuth);
+            let access_context = CertAccessContext {
+                entity_type: EntityType::Gateway,
+                ..Default::default()
+            };
+            let access_context_ser = serde_json::to_string(&access_context).map_err(|err| {
+                AppError::General(format!(
+                    "Error serializing cert access context: val={:?}, err={:?}",
+                    &access_context, &err
+                ))
+            })?;
+            cert_params.subject_alt_names.push(rcgen::SanType::URI(
+                access_context_ser.as_str().try_into().unwrap(),
+            ));
             for san_dns_name in &self.san_dns_names {
                 cert_params.subject_alt_names.push(rcgen::SanType::DnsName(
                     san_dns_name.as_str().try_into().unwrap(),
@@ -1170,12 +1204,13 @@ impl ClientCertificateBuilder {
                 .push(rcgen::ExtendedKeyUsagePurpose::ClientAuth);
 
             let access_context = CertAccessContext {
+                entity_type: EntityType::Client,
                 platform: self.san_uri_platform.as_ref().unwrap().clone(),
                 user_id: self.san_uri_user_id.unwrap(),
             };
             let access_context_ser = serde_json::to_string(&access_context).map_err(|err| {
                 AppError::General(format!(
-                    "Error serializing client auth context: val={:?}, err={:?}",
+                    "Error serializing cert access context: val={:?}, err={:?}",
                     &access_context, &err
                 ))
             })?;
@@ -1216,13 +1251,13 @@ mod tests {
     use time::macros::datetime;
     use time::Duration;
 
-    const KEYFILE_ROOTCAT_PATHPARTS: [&str; 3] = [
+    const KEYFILE_ROOTCA_PATHPARTS: [&str; 3] = [
         env!("CARGO_MANIFEST_DIR"),
         "testdata",
         "ca-generated-rootca-ecdsa256.key.pem",
     ];
 
-    const CERTFILE_ROOTCAT_PATHPARTS: [&str; 3] = [
+    const CERTFILE_ROOTCA_PATHPARTS: [&str; 3] = [
         env!("CARGO_MANIFEST_DIR"),
         "testdata",
         "ca-generated-rootca-ecdsa256.crt.pem",
@@ -1248,10 +1283,10 @@ mod tests {
     }
 
     fn load_rootca_certificate(key_algorithm: &KeyAlgorithm) -> Certificate {
-        let rootca_key_filepath: PathBuf = KEYFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_key_filepath: PathBuf = KEYFILE_ROOTCA_PATHPARTS.iter().collect();
         let rootca_key_filepath_str = rootca_key_filepath.to_str().unwrap();
         let rootca_key_pem = fs::read_to_string(rootca_key_filepath_str).unwrap();
-        let rootca_certificate_filepath: PathBuf = CERTFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_certificate_filepath: PathBuf = CERTFILE_ROOTCA_PATHPARTS.iter().collect();
         let rootca_certificate_filepath_str = rootca_certificate_filepath.to_str().unwrap();
         let rootca_certificate_pem = fs::read_to_string(rootca_certificate_filepath_str).unwrap();
 
@@ -1344,8 +1379,14 @@ mod tests {
 
     #[test]
     fn cert_accessors() {
-        let sans = vec!["DNS1".to_string(), "DNS2".to_string()];
+        let access = CertAccessContext {
+            entity_type: EntityType::Gateway,
+            ..Default::default()
+        };
+        let access_ser = serde_json::to_string(&access).unwrap();
+        let sans = vec![access_ser.clone(), "DNS1".to_string(), "DNS2".to_string()];
         let expected_sans = vec![
+            rcgen::SanType::DnsName(access_ser.try_into().unwrap()),
             rcgen::SanType::DnsName("DNS1".try_into().unwrap()),
             rcgen::SanType::DnsName("DNS2".try_into().unwrap()),
         ];
@@ -1434,7 +1475,7 @@ mod tests {
     fn cert_build_issuer_when_not_rootca_cert() {
         let client_certificate = create_client_certificate(&KeyAlgorithm::EcdsaP384);
 
-        if let Ok(_) = client_certificate.build_issuer() {
+        if client_certificate.build_issuer().is_ok() {
             panic!("Unexpected successful build result");
         }
     }
@@ -1607,7 +1648,6 @@ mod tests {
         );
         assert_eq!(cert_params.not_after, validity_not_after);
         assert_eq!(cert_params.not_before, validity_not_before);
-        assert!(cert_params.subject_alt_names.is_empty());
 
         let expected_key_usages = HashSet::from([
             rcgen::KeyUsagePurpose::DigitalSignature,
@@ -1619,6 +1659,22 @@ mod tests {
             panic!(
                 "Unexpected key usages list: actual={:?}, expected={:?}",
                 &key_usages, &expected_key_usages
+            );
+        }
+
+        let access_context_ser = serde_json::to_string(&CertAccessContext {
+            entity_type: EntityType::RootCa,
+            ..Default::default()
+        })
+        .unwrap();
+        let expected_san_values = HashSet::from([rcgen::SanType::URI(
+            access_context_ser.as_str().try_into().unwrap(),
+        )]);
+        let san_values = HashSet::from_iter(cert_params.subject_alt_names.iter().cloned());
+        if !san_values.eq(&expected_san_values) {
+            panic!(
+                "Unexpected subject alternative names list: actual={:?}, expected={:?}",
+                &san_values, &expected_san_values
             );
         }
 
@@ -1659,7 +1715,7 @@ mod tests {
 
     #[test]
     fn rootcacertbuild_when_existing_cert_and_invalid_key_pair_pem() {
-        let rootca_certificate_filepath: PathBuf = CERTFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_certificate_filepath: PathBuf = CERTFILE_ROOTCA_PATHPARTS.iter().collect();
         let rootca_certificate_filepath_str = rootca_certificate_filepath.to_str().unwrap();
         let rootca_certificate_pem = fs::read_to_string(rootca_certificate_filepath_str).unwrap();
 
@@ -1681,7 +1737,7 @@ mod tests {
 
     #[test]
     fn rootcacertbuild_when_existing_cert_and_invalid_certificate_pem() {
-        let rootca_key_filepath: PathBuf = KEYFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_key_filepath: PathBuf = KEYFILE_ROOTCA_PATHPARTS.iter().collect();
         let rootca_key_filepath_str = rootca_key_filepath.to_str().unwrap();
         let rootca_key_pem = fs::read_to_string(rootca_key_filepath_str).unwrap();
 
@@ -1703,10 +1759,10 @@ mod tests {
 
     #[test]
     fn rootcacertbuild_when_existing_cert_and_valid() {
-        let rootca_key_filepath: PathBuf = KEYFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_key_filepath: PathBuf = KEYFILE_ROOTCA_PATHPARTS.iter().collect();
         let rootca_key_filepath_str = rootca_key_filepath.to_str().unwrap();
         let rootca_key_pem = fs::read_to_string(rootca_key_filepath_str).unwrap();
-        let rootca_certificate_filepath: PathBuf = CERTFILE_ROOTCAT_PATHPARTS.iter().collect();
+        let rootca_certificate_filepath: PathBuf = CERTFILE_ROOTCA_PATHPARTS.iter().collect();
         let rootca_certificate_filepath_str = rootca_certificate_filepath.to_str().unwrap();
         let rootca_certificate_pem = fs::read_to_string(rootca_certificate_filepath_str).unwrap();
 
@@ -1840,7 +1896,15 @@ mod tests {
             );
         }
 
-        let expected_san_values: HashSet<rcgen::SanType> = HashSet::from_iter(
+        let access_context_ser = serde_json::to_string(&CertAccessContext {
+            entity_type: EntityType::Gateway,
+            ..Default::default()
+        })
+        .unwrap();
+        let mut expected_san_values = HashSet::from([rcgen::SanType::URI(
+            access_context_ser.as_str().try_into().unwrap(),
+        )]);
+        expected_san_values.extend(
             san_dns_names
                 .iter()
                 .map(|dns_name| rcgen::SanType::DnsName(dns_name.as_str().try_into().unwrap())),
@@ -1996,6 +2060,7 @@ mod tests {
         }
 
         let access_context_ser = serde_json::to_string(&CertAccessContext {
+            entity_type: EntityType::Client,
             user_id: 100,
             platform: "Linux".to_string(),
         })

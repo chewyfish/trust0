@@ -1,11 +1,12 @@
 use std::borrow::Borrow;
 use std::net::TcpStream;
 
-use crate::control::pdu;
 use serde_derive::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::control::pdu;
 use crate::control::pdu::{ControlChannel, MessageFrame};
+use crate::crypto::ca::CertAccessContext;
 use crate::error::AppError;
 
 pub type ConnectionAddrs = (String, String);
@@ -15,6 +16,7 @@ pub type ConnectionAddrs = (String, String);
 pub enum DataType {
     #[default]
     Trust0Connection,
+    ClientAccessContext,
 }
 
 /// TLS session message
@@ -154,11 +156,74 @@ impl TryInto<Value> for &Trust0Connection {
     }
 }
 
+/// Trust0 client access context (refer to [`CertAccessContext`])
+#[derive(Serialize, Deserialize, Clone, PartialEq, Default, Debug)]
+pub struct ClientAccessContext {
+    /// Certificate access context
+    pub access: CertAccessContext,
+}
+
+impl ClientAccessContext {
+    /// ClientAccessContext constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `access` - [`CertAccessContext`] value
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`ClientAccessContext`] object.
+    ///
+    pub fn new(access: &CertAccessContext) -> Self {
+        Self {
+            access: access.clone(),
+        }
+    }
+
+    /// Construct access context from serde Value
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - A JSON object representing [`CertAccessContext`]
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing the corresponding [`ClientAccessContext`] object.
+    ///
+    pub fn from_serde_value(value: &Value) -> Result<ClientAccessContext, AppError> {
+        serde_json::from_value(value.clone()).map_err(|err| {
+            AppError::General(format!(
+                "Error converting serde Value to ClientAccessContext: err={:?}",
+                &err
+            ))
+        })
+    }
+}
+
+unsafe impl Send for ClientAccessContext {}
+
+impl TryInto<Value> for ClientAccessContext {
+    type Error = AppError;
+
+    fn try_into(self) -> Result<Value, Self::Error> {
+        self.borrow().try_into()
+    }
+}
+
+impl TryInto<Value> for &ClientAccessContext {
+    type Error = AppError;
+
+    fn try_into(self) -> Result<Value, Self::Error> {
+        Ok(serde_json::to_value(self).unwrap())
+    }
+}
+
 /// Unit tests
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::control::pdu;
+    use crate::crypto::ca::EntityType;
     use crate::net::stream_utils;
     use serde_json::json;
 
@@ -213,9 +278,8 @@ mod tests {
     fn trust0conn_from_serde_value_when_invalid() {
         let conn_json = json!({"binds": ["addr1","addr2", "addr3"]});
 
-        match Trust0Connection::from_serde_value(&conn_json) {
-            Ok(conn) => panic!("Unexpected successful result: conn={:?}", conn),
-            _ => {}
+        if let Ok(conn) = Trust0Connection::from_serde_value(&conn_json) {
+            panic!("Unexpected successful result: conn={:?}", conn);
         }
     }
 
@@ -225,17 +289,20 @@ mod tests {
 
         match Trust0Connection::from_serde_value(&conn_json) {
             Ok(conn) => {
-                let expected_conn =
-                    Trust0Connection::new(&("addr1".to_string(), "addr2".to_string()));
+                let expected_conn = Trust0Connection {
+                    binds: ("addr1".to_string(), "addr2".to_string()),
+                };
                 assert_eq!(conn, expected_conn);
             }
-            _ => {}
+            Err(err) => panic!("Unexpected result: err={:?}", err),
         }
     }
 
     #[test]
     fn trust0conn_try_into_value() {
-        let conn = Trust0Connection::new(&("addr1".to_string(), "addr2".to_string()));
+        let conn = Trust0Connection {
+            binds: ("addr1".to_string(), "addr2".to_string()),
+        };
 
         let result: Result<Value, AppError> = conn.try_into();
         match result {
@@ -261,5 +328,68 @@ mod tests {
             Trust0Connection::create_connection_addrs(&connected_tcp_stream.server_stream.0);
 
         assert_eq!(conn_addrs, expected_conn_addrs);
+    }
+
+    #[test]
+    fn cliaccesscxt_new() {
+        let cert_access = CertAccessContext {
+            user_id: 100,
+            entity_type: EntityType::Client,
+            platform: "plat1".to_string(),
+        };
+        let cli_access = ClientAccessContext::new(&cert_access);
+
+        assert_eq!(cli_access.access, cert_access);
+    }
+
+    #[test]
+    fn cliaccesscxt_from_serde_value_when_invalid() {
+        let cli_access_json =
+            json!({"access": {"userId": 100, "entityType": "INVALID", "platform": "plat1"}});
+
+        if let Ok(cli_access) = ClientAccessContext::from_serde_value(&cli_access_json) {
+            panic!("Unexpected successful result: access={:?}", cli_access);
+        }
+    }
+
+    #[test]
+    fn cliaccesscxt_from_serde_value_when_valid() {
+        let cli_access_json =
+            json!({"access": {"userId": 100, "entityType": "client", "platform": "plat1"}});
+
+        match ClientAccessContext::from_serde_value(&cli_access_json) {
+            Ok(cli_access) => {
+                let expected_cli_access = ClientAccessContext {
+                    access: CertAccessContext {
+                        user_id: 100,
+                        entity_type: EntityType::Client,
+                        platform: "plat1".to_string(),
+                    },
+                };
+                assert_eq!(cli_access, expected_cli_access);
+            }
+            Err(err) => panic!("Unexpected result: err={:?}", err),
+        }
+    }
+
+    #[test]
+    fn cliaccesscxt_try_into_value() {
+        let cli_access = ClientAccessContext {
+            access: CertAccessContext {
+                user_id: 100,
+                entity_type: EntityType::Client,
+                platform: "plat1".to_string(),
+            },
+        };
+
+        let result: Result<Value, AppError> = cli_access.try_into();
+        match result {
+            Ok(value) => {
+                let expected_cli_access_json =
+                    json!({"access": {"userId": 100, "entityType": "client", "platform": "plat1"}});
+                assert_eq!(value, expected_cli_access_json);
+            }
+            Err(err) => panic!("Unexpected result: err={:?}", err),
+        }
     }
 }

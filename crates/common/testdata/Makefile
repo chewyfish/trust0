@@ -96,6 +96,9 @@ ${ROOT_CA__PKI_CERT_CONF_FILE}: ${TESTDATA_BUILD_DIRFILE}
 		extendedKeyUsage = critical, serverAuth, clientAuth
 		basicConstraints = CA:true
 		keyUsage = cRLSign, keyCertSign, digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment, keyAgreement, keyCertSign, cRLSign
+		subjectAltName = @ca_alt_names
+		[ ca_alt_names ]
+		URI.1 = {"entityType":"rootca","userId":0,"platform":""}
 		[ v3_gateway ]
 		basicConstraints = critical,CA:false
 		keyUsage = cRLSign, keyCertSign, digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment, keyAgreement, keyCertSign, cRLSign
@@ -104,13 +107,26 @@ ${ROOT_CA__PKI_CERT_CONF_FILE}: ${TESTDATA_BUILD_DIRFILE}
 		authorityKeyIdentifier = keyid:always,issuer:always
 		subjectAltName = @gateway_alt_names
 		[ gateway_alt_names ]
+		URI.1 = {"entityType":"gateway","userId":0,"platform":""}
 		DNS.1 = ${GATEWAY__PKI_SAN_DNS1}
-		[ v3_client ]
+		[ v3_client0 ]
 		basicConstraints = critical,CA:false
 		keyUsage = nonRepudiation, digitalSignature
 		extendedKeyUsage = critical, clientAuth
 		subjectKeyIdentifier = hash
 		authorityKeyIdentifier = keyid:always,issuer:always
+		subjectAltName = @user0_alt_names
+		[ user0_alt_names ]
+		URI.1 = {"entityType":"client","userId":100,"platform":"Linux"}
+		[ v3_client1 ]
+		basicConstraints = critical,CA:false
+		keyUsage = nonRepudiation, digitalSignature
+		extendedKeyUsage = critical, clientAuth
+		subjectKeyIdentifier = hash
+		authorityKeyIdentifier = keyid:always,issuer:always
+		subjectAltName = @user1_alt_names
+		[ user1_alt_names ]
+		URI.1 = {"entityType":"client","userId":101,"platform":"Linux"}
 	EOF
 	@echo ""
 
@@ -176,7 +192,7 @@ ${CLIENT0__PKI_CSR_FILE}: ${TESTDATA_BUILD_DIRFILE} ${CLIENT0__PKI_KEY_FILE}
 
 ${CLIENT0__PKI_CERT_FILE}: ${TESTDATA_BUILD_DIRFILE} ${ROOT_CA__PKI_CERT_FILE} ${ROOT_CA__PKI_KEY_FILE} ${ROOT_CA__PKI_CERT_CONF_FILE} ${CLIENT0__PKI_CSR_FILE}
 	@echo "Creating $@"
-	cd ${TESTDATA_BUILD_DIR} && ${OPENSSL_CMD} x509 -req -in ${CLIENT0__PKI_CSR_FILE} -out ${CLIENT0__PKI_CERT_FILE} -CA ${ROOT_CA__PKI_CERT_FILE} -CAkey ${ROOT_CA__PKI_KEY_FILE} -sha256 -days 3000 -set_serial 300 -extfile ${ROOT_CA__PKI_CERT_CONF_FILE} -extensions v3_client
+	cd ${TESTDATA_BUILD_DIR} && ${OPENSSL_CMD} x509 -req -in ${CLIENT0__PKI_CSR_FILE} -out ${CLIENT0__PKI_CERT_FILE} -CA ${ROOT_CA__PKI_CERT_FILE} -CAkey ${ROOT_CA__PKI_KEY_FILE} -sha256 -days 3000 -set_serial 300 -extfile ${ROOT_CA__PKI_CERT_CONF_FILE} -extensions v3_client0
 	@echo ""
 
 ${CLIENT1__PKI_KEY_FILE}: ${TESTDATA_BUILD_DIRFILE}
@@ -191,7 +207,7 @@ ${CLIENT1__PKI_CSR_FILE}: ${TESTDATA_BUILD_DIRFILE} ${CLIENT1__PKI_KEY_FILE}
 
 ${CLIENT1__PKI_CERT_FILE}: ${TESTDATA_BUILD_DIRFILE} ${ROOT_CA__PKI_CERT_FILE} ${ROOT_CA__PKI_KEY_FILE} ${ROOT_CA__PKI_CERT_CONF_FILE} ${CLIENT1__PKI_CSR_FILE}
 	@echo "Creating $@"
-	cd ${TESTDATA_BUILD_DIR} && ${OPENSSL_CMD} x509 -req -in ${CLIENT1__PKI_CSR_FILE} -out ${CLIENT1__PKI_CERT_FILE} -CA ${ROOT_CA__PKI_CERT_FILE} -CAkey ${ROOT_CA__PKI_KEY_FILE} -sha256 -days 3000 -set_serial 301 -extfile ${ROOT_CA__PKI_CERT_CONF_FILE} -extensions v3_client
+	cd ${TESTDATA_BUILD_DIR} && ${OPENSSL_CMD} x509 -req -in ${CLIENT1__PKI_CSR_FILE} -out ${CLIENT1__PKI_CERT_FILE} -CA ${ROOT_CA__PKI_CERT_FILE} -CAkey ${ROOT_CA__PKI_KEY_FILE} -sha256 -days 3000 -set_serial 301 -extfile ${ROOT_CA__PKI_CERT_CONF_FILE} -extensions v3_client1
 	@echo ""
 
 client-pki: root-ca-pki ${CLIENT0__PKI_CERT_FILE} ${CLIENT1__PKI_CERT_FILE}

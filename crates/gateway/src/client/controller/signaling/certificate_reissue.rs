@@ -196,7 +196,7 @@ impl CertReissuanceProcessor {
     }
     #[cfg(test)]
     fn get_now_utc() -> OffsetDateTime {
-        datetime!(2024-12-21 0:57:52.0 +00:00:00)
+        datetime!(2099-12-09 0:00:00.0 +00:00:00)
     }
 
     /// Create root CA [`Certificate`] based on existing root CA certificate/key pem files and corresponding key algorithm
@@ -262,6 +262,7 @@ mod tests {
     use crate::repository::user_repo::tests::MockUserRepo;
     use std::path::PathBuf;
     use time::macros::datetime;
+    use time::OffsetDateTime;
     use trust0_common::crypto::file::load_certificates;
 
     const CERTFILE_ROOTCA_PATHPARTS: [&str; 3] =
@@ -273,6 +274,7 @@ mod tests {
         "testdata",
         "client-uid100.crt.pem",
     ];
+    const CERTFILE_CLIENT_UID100_VALIDBEFORE: OffsetDateTime = datetime!(2100-01-01 0:00 -0);
 
     #[test]
     fn certreissueproc_new() {
@@ -297,7 +299,9 @@ mod tests {
 
         assert_eq!(
             processor.cert_reissue_datetime,
-            datetime!(2024-12-26 0:57:52.0 +00:00:00)
+            CERTFILE_CLIENT_UID100_VALIDBEFORE
+                .checked_sub(Duration::days(20))
+                .unwrap()
         );
         assert_eq!(processor.recheck_cycle_iterations, 600);
         assert_eq!(processor.curr_cycle_iteration, 599);

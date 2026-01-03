@@ -1,16 +1,23 @@
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-
 use std::thread::JoinHandle;
+use std::time::Duration;
 use std::{io, thread};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use log::error;
 use rustls::{ClientConnection, ServerConnection, StreamOwned};
 
+use crate::control::pdu::{ControlChannel, MessageFrame};
+use crate::control::{pdu, tls};
 use crate::error::AppError;
 
 const TCP_READ_BLOCK_SIZE: usize = 1024;
 const UDP_RECV_BUFFER_SIZE: usize = 64 * 1024;
+
+const SESSIONMSG_READ_BLOCK_SIZE: usize = 1024;
+const SESSIONMSG_READ_LOOP_READ_DELAY_MSECS: u64 = 10;
+const SESSIONMSG_READ_LOOP_MAX_READS: u16 = 10;
 
 /// Represents a stream, which implements [`io::Read`] and [`io::Write`]
 pub trait StreamReaderWriter: io::Read + io::Write + Send {}
@@ -405,6 +412,109 @@ impl ConnectedUdpSocket {
         })
     }
 }
+/// Serialization methods for TLS session message exchange
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SessionMsgExchanger {
+    /// Expect a message to be read from stream
+    pub expect_inbound_msg: bool,
+}
+
+impl SessionMsgExchanger {
+    /// Read a single [`tls::message::SessionMessage`] from reader and return.
+    ///
+    /// # Arguments
+    ///
+    /// * `conn_reader` : The connection reader (as a [`Read`] object)
+    /// *
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing [`tls::message::SessionMessage`] received object.
+    ///
+    pub fn read_session_message<R: io::Read>(
+        &self,
+        conn_reader: &mut R,
+    ) -> Result<Option<tls::message::SessionMessage>, AppError> {
+        if !self.expect_inbound_msg {
+            return Ok(None);
+        }
+
+        let mut buffer = VecDeque::new();
+        let mut buff_chunk = [0; SESSIONMSG_READ_BLOCK_SIZE];
+        let mut read_attempts = 0;
+        loop {
+            match conn_reader.read(&mut buff_chunk) {
+                Ok(0) => break,
+                Ok(bytes_read) => {
+                    buffer.append(&mut VecDeque::from(buff_chunk[..bytes_read].to_vec()));
+                    match MessageFrame::consume_next_pdu(&mut buffer)? {
+                        Some(msg_frame) if msg_frame.channel == ControlChannel::TLS => {
+                            return Ok(Some(msg_frame.try_into().unwrap()))
+                        }
+                        Some(msg_frame) => {
+                            return Err(AppError::General(format!(
+                                "Invalid session message frame: msg={:?}",
+                                &msg_frame
+                            )))
+                        }
+                        None => {}
+                    }
+                }
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    read_attempts += 1;
+                    if read_attempts == SESSIONMSG_READ_LOOP_MAX_READS {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(SESSIONMSG_READ_LOOP_READ_DELAY_MSECS));
+                }
+                Err(err) => {
+                    return Err(AppError::General(format!(
+                        "Error reading session message: err={:?}",
+                        &err
+                    )))
+                }
+            }
+        }
+
+        Err(AppError::General(format!(
+            "Incomplete/missing session message frame: msg={:?}",
+            &buffer
+        )))
+    }
+
+    /// Write given [`tls::message::SessionMessage`] using writer.
+    ///
+    /// # Arguments
+    ///
+    /// * `conn_writer` : The TLS connection object (as a [`Read`] + [`Write`] object)
+    /// * `session_msg` : A [`tls::message::SessionMessage`] message to send to writer
+    /// *
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] indicating success of operation.
+    ///
+    pub fn write_session_message<W: io::Write>(
+        &self,
+        conn_writer: &mut W,
+        session_msg: &tls::message::SessionMessage,
+    ) -> Result<(), AppError> {
+        let pdu_message_frame: pdu::MessageFrame = session_msg.try_into().unwrap();
+        if let Err(err) = conn_writer.write_all(&pdu_message_frame.build_pdu().unwrap()) {
+            return Err(AppError::General(format!(
+                "Error writing session message: err={:?}",
+                &err
+            )));
+        }
+        if let Err(err) = conn_writer.flush() {
+            return Err(AppError::General(format!(
+                "Error flushing for session message write: err={:?}",
+                &err
+            )));
+        }
+        Ok(())
+    }
+}
 
 /// Unit tests
 #[cfg(test)]
@@ -787,7 +897,7 @@ pub mod tests {
 
     #[test]
     fn streamutl_encode_proxied_datagram_when_too_big() {
-        let datagram = &[0x00u8; (1 as usize + u16::MAX as usize)];
+        let datagram = &[0x00u8; (1_usize + u16::MAX as usize)];
         if let Ok(encoded_datagram) = encode_proxied_datagram(datagram) {
             panic!(
                 "Unexpected successful result: encoded_len={}",
@@ -921,5 +1031,205 @@ pub mod tests {
             Err(err) => panic!("Unexpected result (second decode): err={:?}", &err),
         }
         assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn streamutl_sessmsg_write_t0conn() {
+        struct ConnWriter {
+            pdu: Vec<u8>,
+            write_all_called: bool,
+            flush_called: bool,
+        }
+        impl io::Write for ConnWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                self.flush_called = true;
+                Ok(())
+            }
+            fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+                self.pdu = buf.to_vec();
+                self.write_all_called = true;
+                Ok(())
+            }
+        }
+        let mut conn_writer = ConnWriter {
+            pdu: vec![],
+            write_all_called: false,
+            flush_called: false,
+        };
+
+        let sessmsg = tls::message::SessionMessage::new(
+            &tls::message::DataType::Trust0Connection,
+            &Some(
+                serde_json::to_value(tls::message::Trust0Connection::new(&(
+                    "addr1".to_string(),
+                    "addr2".to_string(),
+                )))
+                .unwrap(),
+            ),
+        );
+        let sessmsg_frame = MessageFrame::new(
+            pdu::ControlChannel::TLS,
+            pdu::CODE_OK,
+            &None,
+            &Some(serde_json::to_value(tls::message::DataType::Trust0Connection).unwrap()),
+            &sessmsg.data,
+        );
+        let expected_pdu = sessmsg_frame.build_pdu().unwrap();
+
+        let sessmsg_exchanger = SessionMsgExchanger {
+            expect_inbound_msg: false,
+        };
+        if let Err(err) = sessmsg_exchanger.write_session_message(&mut conn_writer, &sessmsg) {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+
+        assert!(conn_writer.write_all_called);
+        assert!(conn_writer.flush_called);
+        assert_eq!(conn_writer.pdu, expected_pdu);
+    }
+
+    #[test]
+    fn streamutl_sessmsg_read_t0conn_when_valid_message() {
+        let expected_sessmsg = tls::message::SessionMessage::new(
+            &tls::message::DataType::Trust0Connection,
+            &Some(
+                serde_json::to_value(tls::message::Trust0Connection::new(&(
+                    "addr1".to_string(),
+                    "addr2".to_string(),
+                )))
+                .unwrap(),
+            ),
+        );
+
+        struct ConnReader {
+            session_msg: tls::message::SessionMessage,
+        }
+        impl io::Read for ConnReader {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                let msg_frame: MessageFrame = self.session_msg.clone().try_into().unwrap();
+                let pdu = msg_frame.build_pdu().unwrap();
+                let pdu_len = pdu.len(); // will be lower than SESSIONMSG_READ_BLOCK_SIZE
+                buf[..pdu_len].copy_from_slice(pdu.as_slice());
+                Ok(pdu_len)
+            }
+        }
+
+        let mut conn_reader = ConnReader {
+            session_msg: expected_sessmsg.clone(),
+        };
+
+        let sessmsg_exchanger = SessionMsgExchanger {
+            expect_inbound_msg: true,
+        };
+        let result = sessmsg_exchanger.read_session_message(&mut conn_reader);
+        if let Err(err) = result {
+            panic!("Unexpected result: err={:?}", &err);
+        }
+        let sessmsg = result.unwrap();
+
+        assert!(sessmsg.is_some());
+        assert_eq!(sessmsg.unwrap(), expected_sessmsg);
+    }
+
+    #[test]
+    fn streamutl_sessmsg_read_when_wrong_channel_type() {
+        let expected_msg_frame = MessageFrame::new(
+            ControlChannel::Management,
+            pdu::CODE_OK,
+            &None,
+            &None,
+            &None,
+        );
+
+        struct ConnReader {
+            msg_frame: MessageFrame,
+        }
+        impl io::Read for ConnReader {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                let pdu = self.msg_frame.build_pdu().unwrap();
+                let pdu_len = pdu.len(); // will be lower than SESSIONMSG_READ_BLOCK_SIZE
+                buf[..pdu_len].copy_from_slice(pdu.as_slice());
+                Ok(pdu_len)
+            }
+        }
+
+        let mut conn_reader = ConnReader {
+            msg_frame: expected_msg_frame,
+        };
+
+        let sessmsg_exchanger = SessionMsgExchanger {
+            expect_inbound_msg: true,
+        };
+        let result = sessmsg_exchanger.read_session_message(&mut conn_reader);
+
+        if let Ok(sessmsg) = result {
+            panic!("Unexpected successful result: msg={:?}", &sessmsg);
+        }
+    }
+
+    #[test]
+    fn streamutl_sessmsg_read_when_no_data_to_read() {
+        struct ConnReader {}
+        impl io::Read for ConnReader {
+            fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+                Ok(0)
+            }
+        }
+
+        let mut conn_reader = ConnReader {};
+
+        let sessmsg_exchanger = SessionMsgExchanger {
+            expect_inbound_msg: true,
+        };
+        let result = sessmsg_exchanger.read_session_message(&mut conn_reader);
+
+        if let Ok(sessmsg) = result {
+            panic!("Unexpected successful result: msg={:?}", &sessmsg);
+        }
+    }
+
+    #[test]
+    fn streamutl_sessmsg_read_when_always_would_block() {
+        struct ConnReader {}
+        impl io::Read for ConnReader {
+            fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+                Err(io::ErrorKind::WouldBlock.into())
+            }
+        }
+
+        let mut conn_reader = ConnReader {};
+
+        let sessmsg_exchanger = SessionMsgExchanger {
+            expect_inbound_msg: true,
+        };
+        let result = sessmsg_exchanger.read_session_message(&mut conn_reader);
+
+        if let Ok(sessmsg) = result {
+            panic!("Unexpected successful result: msg={:?}", &sessmsg);
+        }
+    }
+
+    #[test]
+    fn streamutl_sessmsg_read_when_non_blockable_error() {
+        struct ConnReader {}
+        impl io::Read for ConnReader {
+            fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+                Err(io::ErrorKind::UnexpectedEof.into())
+            }
+        }
+
+        let mut conn_reader = ConnReader {};
+
+        let sessmsg_exchanger = SessionMsgExchanger {
+            expect_inbound_msg: true,
+        };
+        let result = sessmsg_exchanger.read_session_message(&mut conn_reader);
+
+        if let Ok(sessmsg) = result {
+            panic!("Unexpected successful result: msg={:?}", &sessmsg);
+        }
     }
 }
