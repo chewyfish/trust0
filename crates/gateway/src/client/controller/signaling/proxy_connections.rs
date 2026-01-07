@@ -13,7 +13,7 @@ use trust0_common::control::tls::message::ConnectionAddrs;
 use trust0_common::error::AppError;
 use trust0_common::error::AppError::General;
 use trust0_common::logging::{error, warn};
-use trust0_common::{control, model, target};
+use trust0_common::{control, target};
 
 const LIVENESS_MAX_CONSECUTIVE_MISSING_CONNECTION_PROBES: u16 = 5;
 const LIVENESS_MAX_CONSECUTIVE_MISSING_SIGNAL_PROBES: u16 = 5;
@@ -22,8 +22,8 @@ const LIVENESS_MAX_CONSECUTIVE_MISSING_SIGNAL_PROBES: u16 = 5;
 pub struct ProxyConnectionsProcessor {
     /// Service manager
     service_mgr: Arc<Mutex<dyn ServiceMgr>>,
-    /// User model object
-    user: model::user::User,
+    /// Client device ID
+    device_id: String,
     /// Queued PDU responses to be sent to client
     message_outbox: Arc<Mutex<VecDeque<Vec<u8>>>>,
     /// Missing connection bind addresses
@@ -40,7 +40,7 @@ impl ProxyConnectionsProcessor {
     /// # Arguments
     ///
     /// * `service_mgr` - Service manager
-    /// * `user` - User model object
+    /// * `device_id` - Client device ID
     /// * `message_outbox` - Queued PDU responses to be sent to client
     ///
     /// # Returns
@@ -49,25 +49,25 @@ impl ProxyConnectionsProcessor {
     ///
     pub fn new(
         service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
-        user: &model::user::User,
+        device_id: &str,
         message_outbox: &Arc<Mutex<VecDeque<Vec<u8>>>>,
     ) -> Self {
         Self {
             service_mgr: service_mgr.clone(),
-            user: user.clone(),
+            device_id: device_id.to_string(),
             message_outbox: message_outbox.clone(),
             missing_connection_binds: HashMap::new(),
             missing_signal_probes: 0,
         }
     }
 
-    /// Gather proxy keys/addresses for user's service proxy connections.
+    /// Gather proxy keys/addresses for device's service proxy connections.
     ///
     /// # Returns
     ///
-    /// A map of (`service ID`, (`service name`, Vec<(`proxy key`, `connection addrs`)>)) corresponding to user's connections.
+    /// A map of (`service ID`, (`service name`, Vec<(`proxy key`, `connection addrs`)>)) corresponding to device's connections.
     ///
-    fn current_user_proxy_keys(&self) -> HashMap<i64, (String, Vec<(String, ConnectionAddrs)>)> {
+    fn current_device_proxy_keys(&self) -> HashMap<i64, (String, Vec<(String, ConnectionAddrs)>)> {
         let service_proxies = self.service_mgr.lock().unwrap().get_service_proxies();
         service_proxies
             .iter()
@@ -79,7 +79,7 @@ impl ProxyConnectionsProcessor {
                     (
                         service.name.clone(),
                         service_proxy
-                            .get_proxy_keys_for_user(self.user.user_id)
+                            .get_proxy_keys_for_device(self.device_id.as_str())
                             .clone(),
                     ),
                 )
@@ -92,7 +92,7 @@ impl ProxyConnectionsProcessor {
     /// # Arguments
     ///
     /// * `service_mgr` - Service manager
-    /// * `proxy_keys` - Current proxy keys and address binds for user
+    /// * `proxy_keys` - Current proxy keys and address binds for device
     /// * `signal_event` - Proxy connections signal event
     ///
     /// # Returns
@@ -177,8 +177,8 @@ impl ProxyConnectionsProcessor {
             warn(
                 &target!(),
                 &format!(
-                    "Shutting down dead proxy connection: user_id={}, svc_id={}, conn_addrs={:?}",
-                    &self.user.user_id, shutdown_conn_bind.0, shutdown_conn_bind.1
+                    "Shutting down dead proxy connection: dev_id={}, svc_id={}, conn_addrs={:?}",
+                    &self.device_id, shutdown_conn_bind.0, shutdown_conn_bind.1
                 ),
             );
 
@@ -193,8 +193,8 @@ impl ProxyConnectionsProcessor {
 
         if !errors.is_empty() {
             Err(General(format!(
-                "Error shutting down connection(s): user_id={}, errs={}",
-                &self.user.user_id,
+                "Error shutting down connection(s): dev_id={}, errs={}",
+                &self.device_id,
                 errors.join(", ")
             )))
         } else {
@@ -206,7 +206,7 @@ impl ProxyConnectionsProcessor {
     ///
     /// # Arguments
     ///
-    /// * `proxy_keys` - Current proxy keys and address binds for user
+    /// * `proxy_keys` - Current proxy keys and address binds for device
     ///
     /// # Returns
     ///
@@ -256,7 +256,7 @@ impl SignalingEventHandler for ProxyConnectionsProcessor {
         signal_events: VecDeque<SignalEvent>,
         _is_authenticated: bool,
     ) -> Result<(), AppError> {
-        let proxy_keys = self.current_user_proxy_keys();
+        let proxy_keys = self.current_device_proxy_keys();
         let service_mgr = self.service_mgr.clone();
 
         // Process inbound message(s)
@@ -276,8 +276,8 @@ impl SignalingEventHandler for ProxyConnectionsProcessor {
             self.missing_signal_probes += 1;
             if self.missing_signal_probes >= LIVENESS_MAX_CONSECUTIVE_MISSING_SIGNAL_PROBES {
                 return Err(AppError::General(format!(
-                    "Client not responsive, closing all connections: user_id={}",
-                    &self.user.user_id
+                    "Client not responsive, closing all connections: dev_id={}",
+                    &self.device_id
                 )));
             }
         }
@@ -291,12 +291,12 @@ impl SignalingEventHandler for ProxyConnectionsProcessor {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::client::controller::tests::create_user;
     use crate::service::manager::tests::MockSvcMgr;
     use crate::service::proxy::proxy_base::tests::MockGwSvcProxyVisitor;
     use mockall::predicate;
     use serde_json::json;
     use trust0_common::control::pdu::ControlChannel;
+    use trust0_common::model;
 
     // utils
     // =====
@@ -304,10 +304,11 @@ pub mod tests {
     fn create_processor(
         service_mgr: Arc<Mutex<dyn ServiceMgr>>,
         message_outbox: Arc<Mutex<VecDeque<Vec<u8>>>>,
+        device_id: &str,
     ) -> Result<ProxyConnectionsProcessor, AppError> {
         Ok(ProxyConnectionsProcessor {
             service_mgr,
-            user: create_user(),
+            device_id: device_id.to_string(),
             message_outbox,
             missing_connection_binds: HashMap::new(),
             missing_signal_probes: 0,
@@ -320,9 +321,10 @@ pub mod tests {
     #[test]
     fn proxyconnproc_new() {
         let service_mgr: Arc<Mutex<dyn ServiceMgr>> = Arc::new(Mutex::new(MockSvcMgr::new()));
+        let device_id = "C:03e8:100";
         let processor = ProxyConnectionsProcessor::new(
             &service_mgr,
-            &create_user(),
+            device_id,
             &Arc::new(Mutex::new(VecDeque::new())),
         );
 
@@ -331,9 +333,11 @@ pub mod tests {
     }
 
     #[test]
-    fn proxyconnproc_current_user_proxy_keys() {
+    fn proxyconnproc_current_device_proxy_keys() {
         let mut service_mgr = MockSvcMgr::new();
         let mut service_proxy = MockGwSvcProxyVisitor::new();
+        let device_id = "C:03e8:100";
+
         service_proxy
             .expect_get_service()
             .times(1)
@@ -345,8 +349,8 @@ pub mod tests {
                 port: 8200,
             });
         service_proxy
-            .expect_get_proxy_keys_for_user()
-            .with(predicate::eq(100))
+            .expect_get_proxy_keys_for_device()
+            .with(predicate::eq(device_id.to_string()))
             .times(1)
             .return_once(move |_| {
                 vec![(
@@ -362,13 +366,14 @@ pub mod tests {
         let processor = create_processor(
             Arc::new(Mutex::new(service_mgr)),
             Arc::new(Mutex::new(VecDeque::new())),
+            device_id,
         );
 
-        let user_proxy_keys = processor.unwrap().current_user_proxy_keys();
+        let device_proxy_keys = processor.unwrap().current_device_proxy_keys();
 
-        assert!(user_proxy_keys.contains_key(&200));
+        assert!(device_proxy_keys.contains_key(&200));
         assert_eq!(
-            *user_proxy_keys.get(&200).unwrap(),
+            *device_proxy_keys.get(&200).unwrap(),
             (
                 "Service200".to_string(),
                 vec![(
@@ -383,6 +388,8 @@ pub mod tests {
     fn proxyconnproc_on_loop_cycle_when_1_found_and_1_missing_and_1_dead() {
         let mut service_mgr = MockSvcMgr::new();
         let mut service_proxy = MockGwSvcProxyVisitor::new();
+        let device_id = "C:03e8:100";
+
         service_proxy
             .expect_get_service()
             .times(1)
@@ -394,8 +401,8 @@ pub mod tests {
                 port: 8200,
             });
         service_proxy
-            .expect_get_proxy_keys_for_user()
-            .with(predicate::eq(100))
+            .expect_get_proxy_keys_for_device()
+            .with(predicate::eq(device_id.to_string()))
             .times(1)
             .return_once(move |_| {
                 vec![
@@ -426,6 +433,7 @@ pub mod tests {
         let mut processor = create_processor(
             Arc::new(Mutex::new(service_mgr)),
             Arc::new(Mutex::new(VecDeque::new())),
+            device_id,
         )
         .unwrap();
         processor.missing_signal_probes = 1;
@@ -461,8 +469,7 @@ pub mod tests {
         assert_eq!(processor.missing_connection_binds.len(), 1);
         assert!(processor
             .missing_connection_binds
-            .get(&("addr3".to_string(), "addr4".to_string()))
-            .is_some());
+            .contains_key(&("addr3".to_string(), "addr4".to_string())));
         assert_eq!(
             *processor
                 .missing_connection_binds
@@ -477,7 +484,7 @@ pub mod tests {
                 .message_outbox
                 .lock()
                 .unwrap()
-                .get(0)
+                .front()
                 .unwrap()
                 .clone(),
         );
@@ -510,6 +517,8 @@ pub mod tests {
     fn proxyconnproc_on_loop_cycle_when_client_dead() {
         let mut service_mgr = MockSvcMgr::new();
         let mut service_proxy = MockGwSvcProxyVisitor::new();
+        let device_id = "C:03e8:100";
+
         service_proxy
             .expect_get_service()
             .times(1)
@@ -521,8 +530,8 @@ pub mod tests {
                 port: 8200,
             });
         service_proxy
-            .expect_get_proxy_keys_for_user()
-            .with(predicate::eq(100))
+            .expect_get_proxy_keys_for_device()
+            .with(predicate::eq(device_id.to_string()))
             .times(1)
             .return_once(move |_| {
                 vec![
@@ -549,6 +558,7 @@ pub mod tests {
         let mut processor = create_processor(
             Arc::new(Mutex::new(service_mgr)),
             Arc::new(Mutex::new(VecDeque::new())),
+            device_id,
         )
         .unwrap();
         processor.missing_signal_probes = LIVENESS_MAX_CONSECUTIVE_MISSING_SIGNAL_PROBES - 1;

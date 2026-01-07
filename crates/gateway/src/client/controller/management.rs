@@ -236,13 +236,15 @@ impl ManagementController {
     fn process_cmd_connections(&self) -> Result<management::response::Response, AppError> {
         let service_proxies = self.service_mgr.lock().unwrap().get_service_proxies();
 
+        let device_id = self.device.get_id();
+
         let connections: Vec<Value> = service_proxies
             .iter()
             .map(|service_proxy| {
                 let service_proxy = service_proxy.lock().unwrap();
 
                 let proxy_addrs_list: Vec<ConnectionAddrs> = service_proxy
-                    .get_proxy_keys_for_user(self.user.user_id)
+                    .get_proxy_keys_for_device(device_id.as_str())
                     .iter()
                     .map(|(_, addrs)| addrs)
                     .cloned()
@@ -436,17 +438,19 @@ impl ManagementController {
                     format!("Unknown service: svc_name={}", service_name),
                 ))?;
 
+        let device_id = self.device.get_id();
+
         if !self
             .service_mgr
             .lock()
             .unwrap()
-            .has_proxy_for_user_and_service(self.user.user_id, service.service_id)
+            .has_proxy_for_device_and_service(device_id.as_str(), service.service_id)
         {
             return Err(AppError::GenWithCodeAndMsg(
                 control::pdu::CODE_NOT_FOUND,
                 format!(
-                    "No active proxy found: user_id={}, svc_id={}",
-                    self.user.user_id, service.service_id
+                    "No active proxy found: user_id={}, dev_id={}, svc_id={}",
+                    self.user.user_id, &device_id, service.service_id
                 ),
             ));
         }
@@ -455,7 +459,7 @@ impl ManagementController {
         self.service_mgr
             .lock()
             .unwrap()
-            .shutdown_connections(Some(self.user.user_id), Some(service.service_id))?;
+            .shutdown_connections(Some(device_id), Some(service.service_id))?;
 
         // Return service proxy connection
         Ok(management::response::Response::new(
@@ -881,6 +885,8 @@ pub mod tests {
     ) -> Arc<Mutex<dyn ServiceMgr>> {
         let mut service_mgr = MockSvcMgr::new();
 
+        let device_id = "C:03e8:100";
+
         if expect_connection_details || expect_proxy_details {
             let mut service_proxy = MockGwSvcProxyVisitor::new();
             service_proxy
@@ -895,8 +901,8 @@ pub mod tests {
                 });
             if expect_connection_details {
                 service_proxy
-                    .expect_get_proxy_keys_for_user()
-                    .with(predicate::eq(100))
+                    .expect_get_proxy_keys_for_device()
+                    .with(predicate::eq(device_id.to_string()))
                     .times(1)
                     .return_once(move |_| {
                         vec![(
@@ -937,14 +943,18 @@ pub mod tests {
         }
 
         if expect_shutdown_proxy {
+            let device_id = "C:03e8:100";
             service_mgr
-                .expect_has_proxy_for_user_and_service()
-                .with(predicate::eq(100), predicate::eq(200))
+                .expect_has_proxy_for_device_and_service()
+                .with(predicate::eq(device_id.to_string()), predicate::eq(200))
                 .times(1)
                 .return_once(move |_, _| true);
             service_mgr
                 .expect_shutdown_connections()
-                .with(predicate::eq(Some(100)), predicate::eq(Some(200)))
+                .with(
+                    predicate::eq(Some(device_id.to_string())),
+                    predicate::eq(Some(200)),
+                )
                 .times(1)
                 .return_once(move |_, _| Ok(()));
         }

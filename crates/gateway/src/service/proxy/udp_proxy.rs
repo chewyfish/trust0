@@ -3,17 +3,25 @@ use std::net::{SocketAddr, TcpStream, UdpSocket};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
+#[cfg(test)]
+use ::time::macros::datetime;
 use anyhow::Result;
 use rustls::server::Accepted;
 use rustls::ServerConfig;
 use trust0_common::control::tls;
 use trust0_common::control::tls::message::ConnectionAddrs;
 use trust0_common::crypto::alpn;
+#[cfg(test)]
+use x509_parser::prelude::{ASN1Time, Validity};
 
 use crate::client::connection::ClientConnVisitor;
+#[cfg(test)]
+use crate::client::device::Device;
 use crate::config::AppConfig;
 use crate::service::manager::ServiceMgr;
 use crate::service::proxy::proxy_base::{GatewayServiceProxy, GatewayServiceProxyVisitor};
+#[cfg(test)]
+use trust0_common::crypto::ca::{CertAccessContext, EntityType};
 use trust0_common::error::AppError;
 use trust0_common::model::service::Service;
 #[cfg(test)]
@@ -92,12 +100,12 @@ pub struct UdpGatewayProxyServerVisitor {
     proxy_events_sender: Sender<ProxyEvent>,
     /// Map of services by proxy key
     services_by_proxy_key: Arc<Mutex<HashMap<String, i64>>>,
-    /// Map of users by proxy address context
-    users_by_proxy_addrs: HashMap<ConnectionAddrs, i64>,
+    /// Map of devices by proxy address context
+    devices_by_proxy_addrs: HashMap<ConnectionAddrs, String>,
     /// Map of proxy address context by proxy key
     proxy_addrs_by_proxy_key: HashMap<String, ConnectionAddrs>,
-    /// Map of proxy keys/addresses by user
-    proxy_keys_by_user: HashMap<i64, Vec<(String, ConnectionAddrs)>>,
+    /// Map of proxy keys/addresses by device
+    proxy_keys_by_device: HashMap<String, Vec<(String, ConnectionAddrs)>>,
 }
 
 impl UdpGatewayProxyServerVisitor {
@@ -138,14 +146,14 @@ impl UdpGatewayProxyServerVisitor {
             proxy_tasks_sender: proxy_tasks_sender.clone(),
             proxy_events_sender: proxy_events_sender.clone(),
             services_by_proxy_key: services_by_proxy_key.clone(),
-            users_by_proxy_addrs: HashMap::new(),
+            devices_by_proxy_addrs: HashMap::new(),
             proxy_addrs_by_proxy_key: HashMap::new(),
-            proxy_keys_by_user: HashMap::new(),
+            proxy_keys_by_device: HashMap::new(),
         })
     }
 
     /// Client connection authentication/authorization enforcement
-    /// If valid auth, return tuple of: connection visitor; user ID; ALPN protocol
+    /// If valid auth, return tuple of: connection visitor; device ID; user ID; ALPN protocol
     ///
     /// # Arguments
     ///
@@ -153,35 +161,50 @@ impl UdpGatewayProxyServerVisitor {
     ///
     /// # Returns
     ///
-    /// A [`Result`] containing tuple of: connection visitor; user ID; ALPN protocol
+    /// A [`Result`] containing tuple of: connection visitor; device ID; user ID; ALPN protocol
     ///
     #[cfg(not(test))]
     fn process_connection_authorization(
         &self,
         tls_conn: &TlsServerConnection,
-    ) -> Result<(ClientConnVisitor, i64, alpn::Protocol), AppError> {
+    ) -> Result<(ClientConnVisitor, String, i64, alpn::Protocol), AppError> {
         let mut conn_visitor = ClientConnVisitor::new(&self.app_config, &self.service_mgr);
         let protocol =
             conn_visitor.process_authorization(tls_conn, Some(self.service.service_id))?;
+        let device_id = conn_visitor.get_device().as_ref().unwrap().get_id();
         let user_id = conn_visitor.get_user().as_ref().unwrap().user_id;
-        Ok((conn_visitor, user_id, protocol))
+        Ok((conn_visitor, device_id.to_string(), user_id, protocol))
     }
     #[cfg(test)]
     fn process_connection_authorization(
         &self,
         _tls_conn: &TlsServerConnection,
-    ) -> Result<(ClientConnVisitor, i64, alpn::Protocol), AppError> {
+    ) -> Result<(ClientConnVisitor, String, i64, alpn::Protocol), AppError> {
         let mut conn_visitor = ClientConnVisitor::new(&self.app_config, &self.service_mgr);
-        conn_visitor.set_user(Some(user::User::new(
-            100,
-            None,
-            None,
-            "name100",
-            &user::Status::Active,
-            &[],
-        )));
+        let device = Device {
+            cert_subj: HashMap::new(),
+            cert_alt_subj: HashMap::new(),
+            cert_access_context: CertAccessContext {
+                entity_type: EntityType::Client,
+                platform: "plat1".to_string(),
+                user_id: 100,
+            },
+            cert_serial_num: vec![0x03u8, 0xe8u8],
+            cert_validity: Validity {
+                not_before: ASN1Time::from(datetime!(2025-12-21 19:04:45.0 +00:00:00)),
+                not_after: ASN1Time::from(datetime!(2100-01-01 0:00:00.0 +00:00:00)),
+            },
+        };
+        let user = user::User::new(100, None, None, "name100", &user::Status::Active, &[]);
+        conn_visitor.set_device(Some(device.clone()));
+        conn_visitor.set_user(Some(user.clone()));
         conn_visitor.set_protocol(Some(alpn::Protocol::Service(200)));
-        Ok((conn_visitor, 100, alpn::Protocol::Service(200)))
+        Ok((
+            conn_visitor,
+            device.get_id(),
+            user.user_id,
+            alpn::Protocol::Service(200),
+        ))
     }
 }
 
@@ -191,11 +214,11 @@ impl server_std::ServerVisitor for UdpGatewayProxyServerVisitor {
         tls_conn: TlsServerConnection,
         _client_msg: Option<tls::message::SessionMessage>,
     ) -> Result<conn_std::Connection, AppError> {
-        let (conn_visitor, user_id, alpn_protocol) =
+        let (conn_visitor, device_id, _user_id, alpn_protocol) =
             self.process_connection_authorization(&tls_conn)?;
         let conn_addrs = tls::message::Trust0Connection::create_connection_addrs(&tls_conn.sock);
-        self.users_by_proxy_addrs
-            .insert(conn_addrs.clone(), user_id);
+        self.devices_by_proxy_addrs
+            .insert(conn_addrs.clone(), device_id);
         conn_std::Connection::new(
             Box::new(conn_visitor),
             tls_conn,
@@ -330,22 +353,24 @@ impl server_std::ServerVisitor for UdpGatewayProxyServerVisitor {
             .unwrap()
             .insert(proxy_key.clone(), self.service.service_id);
 
-        let user_id = self
-            .users_by_proxy_addrs
+        let device_id = self
+            .devices_by_proxy_addrs
             .get(&proxy_addrs)
             .ok_or(AppError::General(format!(
-                "Unknown user for proxy address pair: addrs={:?}",
+                "Unknown device for proxy address pair: addrs={:?}",
                 &proxy_addrs
             )))?;
 
         self.proxy_addrs_by_proxy_key
             .insert(proxy_key.clone(), proxy_addrs.clone());
 
-        if let Some(proxy_keys) = self.proxy_keys_by_user.get_mut(user_id) {
+        if let Some(proxy_keys) = self.proxy_keys_by_device.get_mut(device_id) {
             proxy_keys.push((proxy_key.clone(), proxy_addrs.clone()));
         } else {
-            self.proxy_keys_by_user
-                .insert(*user_id, vec![(proxy_key.clone(), proxy_addrs.clone())]);
+            self.proxy_keys_by_device.insert(
+                device_id.clone(),
+                vec![(proxy_key.clone(), proxy_addrs.clone())],
+            );
         }
 
         Ok(())
@@ -365,9 +390,9 @@ impl GatewayServiceProxyVisitor for UdpGatewayProxyServerVisitor {
         self.proxy_port
     }
 
-    fn get_proxy_keys_for_user(&self, user_id: i64) -> Vec<(String, ConnectionAddrs)> {
-        self.proxy_keys_by_user
-            .get(&user_id)
+    fn get_proxy_keys_for_device(&self, device_id: &str) -> Vec<(String, ConnectionAddrs)> {
+        self.proxy_keys_by_device
+            .get(device_id)
             .unwrap_or(&vec![])
             .to_vec()
     }
@@ -375,14 +400,16 @@ impl GatewayServiceProxyVisitor for UdpGatewayProxyServerVisitor {
     fn shutdown_connections(
         &mut self,
         proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
-        user_id: Option<i64>,
+        device_id: Option<String>,
     ) -> Result<(), AppError> {
         let mut errors: Vec<String> = vec![];
 
         let proxy_keys_lists: Vec<Vec<(String, ConnectionAddrs)>> = self
-            .proxy_keys_by_user
+            .proxy_keys_by_device
             .iter()
-            .filter(|(uid, _)| user_id.is_none() || (**uid == user_id.unwrap()))
+            .filter(|(did, _)| {
+                device_id.is_none() || (did.as_str() == device_id.as_ref().unwrap().as_str())
+            })
             .map(|item| item.1)
             .cloned()
             .collect();
@@ -438,15 +465,15 @@ impl GatewayServiceProxyVisitor for UdpGatewayProxyServerVisitor {
         match self.proxy_addrs_by_proxy_key.get(proxy_key) {
             Some(proxy_addrs) => {
                 let proxy_addrs = proxy_addrs.clone();
-                let user_id = self.users_by_proxy_addrs.get(&proxy_addrs).unwrap();
-                if let Some(proxy_keys) = self.proxy_keys_by_user.get_mut(user_id) {
+                let device_id = self.devices_by_proxy_addrs.get(&proxy_addrs).unwrap();
+                if let Some(proxy_keys) = self.proxy_keys_by_device.get_mut(device_id) {
                     proxy_keys.retain(|key| !key.0.eq(proxy_key));
                     if proxy_keys.is_empty() {
-                        self.proxy_keys_by_user.remove(user_id);
+                        self.proxy_keys_by_device.remove(device_id);
                     }
                 }
                 self.proxy_addrs_by_proxy_key.remove(proxy_key);
-                self.users_by_proxy_addrs.remove(&proxy_addrs);
+                self.devices_by_proxy_addrs.remove(&proxy_addrs);
                 self.services_by_proxy_key
                     .lock()
                     .unwrap()
@@ -506,9 +533,9 @@ pub mod tests {
             proxy_tasks_sender: sync::mpsc::channel().0,
             proxy_events_sender: sync::mpsc::channel().0,
             services_by_proxy_key: Arc::new(Mutex::new(HashMap::new())),
-            users_by_proxy_addrs: HashMap::new(),
+            devices_by_proxy_addrs: HashMap::new(),
             proxy_addrs_by_proxy_key: HashMap::new(),
-            proxy_keys_by_user: HashMap::new(),
+            proxy_keys_by_device: HashMap::new(),
         }));
 
         let _ = UdpGatewayProxy::new(&app_config, server_visitor, 3000);
@@ -582,9 +609,9 @@ pub mod tests {
             proxy_tasks_sender: sync::mpsc::channel().0,
             proxy_events_sender: sync::mpsc::channel().0,
             services_by_proxy_key: Arc::new(Mutex::new(HashMap::new())),
-            users_by_proxy_addrs: HashMap::new(),
+            devices_by_proxy_addrs: HashMap::new(),
             proxy_addrs_by_proxy_key: HashMap::new(),
-            proxy_keys_by_user: HashMap::new(),
+            proxy_keys_by_device: HashMap::new(),
         };
 
         if let Err(err) = server_visitor.create_client_conn(
@@ -607,20 +634,20 @@ pub mod tests {
             panic!("Unexpected result: err={:?}", &err);
         }
 
-        let expected_user_id = 100;
+        let expected_device_id = "C:03e8:100";
         let expected_proxy_addrs = (
             format!("{:?}", connected_tcp_peer_addr),
             format!("{:?}", connected_tcp_local_addr),
         );
         assert!(server_visitor
-            .users_by_proxy_addrs
+            .devices_by_proxy_addrs
             .contains_key(&expected_proxy_addrs));
         assert_eq!(
             *server_visitor
-                .users_by_proxy_addrs
+                .devices_by_proxy_addrs
                 .get(&expected_proxy_addrs)
                 .unwrap(),
-            expected_user_id
+            expected_device_id.to_string()
         );
     }
 
@@ -654,9 +681,9 @@ pub mod tests {
             proxy_tasks_sender: sync::mpsc::channel().0,
             proxy_events_sender: sync::mpsc::channel().0,
             services_by_proxy_key: Arc::new(Mutex::new(HashMap::new())),
-            users_by_proxy_addrs: HashMap::new(),
+            devices_by_proxy_addrs: HashMap::new(),
             proxy_addrs_by_proxy_key: HashMap::new(),
-            proxy_keys_by_user: HashMap::new(),
+            proxy_keys_by_device: HashMap::new(),
         };
 
         let server_msg_result = server_visitor.on_server_msg_provider(
@@ -723,9 +750,9 @@ pub mod tests {
             proxy_tasks_sender: sync::mpsc::channel().0,
             proxy_events_sender: sync::mpsc::channel().0,
             services_by_proxy_key: Arc::new(Mutex::new(HashMap::new())),
-            users_by_proxy_addrs: HashMap::new(),
+            devices_by_proxy_addrs: HashMap::new(),
             proxy_addrs_by_proxy_key: HashMap::new(),
-            proxy_keys_by_user: HashMap::new(),
+            proxy_keys_by_device: HashMap::new(),
         };
 
         let client_conn = server_visitor
@@ -781,7 +808,7 @@ pub mod tests {
         let server_listener = UdpSocket::bind("127.0.0.1:0").unwrap();
         let service_port = server_listener.local_addr().unwrap().port();
         let service_mgr = Arc::new(Mutex::new(MockSvcMgr::new()));
-        let expected_user_id = 100;
+        let expected_device_id = "C:03e8:100";
         let expected_proxy_addrs = (
             format!("{:?}", connected_tcp_peer_addr),
             format!("{:?}", connected_tcp_local_addr),
@@ -802,9 +829,12 @@ pub mod tests {
             proxy_tasks_sender,
             proxy_events_sender,
             services_by_proxy_key: services_by_proxy_key.clone(),
-            users_by_proxy_addrs: HashMap::from([(expected_proxy_addrs.clone(), expected_user_id)]),
+            devices_by_proxy_addrs: HashMap::from([(
+                expected_proxy_addrs.clone(),
+                expected_device_id.to_string(),
+            )]),
             proxy_addrs_by_proxy_key: HashMap::new(),
-            proxy_keys_by_user: HashMap::new(),
+            proxy_keys_by_device: HashMap::new(),
         };
 
         let client_conn = server_visitor
@@ -861,8 +891,8 @@ pub mod tests {
         assert!(!services_by_proxy_key.lock().unwrap().is_empty());
         assert!(!server_visitor.proxy_addrs_by_proxy_key.is_empty());
         assert!(server_visitor
-            .proxy_keys_by_user
-            .contains_key(&expected_user_id));
+            .proxy_keys_by_device
+            .contains_key(expected_device_id));
     }
 
     #[test]
@@ -885,6 +915,9 @@ pub mod tests {
             port: 4000,
         };
 
+        let device100_id = "C:03e8:100";
+        let device101_id = "C:a756:101";
+
         let server_visitor = UdpGatewayProxyServerVisitor {
             app_config: app_config.clone(),
             service_mgr: Arc::new(Mutex::new(MockSvcMgr::new())),
@@ -900,16 +933,28 @@ pub mod tests {
             proxy_tasks_sender: sync::mpsc::channel().0,
             proxy_events_sender: sync::mpsc::channel().0,
             services_by_proxy_key: Arc::new(Mutex::new(HashMap::new())),
-            users_by_proxy_addrs: HashMap::from([
-                (("addr1".to_string(), "addr2".to_string()), 100),
-                (("addr3".to_string(), "addr4".to_string()), 101),
-                (("addr5".to_string(), "addr6".to_string()), 100),
-                (("addr7".to_string(), "addr8".to_string()), 101),
+            devices_by_proxy_addrs: HashMap::from([
+                (
+                    ("addr1".to_string(), "addr2".to_string()),
+                    device100_id.to_string(),
+                ),
+                (
+                    ("addr3".to_string(), "addr4".to_string()),
+                    device101_id.to_string(),
+                ),
+                (
+                    ("addr5".to_string(), "addr6".to_string()),
+                    device100_id.to_string(),
+                ),
+                (
+                    ("addr7".to_string(), "addr8".to_string()),
+                    device101_id.to_string(),
+                ),
             ]),
             proxy_addrs_by_proxy_key: HashMap::new(),
-            proxy_keys_by_user: HashMap::from([
+            proxy_keys_by_device: HashMap::from([
                 (
-                    100,
+                    device100_id.to_string(),
                     vec![
                         (
                             "key1".to_string(),
@@ -922,7 +967,7 @@ pub mod tests {
                     ],
                 ),
                 (
-                    101,
+                    device101_id.to_string(),
                     vec![(
                         "key3".to_string(),
                         ("addr3".to_string(), "addr4".to_string()),
@@ -946,13 +991,13 @@ pub mod tests {
                 ("addr5".to_string(), "addr6".to_string()),
             ),
         ];
-        let mut proxy_keys = server_visitor.get_proxy_keys_for_user(100);
+        let mut proxy_keys = server_visitor.get_proxy_keys_for_device(device100_id);
         proxy_keys.sort();
         assert_eq!(proxy_keys, expected_proxy_keys);
     }
 
     #[test]
-    fn udpsvrproxyvisit_shutdown_connections_when_no_user_supplied() {
+    fn udpsvrproxyvisit_shutdown_connections_when_no_device_supplied() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
                 config::GatewayType::Service,
@@ -964,6 +1009,9 @@ pub mod tests {
             .unwrap(),
         );
         let (proxy_tasks_sender, proxy_tasks_receiver) = sync::mpsc::channel();
+
+        let device100_id = "C:03e8:100";
+        let device101_id = "C:a756:101";
 
         let mut server_visitor = UdpGatewayProxyServerVisitor {
             app_config: app_config.clone(),
@@ -984,10 +1032,19 @@ pub mod tests {
                 ("key2".to_string(), 200),
                 ("key3".to_string(), 201),
             ]))),
-            users_by_proxy_addrs: HashMap::from([
-                (("addr1".to_string(), "addr2".to_string()), 100),
-                (("addr3".to_string(), "addr4".to_string()), 100),
-                (("addr5".to_string(), "addr6".to_string()), 101),
+            devices_by_proxy_addrs: HashMap::from([
+                (
+                    ("addr1".to_string(), "addr2".to_string()),
+                    device100_id.to_string(),
+                ),
+                (
+                    ("addr3".to_string(), "addr4".to_string()),
+                    device100_id.to_string(),
+                ),
+                (
+                    ("addr5".to_string(), "addr6".to_string()),
+                    device101_id.to_string(),
+                ),
             ]),
             proxy_addrs_by_proxy_key: HashMap::from([
                 (
@@ -1003,9 +1060,9 @@ pub mod tests {
                     ("addr5".to_string(), "addr6".to_string()),
                 ),
             ]),
-            proxy_keys_by_user: HashMap::from([
+            proxy_keys_by_device: HashMap::from([
                 (
-                    100,
+                    device100_id.to_string(),
                     vec![
                         (
                             "key1".to_string(),
@@ -1018,7 +1075,7 @@ pub mod tests {
                     ],
                 ),
                 (
-                    101,
+                    device101_id.to_string(),
                     vec![(
                         "key3".to_string(),
                         ("addr5".to_string(), "addr6".to_string()),
@@ -1055,8 +1112,8 @@ pub mod tests {
         }
 
         assert!(server_visitor.proxy_addrs_by_proxy_key.is_empty());
-        assert!(server_visitor.users_by_proxy_addrs.is_empty());
-        assert!(server_visitor.proxy_keys_by_user.is_empty());
+        assert!(server_visitor.devices_by_proxy_addrs.is_empty());
+        assert!(server_visitor.proxy_keys_by_device.is_empty());
         assert!(server_visitor
             .services_by_proxy_key
             .lock()
@@ -1065,7 +1122,7 @@ pub mod tests {
     }
 
     #[test]
-    fn udpsvrproxyvisit_shutdown_connections_when_user_supplied() {
+    fn udpsvrproxyvisit_shutdown_connections_when_device_supplied() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
                 config::GatewayType::Service,
@@ -1077,6 +1134,9 @@ pub mod tests {
             .unwrap(),
         );
         let (proxy_tasks_sender, proxy_tasks_receiver) = sync::mpsc::channel();
+
+        let device100_id = "C:03e8:100";
+        let device101_id = "C:a756:101";
 
         let mut server_visitor = UdpGatewayProxyServerVisitor {
             app_config: app_config.clone(),
@@ -1097,10 +1157,19 @@ pub mod tests {
                 ("key2".to_string(), 200),
                 ("key3".to_string(), 201),
             ]))),
-            users_by_proxy_addrs: HashMap::from([
-                (("addr1".to_string(), "addr2".to_string()), 100),
-                (("addr3".to_string(), "addr4".to_string()), 100),
-                (("addr5".to_string(), "addr6".to_string()), 101),
+            devices_by_proxy_addrs: HashMap::from([
+                (
+                    ("addr1".to_string(), "addr2".to_string()),
+                    device100_id.to_string(),
+                ),
+                (
+                    ("addr3".to_string(), "addr4".to_string()),
+                    device100_id.to_string(),
+                ),
+                (
+                    ("addr5".to_string(), "addr6".to_string()),
+                    device101_id.to_string(),
+                ),
             ]),
             proxy_addrs_by_proxy_key: HashMap::from([
                 (
@@ -1116,9 +1185,9 @@ pub mod tests {
                     ("addr5".to_string(), "addr6".to_string()),
                 ),
             ]),
-            proxy_keys_by_user: HashMap::from([
+            proxy_keys_by_device: HashMap::from([
                 (
-                    100,
+                    device100_id.to_string(),
                     vec![
                         (
                             "key1".to_string(),
@@ -1131,7 +1200,7 @@ pub mod tests {
                     ],
                 ),
                 (
-                    101,
+                    device101_id.to_string(),
                     vec![(
                         "key3".to_string(),
                         ("addr5".to_string(), "addr6".to_string()),
@@ -1140,7 +1209,9 @@ pub mod tests {
             ]),
         };
 
-        if let Err(err) = server_visitor.shutdown_connections(&proxy_tasks_sender, Some(100)) {
+        if let Err(err) =
+            server_visitor.shutdown_connections(&proxy_tasks_sender, Some(device100_id.to_string()))
+        {
             panic!("Unexpected result: err={:?}", &err);
         }
 
@@ -1170,16 +1241,16 @@ pub mod tests {
             server_visitor.proxy_addrs_by_proxy_key.get("key3"),
             Some(&("addr5".to_string(), "addr6".to_string()))
         );
-        assert_eq!(server_visitor.users_by_proxy_addrs.len(), 1);
+        assert_eq!(server_visitor.devices_by_proxy_addrs.len(), 1);
         assert_eq!(
             server_visitor
-                .users_by_proxy_addrs
+                .devices_by_proxy_addrs
                 .get(&("addr5".to_string(), "addr6".to_string())),
-            Some(&101)
+            Some(device101_id.to_string()).as_ref()
         );
-        assert_eq!(server_visitor.proxy_keys_by_user.len(), 1);
+        assert_eq!(server_visitor.proxy_keys_by_device.len(), 1);
         assert_eq!(
-            server_visitor.proxy_keys_by_user.get(&101),
+            server_visitor.proxy_keys_by_device.get(device101_id),
             Some(&vec![(
                 "key3".to_string(),
                 ("addr5".to_string(), "addr6".to_string())
@@ -1213,6 +1284,9 @@ pub mod tests {
         );
         let (proxy_tasks_sender, proxy_tasks_receiver) = sync::mpsc::channel();
 
+        let device100_id = "C:03e8:100";
+        let device101_id = "C:a756:101";
+
         let mut server_visitor = UdpGatewayProxyServerVisitor {
             app_config: app_config.clone(),
             service_mgr: Arc::new(Mutex::new(MockSvcMgr::new())),
@@ -1232,10 +1306,19 @@ pub mod tests {
                 ("key2".to_string(), 200),
                 ("key3".to_string(), 201),
             ]))),
-            users_by_proxy_addrs: HashMap::from([
-                (("addr1".to_string(), "addr2".to_string()), 100),
-                (("addr3".to_string(), "addr4".to_string()), 100),
-                (("addr5".to_string(), "addr6".to_string()), 101),
+            devices_by_proxy_addrs: HashMap::from([
+                (
+                    ("addr1".to_string(), "addr2".to_string()),
+                    device100_id.to_string(),
+                ),
+                (
+                    ("addr3".to_string(), "addr4".to_string()),
+                    device100_id.to_string(),
+                ),
+                (
+                    ("addr5".to_string(), "addr6".to_string()),
+                    device101_id.to_string(),
+                ),
             ]),
             proxy_addrs_by_proxy_key: HashMap::from([
                 (
@@ -1251,9 +1334,9 @@ pub mod tests {
                     ("addr5".to_string(), "addr6".to_string()),
                 ),
             ]),
-            proxy_keys_by_user: HashMap::from([
+            proxy_keys_by_device: HashMap::from([
                 (
-                    100,
+                    device100_id.to_string(),
                     vec![
                         (
                             "key1".to_string(),
@@ -1266,7 +1349,7 @@ pub mod tests {
                     ],
                 ),
                 (
-                    101,
+                    device101_id.to_string(),
                     vec![(
                         "key3".to_string(),
                         ("addr5".to_string(), "addr6".to_string()),
@@ -1307,22 +1390,22 @@ pub mod tests {
             server_visitor.proxy_addrs_by_proxy_key.get("key2"),
             Some(&("addr3".to_string(), "addr4".to_string()))
         );
-        assert_eq!(server_visitor.users_by_proxy_addrs.len(), 2);
+        assert_eq!(server_visitor.devices_by_proxy_addrs.len(), 2);
         assert_eq!(
             server_visitor
-                .users_by_proxy_addrs
+                .devices_by_proxy_addrs
                 .get(&("addr1".to_string(), "addr2".to_string())),
-            Some(&100)
+            Some(device100_id.to_string()).as_ref()
         );
         assert_eq!(
             server_visitor
-                .users_by_proxy_addrs
+                .devices_by_proxy_addrs
                 .get(&("addr3".to_string(), "addr4".to_string())),
-            Some(&100)
+            Some(device100_id.to_string()).as_ref()
         );
-        assert_eq!(server_visitor.proxy_keys_by_user.len(), 1);
+        assert_eq!(server_visitor.proxy_keys_by_device.len(), 1);
         assert_eq!(
-            server_visitor.proxy_keys_by_user.get(&100),
+            server_visitor.proxy_keys_by_device.get(device100_id),
             Some(&vec![
                 (
                     "key1".to_string(),
@@ -1370,6 +1453,9 @@ pub mod tests {
         );
         let (proxy_tasks_sender, proxy_tasks_receiver) = sync::mpsc::channel();
 
+        let device100_id = "C:03e8:100";
+        let device101_id = "C:a756:101";
+
         let mut server_visitor = UdpGatewayProxyServerVisitor {
             app_config: app_config.clone(),
             service_mgr: Arc::new(Mutex::new(MockSvcMgr::new())),
@@ -1389,10 +1475,19 @@ pub mod tests {
                 ("key2".to_string(), 200),
                 ("key3".to_string(), 201),
             ]))),
-            users_by_proxy_addrs: HashMap::from([
-                (("addr1".to_string(), "addr2".to_string()), 100),
-                (("addr3".to_string(), "addr4".to_string()), 100),
-                (("addr5".to_string(), "addr6".to_string()), 101),
+            devices_by_proxy_addrs: HashMap::from([
+                (
+                    ("addr1".to_string(), "addr2".to_string()),
+                    device100_id.to_string(),
+                ),
+                (
+                    ("addr3".to_string(), "addr4".to_string()),
+                    device100_id.to_string(),
+                ),
+                (
+                    ("addr5".to_string(), "addr6".to_string()),
+                    device101_id.to_string(),
+                ),
             ]),
             proxy_addrs_by_proxy_key: HashMap::from([
                 (
@@ -1408,9 +1503,9 @@ pub mod tests {
                     ("addr5".to_string(), "addr6".to_string()),
                 ),
             ]),
-            proxy_keys_by_user: HashMap::from([
+            proxy_keys_by_device: HashMap::from([
                 (
-                    100,
+                    device100_id.to_string(),
                     vec![
                         (
                             "key1".to_string(),
@@ -1423,7 +1518,7 @@ pub mod tests {
                     ],
                 ),
                 (
-                    101,
+                    device101_id.to_string(),
                     vec![(
                         "key3".to_string(),
                         ("addr5".to_string(), "addr6".to_string()),
@@ -1456,8 +1551,8 @@ pub mod tests {
         }
 
         assert_eq!(server_visitor.proxy_addrs_by_proxy_key.len(), 3);
-        assert_eq!(server_visitor.users_by_proxy_addrs.len(), 3);
-        assert_eq!(server_visitor.proxy_keys_by_user.len(), 2);
+        assert_eq!(server_visitor.devices_by_proxy_addrs.len(), 3);
+        assert_eq!(server_visitor.proxy_keys_by_device.len(), 2);
         assert_eq!(
             server_visitor.services_by_proxy_key.lock().unwrap().len(),
             3
