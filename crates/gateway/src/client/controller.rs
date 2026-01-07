@@ -80,7 +80,6 @@ impl ControlPlane {
             app_config,
             service_mgr,
             event_channel_sender,
-            user,
             device,
             &message_outbox,
         )));

@@ -59,19 +59,20 @@ pub trait GatewayServiceProxyVisitor: server_std::ServerVisitor + Send {
     ///
     /// # Arguments
     ///
-    /// * `user_id` - User ID for proxy keys request
+    /// * `device_id` - Device ID for proxy keys request
     ///
     /// # Returns
     ///
-    /// A list of (proxy key, (client address, gateway address)) for user.
+    /// A list of (proxy key, (client address, gateway address)) for device.
     ///
-    fn get_proxy_keys_for_user(&self, user_id: i64) -> Vec<(String, ConnectionAddrs)>;
+    fn get_proxy_keys_for_device(&self, device_id: &str) -> Vec<(String, ConnectionAddrs)>;
 
-    /// Shutdown the active service proxy connections. Consider either all connections or for given user ID.
+    /// Shutdown the active service proxy connections. Consider either all connections or for given device ID.
     ///
     /// # Arguments
     ///
     /// * `proxy_tasks_sender` - A channel sender to send events to the proxy executor
+    /// * `device_id` - Device ID of proxy connections, else all connections if not supplied
     ///
     /// # Returns
     ///
@@ -80,7 +81,7 @@ pub trait GatewayServiceProxyVisitor: server_std::ServerVisitor + Send {
     fn shutdown_connections(
         &mut self,
         proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
-        user_id: Option<i64>,
+        device_id: Option<String>,
     ) -> Result<(), AppError>;
 
     /// Shutdown service proxy connection.
@@ -155,8 +156,8 @@ pub mod tests {
             fn get_service(&self) -> Service;
             fn get_proxy_host(&self) -> Option<String>;
             fn get_proxy_port(&self) -> u16;
-            fn get_proxy_keys_for_user(&self, user_id: i64) -> Vec<(String, ConnectionAddrs)>;
-            fn shutdown_connections(&mut self, proxy_tasks_sender: &Sender<ProxyExecutorEvent>, user_id: Option<i64>) -> Result<(), AppError>;
+            fn get_proxy_keys_for_device(&self, device_id: &str) -> Vec<(String, ConnectionAddrs)>;
+            fn shutdown_connections(&mut self, proxy_tasks_sender: &Sender<ProxyExecutorEvent>, device_id: Option<String>) -> Result<(), AppError>;
             fn shutdown_connection(&mut self, proxy_tasks_sender: &Sender<ProxyExecutorEvent>, proxy_key: &str) -> Result<(), AppError>;
             fn remove_proxy_for_key(&mut self, proxy_key: &str) -> bool;
         }

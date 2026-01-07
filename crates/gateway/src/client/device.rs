@@ -8,7 +8,7 @@ use x509_parser::nom::AsBytes;
 use x509_parser::prelude::*;
 
 use trust0_common::crypto::asn;
-use trust0_common::crypto::ca::CertAccessContext;
+use trust0_common::crypto::ca::{CertAccessContext, EntityType};
 use trust0_common::error::AppError;
 
 pub const CERT_OID_COMMON_NAME: &str = "2.5.4.3";
@@ -20,6 +20,9 @@ pub const CERT_OID_LOCALITY: &str = "2.5.4.7";
 #[allow(dead_code)]
 pub const CERT_OID_STATE: &str = "2.5.4.8";
 pub const CERT_OID_COUNTRY: &str = "2.5.4.6";
+
+const DEVICE_ID_PREFIX_GATEWAY: &str = "G";
+const DEVICE_ID_PREFIX_CLIENT: &str = "C";
 
 /// Represents client device
 #[derive(Clone, Debug)]
@@ -101,6 +104,25 @@ impl Device {
             cert_serial_num: x509_cert.raw_serial().to_vec(),
             cert_validity: x509_cert.validity.clone(),
         })
+    }
+
+    /// ID for given device entity:
+    /// * Root CA, Gateway - Use serial number
+    /// * Client - Use serial number + user ID
+    ///
+    /// # Returns
+    ///
+    /// device ID [`String`]
+    ///
+    pub fn get_id(&self) -> String {
+        let serial_num_enc = hex::encode(&self.cert_serial_num);
+        match &self.cert_access_context.entity_type {
+            EntityType::Client => format!(
+                "{}:{}:{}",
+                DEVICE_ID_PREFIX_CLIENT, &serial_num_enc, &self.cert_access_context.user_id
+            ),
+            _ => format!("{}:{}", DEVICE_ID_PREFIX_GATEWAY, &serial_num_enc),
+        }
     }
 
     /// Certificate subject attributes
@@ -332,6 +354,45 @@ mod tests {
                 not_before: ASN1Time::from(datetime!(2025-12-21 19:04:45.0 +00:00:00)),
                 not_after: ASN1Time::from(datetime!(2100-01-01 0:00:00.0 +00:00:00)),
             }
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_get_id_client_cert() -> Result<(), AppError> {
+        let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
+
+        let device = Device::new(certs)?;
+
+        assert_eq!(
+            device.get_id(),
+            format!(
+                "{}:{}:{}",
+                DEVICE_ID_PREFIX_CLIENT,
+                &hex::encode(vec![0x03u8, 0xe8u8]),
+                &100
+            )
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_get_id_gateway_cert() -> Result<(), AppError> {
+        let certs_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
+
+        let device = Device::new(certs)?;
+
+        assert_eq!(
+            device.get_id(),
+            format!(
+                "{}:{}",
+                DEVICE_ID_PREFIX_GATEWAY,
+                &hex::encode(vec![3u8, 231u8]),
+            )
         );
 
         Ok(())

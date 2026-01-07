@@ -21,7 +21,7 @@ use trust0_common::control::signaling::event::{EventType, SignalEvent};
 use trust0_common::error::AppError;
 use trust0_common::logging::error;
 use trust0_common::net::tls_server::conn_std;
-use trust0_common::{model, sync, target};
+use trust0_common::{sync, target};
 
 pub const EVENT_LOOP_CYCLE_DELAY_MSECS: u64 = 6_000;
 
@@ -57,7 +57,6 @@ impl SignalingController {
         app_config: &Arc<AppConfig>,
         service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
         event_channel_sender: &mpsc::Sender<conn_std::ConnectionEvent>,
-        user: &model::user::User,
         device: &Device,
         message_outbox: &Arc<Mutex<VecDeque<Vec<u8>>>>,
     ) -> Self {
@@ -75,9 +74,11 @@ impl SignalingController {
             message_inbox.insert(EventType::CertificateReissue, VecDeque::new());
         }
 
+        let device_id = device.get_id();
+
         let proxy_conns_processor = Rc::new(Mutex::new(ProxyConnectionsProcessor::new(
             service_mgr,
-            user,
+            device_id.as_str(),
             message_outbox,
         )));
         event_processors.insert(EventType::ProxyConnections, proxy_conns_processor);
@@ -215,7 +216,7 @@ pub trait SignalingEventHandler {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::client::controller::tests::{create_device, create_user, MockChannelProc};
+    use crate::client::controller::tests::{create_device, MockChannelProc};
     use crate::config;
     use crate::repository::access_repo::tests::MockAccessRepo;
     use crate::repository::role_repo::tests::MockRoleRepo;
@@ -284,7 +285,6 @@ pub mod tests {
             &Arc::new(app_config),
             &service_mgr,
             &mpsc::channel().0,
-            &create_user(),
             &create_device().unwrap(),
             &Arc::new(Mutex::new(VecDeque::new())),
         );
@@ -326,7 +326,6 @@ pub mod tests {
             &Arc::new(app_config),
             &service_mgr,
             &mpsc::channel().0,
-            &create_user(),
             &create_device().unwrap(),
             &Arc::new(Mutex::new(VecDeque::new())),
         );

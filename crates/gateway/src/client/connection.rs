@@ -111,6 +111,7 @@ impl ClientConnVisitor {
             .collect();
 
         let device = Device::new(peer_certificates)?;
+        let device_id = device.get_id();
         let serial_num = hex::encode(device.get_cert_serial_num());
 
         // Validate user
@@ -132,7 +133,7 @@ impl ClientConnVisitor {
                 AppError::GenWithCodeAndMsg(
                     config::RESPCODE_0500_SYSTEM_ERROR,
                     format!(
-                        "Error retrieving user from user repo: uid={}, ser={}, err={:?}",
+                        "Error retrieving user from user repo: user_id={}, ser={}, err={:?}",
                         user_id, &serial_num, err
                     ),
                 )
@@ -140,7 +141,7 @@ impl ClientConnVisitor {
             .ok_or(AppError::GenWithCodeAndMsg(
                 config::RESPCODE_0421_UNKNOWN_USER,
                 format!(
-                    "User is not found in user repo: uid={}, ser={}",
+                    "User is not found in user repo: user_id={}, ser={}",
                     user_id, &serial_num
                 ),
             ))?;
@@ -149,7 +150,7 @@ impl ClientConnVisitor {
             return Err(AppError::GenWithCodeAndMsg(
                 config::RESPCODE_0422_INACTIVE_USER,
                 format!(
-                    "User is not active: uid={}, ser={}, status={:?}",
+                    "User is not active: user_id={}, ser={}, status={:?}",
                     user_id, &serial_num, user.status
                 ),
             ));
@@ -160,18 +161,18 @@ impl ClientConnVisitor {
 
         // Validate service connection
         if let Some(service_id) = service_id {
-            // Ensure active control plane for user
+            // Ensure active control plane for device
             if !self
                 .service_mgr
                 .lock()
                 .unwrap()
-                .has_control_plane_for_user(user_id, true)
+                .has_control_plane_for_device(device_id.as_str(), true)
             {
                 return Err(AppError::GenWithCodeAndMsg(
                     config::RESPCODE_0427_CONTROL_PLANE_NOT_AUTHENTICATED,
                     format!(
-                        "Service proxy connections require an authenticated control plane: uid={}, ser={}",
-                        user_id, &serial_num
+                        "Service proxy connections require an authenticated control plane: user_id={}, dev_id={}, ser={}",
+                        user_id, device_id.as_str(), &serial_num
                     ),
                 ));
             }
@@ -186,8 +187,8 @@ impl ClientConnVisitor {
                 return Err(AppError::GenWithCodeAndMsg(
                     config::RESPCODE_0424_INVALID_ALPN_PROTOCOL,
                     format!(
-                        "ALPN has wrong service ID: user={}, ser={}, alpn={:?}, svc_id={}",
-                        user_id, &serial_num, alpn_protocol, service_id
+                        "ALPN has wrong service ID: user_id={}, dev_id={}, ser={}, alpn={:?}, svc_id={}",
+                        user_id, device_id.as_str(), &serial_num, alpn_protocol, service_id
                     ),
                 ));
             }
@@ -203,7 +204,7 @@ impl ClientConnVisitor {
                 return Err(AppError::GenWithCodeAndMsg(
                     config::RESPCODE_0403_FORBIDDEN,
                     format!(
-                        "User is not authorized for service: uid={}, ser={}, svc_id={}",
+                        "User is not authorized for service: user_id={}, ser={}, svc_id={}",
                         user_id, &serial_num, service_id
                     ),
                 ));
@@ -211,18 +212,20 @@ impl ClientConnVisitor {
         }
         // Validate control plane connection
         else {
-            // Ensure no active control plane for user
+            // Ensure no active control plane for device
             if self
                 .service_mgr
                 .lock()
                 .unwrap()
-                .has_control_plane_for_user(user_id, false)
+                .has_control_plane_for_device(device_id.as_str(), false)
             {
                 return Err(AppError::GenWithCodeAndMsg(
                     config::RESPCODE_0426_CONTROL_PLANE_ALREADY_CONNECTED,
                     format!(
-                        "Not allowed to have multiple control planes: uid={}, ser={}",
-                        user_id, &serial_num
+                        "Not allowed to have multiple control planes: user_id={}, dev_id={}, ser={}",
+                        user_id,
+                        device_id.as_str(),
+                        &serial_num
                     ),
                 ));
             }
@@ -235,15 +238,38 @@ impl ClientConnVisitor {
         info(
             &target!(),
             &format!(
-                "Connection authorized: uid={}, ser={}, svc_id={:?}",
-                user_id, &serial_num, &service_id
+                "Connection authorized: user_id={}, dev_id={}, ser={}, svc_id={:?}",
+                user_id,
+                device_id.as_str(),
+                &serial_num,
+                &service_id
             ),
         );
 
         Ok(alpn_protocol)
     }
 
-    #[cfg(not(test))]
+    /// Device accessor
+    ///
+    /// # Returns
+    ///
+    /// Device associated to connection (if available).
+    ///
+    pub fn get_device(&self) -> &Option<Device> {
+        &self.device
+    }
+
+    #[cfg(test)]
+    /// Device mutator
+    ///
+    /// # Arguments
+    ///
+    /// * `device` - Optional [`Device`] object to set
+    ///
+    pub fn set_device(&mut self, device: Option<Device>) {
+        self.device = device;
+    }
+
     /// User accessor
     ///
     /// # Returns
@@ -314,6 +340,7 @@ impl conn_std::ConnectionVisitor for ClientConnVisitor {
         &mut self,
         event_channel_sender: &Sender<conn_std::ConnectionEvent>,
     ) -> Result<(), AppError> {
+        let device = self.device.as_ref().unwrap();
         let user = self.user.as_ref().unwrap();
         if self
             .protocol
@@ -329,13 +356,13 @@ impl conn_std::ConnectionVisitor for ClientConnVisitor {
                     &self.service_repo,
                     &self.user_repo,
                     event_channel_sender,
-                    self.device.as_ref().unwrap(),
+                    device,
                     user,
                 )?));
             self.service_mgr
                 .lock()
                 .unwrap()
-                .add_control_plane(user.user_id, &message_processor)?;
+                .add_control_plane(device.get_id().as_str(), &message_processor)?;
             self.message_processor = Some(message_processor);
         }
         self.event_channel_sender = Some(event_channel_sender.clone());
@@ -362,10 +389,15 @@ impl conn_std::ConnectionVisitor for ClientConnVisitor {
     }
 
     fn on_shutdown(&mut self) -> Result<(), AppError> {
+        if self.device.is_none() {
+            return Err(AppError::General(
+                "Error shutting down connection, unknown device".to_string(),
+            ));
+        }
         self.service_mgr
             .lock()
             .unwrap()
-            .shutdown_connections(Some(self.user.as_ref().unwrap().user_id), None)
+            .shutdown_connections(Some(self.device.as_ref().unwrap().get_id()), None)
     }
 
     fn send_error_response(&mut self, err: &AppError) {
@@ -440,6 +472,7 @@ mod tests {
     use std::sync::mpsc;
     use trust0_common::crypto::file::load_certificates;
     use trust0_common::model::access::{EntityType, ServiceAccess};
+    use trust0_common::model::user::{Status, User};
     use trust0_common::net::tls_server::conn_std::{ConnectionEvent, ConnectionVisitor};
     use trust0_common::proxy::event::ProxyEvent;
     use trust0_common::proxy::executor::ProxyExecutorEvent;
@@ -460,7 +493,7 @@ mod tests {
         service_repo: Arc<Mutex<dyn ServiceRepository>>,
         role_repo: Arc<Mutex<dyn RoleRepository>>,
         access_repo: Arc<Mutex<dyn AccessRepository>>,
-        user_control_plane: Option<(i64, Arc<Mutex<dyn MessageProcessor>>)>,
+        device_control_plane: Option<(&str, Arc<Mutex<dyn MessageProcessor>>)>,
     ) -> Result<ClientConnVisitor, AppError> {
         let app_config = Arc::new(config::tests::create_app_config_with_repos(
             config::GatewayType::Client,
@@ -476,12 +509,12 @@ mod tests {
             &proxy_tasks_sender,
             &proxy_events_sender,
         )));
-        if user_control_plane.is_some() {
-            let user_control_plane = user_control_plane.unwrap();
+        if device_control_plane.is_some() {
+            let device_control_plane = device_control_plane.unwrap();
             service_mgr
                 .lock()
                 .unwrap()
-                .add_control_plane(user_control_plane.0, &user_control_plane.1)?;
+                .add_control_plane(device_control_plane.0, &device_control_plane.1)?;
         }
         Ok(ClientConnVisitor::new(&app_config, &service_mgr))
     }
@@ -501,6 +534,7 @@ mod tests {
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
         let alpn_proto = alpn::PROTOCOL_CONTROL_PLANE.as_bytes().to_vec();
+        let device_id = "C:03e8:100";
 
         let mut tls_conn = MockTlsSvrConn::new();
         tls_conn
@@ -550,6 +584,10 @@ mod tests {
             if let alpn::Protocol::ControlPlane = protocol {
                 assert!(cli_conn_visitor.device.is_some());
                 assert!(cli_conn_visitor.user.is_some());
+                assert_eq!(
+                    cli_conn_visitor.device.as_ref().unwrap().get_id().as_str(),
+                    device_id
+                );
                 assert_eq!(cli_conn_visitor.user.as_ref().unwrap().user_id, 100);
                 assert!(cli_conn_visitor.protocol.is_some());
                 assert_eq!(
@@ -569,6 +607,7 @@ mod tests {
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
         let alpn_proto = alpn::PROTOCOL_CONTROL_PLANE.as_bytes().to_vec();
+        let device_id = "C:03e8:100";
 
         let mut tls_conn = MockTlsSvrConn::new();
         tls_conn
@@ -606,7 +645,7 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, Arc::new(Mutex::new(MockMsgProcessor::new())))),
+            Some((device_id, Arc::new(Mutex::new(MockMsgProcessor::new())))),
         )?;
 
         assert!(cli_conn_visitor.device.is_none());
@@ -636,6 +675,7 @@ mod tests {
         let alpn_proto = alpn::Protocol::create_service_protocol(200)
             .as_bytes()
             .to_vec();
+        let device_id = "C:03e8:100";
 
         let mut tls_conn = MockTlsSvrConn::new();
         tls_conn
@@ -684,7 +724,7 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, create_msg_processor(true))),
+            Some((device_id, create_msg_processor(true))),
         )?;
 
         assert!(cli_conn_visitor.device.is_none());
@@ -697,6 +737,10 @@ mod tests {
                 if *service_id == 200 {
                     assert!(cli_conn_visitor.device.is_some());
                     assert!(cli_conn_visitor.user.is_some());
+                    assert_eq!(
+                        cli_conn_visitor.device.as_ref().unwrap().get_id().as_str(),
+                        device_id
+                    );
                     assert_eq!(cli_conn_visitor.user.as_ref().unwrap().user_id, 100);
                     assert!(cli_conn_visitor.protocol.is_some());
                     assert_eq!(
@@ -787,6 +831,7 @@ mod tests {
         let alpn_proto = alpn::Protocol::create_service_protocol(200)
             .as_bytes()
             .to_vec();
+        let device_id = "C:03e8:100";
 
         let mut tls_conn = MockTlsSvrConn::new();
         tls_conn
@@ -825,7 +870,7 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, create_msg_processor(false))),
+            Some((device_id, create_msg_processor(false))),
         )?;
 
         assert!(cli_conn_visitor.device.is_none());
@@ -855,6 +900,7 @@ mod tests {
         let alpn_proto = alpn::Protocol::create_service_protocol(200)
             .as_bytes()
             .to_vec();
+        let device_id = "C:03e8:100";
 
         let mut tls_conn = MockTlsSvrConn::new();
         tls_conn
@@ -896,7 +942,7 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, create_msg_processor(true))),
+            Some((device_id, create_msg_processor(true))),
         )?;
 
         assert!(cli_conn_visitor.device.is_none());
@@ -924,6 +970,7 @@ mod tests {
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
         let alpn_proto = alpn::PROTOCOL_CONTROL_PLANE.as_bytes().to_vec();
+        let device_id = "C:03e8:100";
 
         let mut tls_conn = MockTlsSvrConn::new();
         tls_conn
@@ -961,7 +1008,7 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, create_msg_processor(true))),
+            Some((device_id, create_msg_processor(true))),
         )?;
 
         assert!(cli_conn_visitor.device.is_none());
@@ -1249,12 +1296,14 @@ mod tests {
         let service_repo = MockServiceRepo::new();
         let role_repo = MockRoleRepo::new();
 
+        let device_id = "C:03e8:100";
+
         let mut cli_conn_visitor = create_cliconnvis(
             Arc::new(Mutex::new(user_repo)),
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, Arc::new(Mutex::new(MockMsgProcessor::new())))),
+            Some((device_id, Arc::new(Mutex::new(MockMsgProcessor::new())))),
         )?;
         cli_conn_visitor.user = Some(User {
             user_id: 100,
@@ -1264,12 +1313,15 @@ mod tests {
             status: Status::Inactive,
             roles: vec![],
         });
+        let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
+        let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
+        cli_conn_visitor.device = Some(Device::new(peer_certs)?);
 
         assert!(cli_conn_visitor
             .service_mgr
             .lock()
             .unwrap()
-            .has_control_plane_for_user(100, false));
+            .has_control_plane_for_device(device_id, false));
 
         if let Err(err) = cli_conn_visitor.on_shutdown() {
             panic!("Unexpected result: err={:?}", &err);
@@ -1279,7 +1331,7 @@ mod tests {
             .service_mgr
             .lock()
             .unwrap()
-            .has_control_plane_for_user(100, false));
+            .has_control_plane_for_device(device_id, false));
 
         Ok(())
     }
@@ -1291,12 +1343,14 @@ mod tests {
         let service_repo = MockServiceRepo::new();
         let role_repo = MockRoleRepo::new();
 
+        let device_id = "C:03e8:100";
+
         let mut cli_conn_visitor = create_cliconnvis(
             Arc::new(Mutex::new(user_repo)),
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, Arc::new(Mutex::new(MockMsgProcessor::new())))),
+            Some((device_id, Arc::new(Mutex::new(MockMsgProcessor::new())))),
         )?;
         let event_channel = mpsc::channel();
         cli_conn_visitor.event_channel_sender = Some(event_channel.0);
@@ -1327,12 +1381,14 @@ mod tests {
         let service_repo = MockServiceRepo::new();
         let role_repo = MockRoleRepo::new();
 
+        let device_id = "C:03e8:100";
+
         let mut cli_conn_visitor = create_cliconnvis(
             Arc::new(Mutex::new(user_repo)),
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, Arc::new(Mutex::new(MockMsgProcessor::new())))),
+            Some((device_id, Arc::new(Mutex::new(MockMsgProcessor::new())))),
         )?;
         let event_channel = mpsc::channel();
         cli_conn_visitor.event_channel_sender = Some(event_channel.0);
@@ -1365,12 +1421,14 @@ mod tests {
         let service_repo = MockServiceRepo::new();
         let role_repo = MockRoleRepo::new();
 
+        let device_id = "C:03e8:100";
+
         let mut cli_conn_visitor = create_cliconnvis(
             Arc::new(Mutex::new(user_repo)),
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, Arc::new(Mutex::new(MockMsgProcessor::new())))),
+            Some((device_id, Arc::new(Mutex::new(MockMsgProcessor::new())))),
         )?;
         let event_channel = mpsc::channel();
         cli_conn_visitor.event_channel_sender = Some(event_channel.0);
@@ -1402,12 +1460,14 @@ mod tests {
         let service_repo = MockServiceRepo::new();
         let role_repo = MockRoleRepo::new();
 
+        let device_id = "C:03e8:100";
+
         let mut cli_conn_visitor = create_cliconnvis(
             Arc::new(Mutex::new(user_repo)),
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, Arc::new(Mutex::new(MockMsgProcessor::new())))),
+            Some((device_id, Arc::new(Mutex::new(MockMsgProcessor::new())))),
         )?;
         let event_channel = mpsc::channel();
         cli_conn_visitor.event_channel_sender = Some(event_channel.0);
@@ -1439,12 +1499,14 @@ mod tests {
         let service_repo = MockServiceRepo::new();
         let role_repo = MockRoleRepo::new();
 
+        let device_id = "C:03e8:100";
+
         let mut cli_conn_visitor = create_cliconnvis(
             Arc::new(Mutex::new(user_repo)),
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((100, Arc::new(Mutex::new(MockMsgProcessor::new())))),
+            Some((device_id, Arc::new(Mutex::new(MockMsgProcessor::new())))),
         )?;
         let event_channel = mpsc::channel();
         cli_conn_visitor.event_channel_sender = Some(event_channel.0);
@@ -1462,6 +1524,44 @@ mod tests {
             ),
             _ => panic!("Unexpected connection event: event={:?}", &msg_event),
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn cliconnvis_accessors() -> Result<(), AppError> {
+        let user_repo = MockUserRepo::new();
+        let access_repo = MockAccessRepo::new();
+        let service_repo = MockServiceRepo::new();
+        let role_repo = MockRoleRepo::new();
+
+        let device_id = "C:03e8:100";
+
+        let mut cli_conn_visitor = create_cliconnvis(
+            Arc::new(Mutex::new(user_repo)),
+            Arc::new(Mutex::new(service_repo)),
+            Arc::new(Mutex::new(role_repo)),
+            Arc::new(Mutex::new(access_repo)),
+            Some((device_id, Arc::new(Mutex::new(MockMsgProcessor::new())))),
+        )?;
+
+        let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
+
+        let expected_device = Device::new(certs)?;
+        let expected_user = User::new(100, None, None, "name100", &Status::Active, &[]);
+
+        cli_conn_visitor.device = Some(expected_device.clone());
+        cli_conn_visitor.user = Some(expected_user.clone());
+
+        let device = cli_conn_visitor.get_device();
+        let user = cli_conn_visitor.get_user();
+
+        assert!(device.is_some());
+        assert!(user.is_some());
+
+        assert_eq!(device.as_ref().unwrap().get_id(), expected_device.get_id());
+        assert_eq!(user.as_ref().unwrap(), &expected_user);
 
         Ok(())
     }
