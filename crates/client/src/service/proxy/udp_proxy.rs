@@ -1,15 +1,11 @@
+use anyhow::Result;
 use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-
-use anyhow::Result;
+use trust0_common::client::service::ClientServiceProxyVisitor;
 use trust0_common::control::tls::message::ConnectionAddrs;
-
-use crate::config::AppConfig;
-use crate::service::proxy::proxy_base::{ClientServiceProxy, ClientServiceProxyVisitor};
-use crate::service::proxy::proxy_client::ClientVisitor;
 use trust0_common::crypto::alpn;
 use trust0_common::error::AppError;
 use trust0_common::logging::error;
@@ -22,6 +18,10 @@ use trust0_common::proxy::event::ProxyEvent;
 use trust0_common::proxy::executor::{ProxyExecutorEvent, ProxyKey};
 use trust0_common::proxy::proxy_base::ProxyType;
 use trust0_common::{sync, target};
+
+use crate::config::AppConfig;
+use crate::service::proxy::proxy_base::ClientServiceProxy;
+use crate::service::proxy::proxy_client::ClientVisitor;
 
 /// Client service proxy (UDP service client <-> TCP trust0 client)
 pub struct UdpClientProxy {
@@ -146,6 +146,8 @@ impl UdpClientProxyServerVisitor {
         })
     }
 }
+
+unsafe impl Send for UdpClientProxyServerVisitor {}
 
 impl server_std::ServerVisitor for UdpClientProxyServerVisitor {
     fn on_message_received(
@@ -381,7 +383,7 @@ pub mod tests {
 
     #[test]
     fn udpcliproxy_new() {
-        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let app_config = Arc::new(config::tests::create_app_config().unwrap());
         let server_visitor = Arc::new(Mutex::new(UdpClientProxyServerVisitor {
             app_config: app_config.clone(),
             service: Service {
@@ -408,7 +410,7 @@ pub mod tests {
 
     #[test]
     fn udpcliproxy_spawn_client_bound_message_processor() {
-        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let app_config = Arc::new(config::tests::create_app_config().unwrap());
         let connected_udp_stream = stream_utils::ConnectedUdpSocket::new().unwrap();
         let server_socket_channel = mpsc::channel();
         let server_visitor = Arc::new(Mutex::new(
@@ -450,7 +452,7 @@ pub mod tests {
     #[test]
     fn udpsvrproxyvisit_new() {
         let server_visitor = UdpClientProxyServerVisitor::new(
-            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Arc::new(config::tests::create_app_config().unwrap()),
             &Service {
                 service_id: 200,
                 name: "svc200".to_string(),
@@ -472,7 +474,7 @@ pub mod tests {
 
     #[test]
     fn udpsvrproxyvisit_on_message_received_when_new_service_proxy_needed() {
-        let app_config = config::tests::create_app_config(None).unwrap();
+        let app_config = config::tests::create_app_config().unwrap();
         let (proxy_tasks_sender, proxy_tasks_receiver) = mpsc::channel();
         let (proxy_events_sender, proxy_events_receiver) = mpsc::channel();
         let connected_udp_stream = stream_utils::ConnectedUdpSocket::new().unwrap();
@@ -603,7 +605,7 @@ pub mod tests {
 
     #[test]
     fn udpsvrproxyvisit_on_message_received_when_new_service_proxy_not_needed() {
-        let app_config = config::tests::create_app_config(None).unwrap();
+        let app_config = config::tests::create_app_config().unwrap();
         let (proxy_tasks_sender, proxy_tasks_receiver) = mpsc::channel();
         let (proxy_events_sender, proxy_events_receiver) = mpsc::channel();
         let (socket_channel_sender, socket_channel_receiver) = mpsc::channel();
@@ -730,7 +732,7 @@ pub mod tests {
         };
 
         let mut server_visitor = UdpClientProxyServerVisitor::new(
-            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Arc::new(config::tests::create_app_config().unwrap()),
             &service,
             3000,
             "gwhost1",
@@ -791,7 +793,7 @@ pub mod tests {
         };
 
         let mut server_visitor = UdpClientProxyServerVisitor::new(
-            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Arc::new(config::tests::create_app_config().unwrap()),
             &service,
             3000,
             "gwhost1",
@@ -849,7 +851,7 @@ pub mod tests {
         };
 
         let mut server_visitor = UdpClientProxyServerVisitor::new(
-            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Arc::new(config::tests::create_app_config().unwrap()),
             &service,
             3000,
             "gwhost1",
@@ -907,7 +909,7 @@ pub mod tests {
         };
 
         let mut server_visitor = UdpClientProxyServerVisitor::new(
-            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Arc::new(config::tests::create_app_config().unwrap()),
             &service,
             3000,
             "gwhost1",
@@ -968,7 +970,7 @@ pub mod tests {
         };
 
         let mut server_visitor = UdpClientProxyServerVisitor::new(
-            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Arc::new(config::tests::create_app_config().unwrap()),
             &service,
             3000,
             "gwhost1",
@@ -1008,7 +1010,7 @@ pub mod tests {
         };
 
         let mut server_visitor = UdpClientProxyServerVisitor::new(
-            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Arc::new(config::tests::create_app_config().unwrap()),
             &service,
             3000,
             "gwhost1",

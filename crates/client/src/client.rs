@@ -1,19 +1,22 @@
-use std::sync::{Arc, Mutex};
-
 use anyhow::Result;
 #[cfg(test)]
 use mockall::predicate;
+use std::sync::{Arc, Mutex};
+#[cfg(not(test))]
+use trust0_common::client::service::ClientControlServiceMgr;
 use trust0_common::control::tls;
+use trust0_common::crypto::alpn;
+use trust0_common::error::AppError;
+use trust0_common::net::tls_client::{client_std, conn_std};
 
 use crate::config::AppConfig;
 #[cfg(test)]
 use crate::gateway;
 #[cfg(not(test))]
 use crate::gateway::connection::ServerConnVisitor;
+#[cfg(not(test))]
+use crate::service::manager::ControllerServiceMgr;
 use crate::service::manager::ServiceMgr;
-use trust0_common::crypto::alpn;
-use trust0_common::error::AppError;
-use trust0_common::net::tls_client::{client_std, conn_std};
 
 /// The Trust0 Gateway TLS Client
 pub struct Client {
@@ -55,16 +58,20 @@ unsafe impl Send for Client {}
 
 /// tls_client::std_client::Client strategy visitor pattern implementation
 pub struct ClientVisitor {
-    _app_config: Arc<AppConfig>,
-    _service_mgr: Arc<Mutex<dyn ServiceMgr>>,
+    #[allow(dead_code)]
+    app_config: Arc<AppConfig>,
+    #[allow(dead_code)]
+    service_mgr: Arc<Mutex<dyn ServiceMgr>>,
 }
+
+unsafe impl Send for ClientVisitor {}
 
 impl ClientVisitor {
     /// ClientVisitor constructor
     pub fn new(app_config: &Arc<AppConfig>, service_mgr: &Arc<Mutex<dyn ServiceMgr>>) -> Self {
         Self {
-            _app_config: app_config.clone(),
-            _service_mgr: service_mgr.clone(),
+            app_config: app_config.clone(),
+            service_mgr: service_mgr.clone(),
         }
     }
 }
@@ -83,9 +90,13 @@ impl ClientVisitor {
 fn create_server_conn_visitor(
     client_visitor: &ClientVisitor,
 ) -> Result<Box<dyn conn_std::ConnectionVisitor>, AppError> {
+    let clictl_svc_mgr: Box<dyn ClientControlServiceMgr> = Box::new(ControllerServiceMgr {
+        service_mgr: client_visitor.service_mgr.clone(),
+    });
     Ok(Box::new(ServerConnVisitor::new(
-        &client_visitor._app_config,
-        &client_visitor._service_mgr,
+        &client_visitor.app_config.repl_shell_input,
+        &client_visitor.app_config.repl_shell_output,
+        &Arc::new(Mutex::new(clictl_svc_mgr)),
     )?))
 }
 #[cfg(test)]
@@ -144,7 +155,7 @@ pub mod tests {
 
     #[test]
     fn client_new() {
-        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let app_config = Arc::new(config::tests::create_app_config().unwrap());
         let service_mgr: Arc<Mutex<dyn ServiceMgr>> =
             Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
 
@@ -156,14 +167,14 @@ pub mod tests {
         let service_mgr: Arc<Mutex<dyn ServiceMgr>> =
             Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
         let _ = super::ClientVisitor::new(
-            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Arc::new(config::tests::create_app_config().unwrap()),
             &service_mgr,
         );
     }
 
     #[test]
     fn clivisit_create_server_conn() {
-        let app_config = config::tests::create_app_config(None).unwrap();
+        let app_config = config::tests::create_app_config().unwrap();
         let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
         let session_addrs = ("addr1".to_string(), "addr2".to_string());
         let service_mgr: Arc<Mutex<dyn ServiceMgr>> =

@@ -1,8 +1,13 @@
-use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
-
 use anyhow::Result;
 use pki_types::CertificateDer;
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
+use trust0_common::crypto::alpn;
+use trust0_common::error::AppError;
+use trust0_common::logging::{error, info};
+use trust0_common::model::user::{Status, User};
+use trust0_common::net::tls_server::conn_std::{self, TlsConnection};
+use trust0_common::{crypto, sync, target};
 use x509_parser::nom::AsBytes;
 
 use crate::client::controller::{ControlPlane, MessageProcessor};
@@ -12,12 +17,6 @@ use crate::repository::access_repo::AccessRepository;
 use crate::repository::service_repo::ServiceRepository;
 use crate::repository::user_repo::UserRepository;
 use crate::service::manager::ServiceMgr;
-use trust0_common::crypto::alpn;
-use trust0_common::error::AppError;
-use trust0_common::logging::{error, info};
-use trust0_common::model::user::{Status, User};
-use trust0_common::net::tls_server::conn_std::{self, TlsConnection};
-use trust0_common::{crypto, sync, target};
 
 /// tls_server::std_conn::Connection strategy visitor pattern implementation
 pub struct ClientConnVisitor {

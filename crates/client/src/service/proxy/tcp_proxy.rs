@@ -1,14 +1,10 @@
+use anyhow::Result;
 use std::collections::HashMap;
 use std::net::TcpStream;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
-
-use anyhow::Result;
+use trust0_common::client::service::ClientServiceProxyVisitor;
 use trust0_common::control::tls::message::ConnectionAddrs;
-
-use crate::config::AppConfig;
-use crate::service::proxy::proxy_base::{ClientServiceProxy, ClientServiceProxyVisitor};
-use crate::service::proxy::proxy_client::ClientVisitor;
 use trust0_common::crypto::alpn;
 use trust0_common::error::AppError;
 use trust0_common::model::service::Service;
@@ -20,6 +16,10 @@ use trust0_common::proxy::event::ProxyEvent;
 use trust0_common::proxy::executor::{ProxyExecutorEvent, ProxyKey};
 use trust0_common::proxy::proxy_base::ProxyType;
 use trust0_common::sync;
+
+use crate::config::AppConfig;
+use crate::service::proxy::proxy_base::ClientServiceProxy;
+use crate::service::proxy::proxy_client::ClientVisitor;
 
 /// Client service proxy (TCP service client <-> TCP trust0 client)
 pub struct TcpClientProxy {
@@ -135,6 +135,8 @@ impl TcpClientProxyServerVisitor {
         })
     }
 }
+
+unsafe impl Send for TcpClientProxyServerVisitor {}
 
 impl server_std::ServerVisitor for TcpClientProxyServerVisitor {
     fn create_client_conn(
@@ -357,7 +359,7 @@ pub mod tests {
 
     #[test]
     fn tcpcliproxy_new() {
-        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let app_config = Arc::new(config::tests::create_app_config().unwrap());
         let server_visitor = Arc::new(Mutex::new(TcpClientProxyServerVisitor {
             app_config: app_config.clone(),
             service: Service {
@@ -383,7 +385,7 @@ pub mod tests {
     #[test]
     fn tcpsvrproxyvisit_new() {
         let server_visitor = TcpClientProxyServerVisitor::new(
-            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Arc::new(config::tests::create_app_config().unwrap()),
             &Service {
                 service_id: 200,
                 name: "svc200".to_string(),
@@ -404,7 +406,7 @@ pub mod tests {
 
     #[test]
     fn tcpsvrproxyvisit_create_client_conn() {
-        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let app_config = Arc::new(config::tests::create_app_config().unwrap());
         let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
 
         let mut server_visitor = TcpClientProxyServerVisitor {
@@ -439,7 +441,7 @@ pub mod tests {
 
     #[test]
     fn tcpsvrproxyvisit_on_conn_accepted() {
-        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let app_config = Arc::new(config::tests::create_app_config().unwrap());
         let (proxy_tasks_sender, proxy_tasks_receiver) = sync::mpsc::channel();
         let (proxy_events_sender, proxy_events_receiver) = sync::mpsc::channel();
         let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
@@ -546,7 +548,7 @@ pub mod tests {
 
     #[test]
     fn tcpsvrproxyvisit_accessors_and_mutators() {
-        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let app_config = Arc::new(config::tests::create_app_config().unwrap());
         let service = Service {
             service_id: 200,
             name: "svc200".to_string(),
@@ -579,7 +581,7 @@ pub mod tests {
 
     #[test]
     fn tcpsvrproxyvisit_shutdown_connections() {
-        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let app_config = Arc::new(config::tests::create_app_config().unwrap());
         let (proxy_tasks_sender, proxy_tasks_receiver) = sync::mpsc::channel();
         let services_by_proxy_key =
             Arc::new(Mutex::new(HashMap::from([("key1".to_string(), 200)])));
@@ -636,7 +638,7 @@ pub mod tests {
 
     #[test]
     fn tcpsvrproxyvisit_shutdown_connection_when_proxy_key_known() {
-        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let app_config = Arc::new(config::tests::create_app_config().unwrap());
         let (proxy_tasks_sender, proxy_tasks_receiver) = sync::mpsc::channel();
         let services_by_proxy_key =
             Arc::new(Mutex::new(HashMap::from([("key1".to_string(), 200)])));
@@ -693,7 +695,7 @@ pub mod tests {
 
     #[test]
     fn tcpsvrproxyvisit_shutdown_connection_when_proxy_key_unknown() {
-        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let app_config = Arc::new(config::tests::create_app_config().unwrap());
         let (proxy_tasks_sender, proxy_tasks_receiver) = sync::mpsc::channel();
         let services_by_proxy_key =
             Arc::new(Mutex::new(HashMap::from([("key1".to_string(), 200)])));
@@ -752,7 +754,7 @@ pub mod tests {
 
     #[test]
     fn tcpsvrproxyvisit_shutdown_connection_when_sending_fails() {
-        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let app_config = Arc::new(config::tests::create_app_config().unwrap());
         let services_by_proxy_key =
             Arc::new(Mutex::new(HashMap::from([("key1".to_string(), 200)])));
 
@@ -789,7 +791,7 @@ pub mod tests {
 
     #[test]
     fn tcpsvrproxyvisit_remove_proxy_for_key_when_not_exists() {
-        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let app_config = Arc::new(config::tests::create_app_config().unwrap());
         let services_by_proxy_key = Arc::new(Mutex::new(HashMap::from([
             ("key1".to_string(), 200),
             ("key2".to_string(), 201),
@@ -828,7 +830,7 @@ pub mod tests {
 
     #[test]
     fn tcpsvrproxyvisit_remove_proxy_for_key_when_exists() {
-        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
+        let app_config = Arc::new(config::tests::create_app_config().unwrap());
         let services_by_proxy_key = Arc::new(Mutex::new(HashMap::from([
             ("key1".to_string(), 200),
             ("key2".to_string(), 201),
@@ -874,7 +876,7 @@ pub mod tests {
     #[test]
     fn tcpsvrproxyvisit_get_proxy_keys() {
         let server_visitor = TcpClientProxyServerVisitor {
-            app_config: Arc::new(config::tests::create_app_config(None).unwrap()),
+            app_config: Arc::new(config::tests::create_app_config().unwrap()),
             service: Service::default(),
             client_proxy_port: 3000,
             gateway_proxy_host: "gwhost1".to_string(),
