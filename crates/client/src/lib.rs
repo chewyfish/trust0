@@ -1,7 +1,6 @@
 pub(crate) mod client;
 pub(crate) mod config;
 pub(crate) mod console;
-pub(crate) mod gateway;
 pub(crate) mod service;
 
 pub mod api {

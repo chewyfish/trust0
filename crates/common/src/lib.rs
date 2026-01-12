@@ -1,6 +1,7 @@
 extern crate core;
 
 pub mod authn;
+pub mod client;
 pub mod config;
 pub mod control;
 pub mod crypto;

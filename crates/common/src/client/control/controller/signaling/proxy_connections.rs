@@ -1,19 +1,18 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::{Arc, Mutex};
-
 use anyhow::Result;
 use serde_json::Value;
 use serde_json::Value::Array;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::{Arc, Mutex};
 
-use crate::gateway::controller::signaling::SignalingEventHandler;
-use crate::service::manager::ServiceMgr;
-use trust0_common::control::signaling::event::{EventType, SignalEvent};
-use trust0_common::control::signaling::heartbeat::ProxyConnectionEvent;
-use trust0_common::control::tls::message::ConnectionAddrs;
-use trust0_common::error::AppError;
-use trust0_common::error::AppError::General;
-use trust0_common::logging::{error, warn};
-use trust0_common::{control, target};
+use crate::client::control::controller::signaling::SignalingEventHandler;
+use crate::client::service::ClientControlServiceMgr;
+use crate::control::signaling::event::{EventType, SignalEvent};
+use crate::control::signaling::heartbeat::ProxyConnectionEvent;
+use crate::control::tls::message::ConnectionAddrs;
+use crate::error::AppError;
+use crate::error::AppError::General;
+use crate::logging::{error, warn};
+use crate::{control, target};
 
 const LIVENESS_MAX_CONSECUTIVE_MISSING_CONNECTION_PROBES: u16 = 5;
 const LIVENESS_MAX_CONSECUTIVE_MISSING_SIGNAL_PROBES: u16 = 5;
@@ -21,7 +20,7 @@ const LIVENESS_MAX_CONSECUTIVE_MISSING_SIGNAL_PROBES: u16 = 5;
 /// Process inbound proxy connections signaling message events
 pub struct ProxyConnectionsProcessor {
     /// Service manager
-    service_mgr: Arc<Mutex<dyn ServiceMgr>>,
+    service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr>>>,
     /// Queued PDU responses to be sent to client
     message_outbox: Arc<Mutex<VecDeque<Vec<u8>>>>,
     /// Missing connection bind addresses
@@ -45,7 +44,7 @@ impl ProxyConnectionsProcessor {
     /// A newly constructed [`ProxyConnectionsProcessor`] object.
     ///
     pub fn new(
-        service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
+        service_mgr: &Arc<Mutex<Box<dyn ClientControlServiceMgr>>>,
         message_outbox: &Arc<Mutex<VecDeque<Vec<u8>>>>,
     ) -> Self {
         Self {
@@ -92,7 +91,7 @@ impl ProxyConnectionsProcessor {
     #[allow(clippy::type_complexity)]
     fn process_inbound_event(
         &mut self,
-        service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
+        service_mgr: &Arc<Mutex<Box<dyn ClientControlServiceMgr>>>,
         proxy_keys: &HashMap<i64, (String, Vec<(String, ConnectionAddrs)>)>,
         signal_event: &SignalEvent,
     ) -> Result<(), AppError> {
@@ -275,19 +274,18 @@ impl SignalingEventHandler for ProxyConnectionsProcessor {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::service::manager::tests::MockSvcMgr;
-    use crate::service::proxy::proxy_base::tests::MockCliSvcProxyVisitor;
+    use crate::client::service::tests::{MockClientControlSvcMgr, MockClientSvcProxyVisitor};
+    use crate::control::pdu;
+    use crate::control::pdu::ControlChannel;
+    use crate::model;
     use mockall::predicate;
     use serde_json::json;
-    use trust0_common::control::pdu;
-    use trust0_common::control::pdu::ControlChannel;
-    use trust0_common::model;
 
     // utils
     // =====
 
     fn create_processor(
-        service_mgr: Arc<Mutex<dyn ServiceMgr>>,
+        service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr>>>,
         message_outbox: Arc<Mutex<VecDeque<Vec<u8>>>>,
     ) -> Result<ProxyConnectionsProcessor, AppError> {
         Ok(ProxyConnectionsProcessor {
@@ -303,7 +301,8 @@ pub mod tests {
 
     #[test]
     fn proxyconnproc_new() {
-        let service_mgr: Arc<Mutex<dyn ServiceMgr>> = Arc::new(Mutex::new(MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         let processor =
             ProxyConnectionsProcessor::new(&service_mgr, &Arc::new(Mutex::new(VecDeque::new())));
 
@@ -313,8 +312,8 @@ pub mod tests {
 
     #[test]
     fn proxyconnproc_current_proxy_keys() {
-        let mut service_mgr = MockSvcMgr::new();
-        let mut service_proxy = MockCliSvcProxyVisitor::new();
+        let mut service_mgr = MockClientControlSvcMgr::new();
+        let mut service_proxy = MockClientSvcProxyVisitor::new();
         service_proxy
             .expect_get_service()
             .times(1)
@@ -340,7 +339,7 @@ pub mod tests {
             .return_once(move || vec![Arc::new(Mutex::new(service_proxy))]);
 
         let processor = create_processor(
-            Arc::new(Mutex::new(service_mgr)),
+            Arc::new(Mutex::new(Box::new(service_mgr))),
             Arc::new(Mutex::new(VecDeque::new())),
         );
 
@@ -361,8 +360,8 @@ pub mod tests {
 
     #[test]
     fn proxyconnproc_on_loop_cycle_when_1_found_and_1_missing_and_1_dead() {
-        let mut service_mgr = MockSvcMgr::new();
-        let mut service_proxy = MockCliSvcProxyVisitor::new();
+        let mut service_mgr = MockClientControlSvcMgr::new();
+        let mut service_proxy = MockClientSvcProxyVisitor::new();
         service_proxy
             .expect_get_service()
             .times(1)
@@ -403,7 +402,7 @@ pub mod tests {
             .return_once(|_, _| Ok(()));
 
         let mut processor = create_processor(
-            Arc::new(Mutex::new(service_mgr)),
+            Arc::new(Mutex::new(Box::new(service_mgr))),
             Arc::new(Mutex::new(VecDeque::new())),
         )
         .unwrap();
@@ -437,8 +436,7 @@ pub mod tests {
         assert_eq!(processor.missing_connection_binds.len(), 1);
         assert!(processor
             .missing_connection_binds
-            .get(&("addr3".to_string(), "addr4".to_string()))
-            .is_some());
+            .contains_key(&("addr3".to_string(), "addr4".to_string())));
         assert_eq!(
             *processor
                 .missing_connection_binds
@@ -453,7 +451,7 @@ pub mod tests {
                 .message_outbox
                 .lock()
                 .unwrap()
-                .get(0)
+                .front()
                 .unwrap()
                 .clone(),
         );
@@ -484,8 +482,8 @@ pub mod tests {
 
     #[test]
     fn proxyconnproc_on_loop_cycle_when_client_dead() {
-        let mut service_mgr = MockSvcMgr::new();
-        let mut service_proxy = MockCliSvcProxyVisitor::new();
+        let mut service_mgr = MockClientControlSvcMgr::new();
+        let mut service_proxy = MockClientSvcProxyVisitor::new();
         service_proxy
             .expect_get_service()
             .times(1)
@@ -522,7 +520,7 @@ pub mod tests {
         service_mgr.expect_shutdown_connection().never();
 
         let mut processor = create_processor(
-            Arc::new(Mutex::new(service_mgr)),
+            Arc::new(Mutex::new(Box::new(service_mgr))),
             Arc::new(Mutex::new(VecDeque::new())),
         )
         .unwrap();

@@ -2,24 +2,19 @@ use anyhow::Result;
 use serde_json::Value;
 use std::borrow::Borrow;
 use std::collections::{HashMap, VecDeque};
-use std::io::Write;
 use std::rc::Rc;
-use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 use std::time::Duration;
-use trust0_common::authn::authenticator::{AuthenticatorClient, AuthnMessage, AuthnType};
-use trust0_common::authn::scram_sha256_authenticator::ScramSha256AuthenticatorClient;
 
-use crate::config::AppConfig;
-#[cfg(not(test))]
-use crate::console::ShellInputReader;
-use crate::console::{self, InputTextStreamConnector, ShellOutputWriter};
-use crate::gateway::controller::ChannelProcessor;
-use crate::service::manager::{self, ServiceMgr};
-use trust0_common::control::pdu::{ControlChannel, MessageFrame};
-use trust0_common::control::{self, management};
-use trust0_common::error::AppError;
-use trust0_common::net::tls_client::conn_std;
+use crate::authn::authenticator::{AuthenticatorClient, AuthnMessage, AuthnType};
+use crate::authn::scram_sha256_authenticator::ScramSha256AuthenticatorClient;
+use crate::client::control::controller::ChannelProcessor;
+use crate::client::replshell_io::{self, ReplShellInputReader, ReplShellOutputWriter};
+use crate::client::service::{ClientControlServiceMgr, ProxyAddrs};
+use crate::control::pdu::{ControlChannel, MessageFrame};
+use crate::control::{self, management};
+use crate::error::AppError;
+use crate::net::tls_client::conn_std;
 
 const AUTHN_LABEL_USERNAME: &str = "Username: ";
 const AUTHN_LABEL_PASSWORD: &str = "Password: ";
@@ -41,19 +36,17 @@ struct AuthnContext {
 /// Process control plane management commands (validate requests, parse gateway control plane responses).
 pub struct ManagementController {
     /// Service manager
-    service_mgr: Arc<Mutex<dyn ServiceMgr>>,
+    service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr>>>,
     /// Channel sender for connection events
     event_channel_sender: Option<mpsc::Sender<conn_std::ConnectionEvent>>,
     /// Queued PDU requests to be sent to gateway
     message_outbox: Arc<Mutex<VecDeque<Vec<u8>>>>,
     /// Management control plane request processor
     management_processor: management::request::RequestProcessor,
-    /// Console input data reader
-    stdin_connector: Box<dyn InputTextStreamConnector>,
-    /// Console output writer
-    console_shell_output: Arc<Mutex<ShellOutputWriter>>,
-    /// Toggle terminal input echo display (for next input line read action)
-    tty_echo_disabler: Arc<Mutex<bool>>,
+    /// REPL shell input reader
+    repl_shell_input: Arc<Mutex<Box<dyn ReplShellInputReader>>>,
+    /// REPL shell output writer
+    repl_shell_output: Arc<Mutex<Box<dyn ReplShellOutputWriter>>>,
     /// Context for an ongoing/past secondary authentication
     authn_context: Rc<Mutex<Option<AuthnContext>>>,
     /// Records whether user has passed secondary authentication
@@ -67,7 +60,8 @@ impl ManagementController {
     ///
     /// # Arguments
     ///
-    /// * `app_config` - Application configuration
+    /// * `repl_shell_input` - REPL shell input reader
+    /// * `repl_shell_output` - REPL shell output writer
     /// * `service_mgr` - Service manager object
     /// * `message_outbox` - Processed requests (PDUs) to send to gateway
     ///
@@ -76,33 +70,25 @@ impl ManagementController {
     /// A newly constructed [`ManagementController`] object.
     ///
     pub fn new(
-        app_config: &Arc<AppConfig>,
-        service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
+        repl_shell_input: &Arc<Mutex<Box<dyn ReplShellInputReader>>>,
+        repl_shell_output: &Arc<Mutex<Box<dyn ReplShellOutputWriter>>>,
+        service_mgr: &Arc<Mutex<Box<dyn ClientControlServiceMgr>>>,
         message_outbox: &Arc<Mutex<VecDeque<Vec<u8>>>>,
     ) -> Self {
-        let (stdin_connector, tty_echo_disabler) = Self::create_console_input_reader(
-            app_config.command_script_lines.as_slice(),
-            app_config
-                .console_shell_output
-                .lock()
-                .unwrap()
-                .prompted_toggle(),
-        );
-
         Self {
             service_mgr: service_mgr.clone(),
             event_channel_sender: None,
             message_outbox: message_outbox.clone(),
             management_processor: management::request::RequestProcessor::new(),
-            stdin_connector,
-            console_shell_output: app_config.console_shell_output.clone(),
-            tty_echo_disabler,
+            repl_shell_input: repl_shell_input.clone(),
+            repl_shell_output: repl_shell_output.clone(),
             authn_context: Rc::new(Mutex::new(None)),
             authenticated: Rc::new(Mutex::new(false)),
             service_ids: HashMap::new(),
         }
     }
 
+    /*
     /// Creates the input reader. Will spawn thread to handle queueing input.
     ///
     /// # Arguments
@@ -119,10 +105,10 @@ impl ManagementController {
         command_script_lines: &[String],
         prompted_toggle: &Arc<AtomicBool>,
     ) -> (Box<dyn InputTextStreamConnector>, Arc<Mutex<bool>>) {
-        let stdin_connector = ShellInputReader::new(command_script_lines, prompted_toggle);
-        stdin_connector.spawn_line_reader();
-        let disable_tty_echo = stdin_connector.clone_disable_tty_echo();
-        (Box::new(stdin_connector), disable_tty_echo)
+        let repl_shell_input = ShellInputReader::new(command_script_lines, prompted_toggle);
+        repl_shell_input.spawn_line_reader();
+        let disable_tty_echo = repl_shell_input.clone_disable_tty_echo();
+        (Box::new(repl_shell_input), disable_tty_echo)
     }
     #[cfg(test)]
     fn create_console_input_reader(
@@ -130,10 +116,11 @@ impl ManagementController {
         _prompted_toggle: &Arc<AtomicBool>,
     ) -> (Box<dyn InputTextStreamConnector>, Arc<Mutex<bool>>) {
         (
-            Box::new(console::tests::MockInpTxtStreamConnector::new()),
+            Box::new(MockInpTxtStreamConnector::new()),
             Arc::new(Mutex::new(false)),
         )
     }
+    */
 
     /// Validate given command request, prior to being sent to the gateway control plane
     ///
@@ -168,7 +155,7 @@ impl ManagementController {
         result
     }
 
-    /// Process 'proxies' response. Add local client port to proxies response for console display.
+    /// Process 'proxies' response. Add local client port to proxies response for display.
     ///
     /// # Arguments
     ///
@@ -267,7 +254,7 @@ impl ManagementController {
 
         let _ = self.service_mgr.lock().unwrap().startup(
             &proxy.service.clone().into(),
-            &manager::ProxyAddrs(
+            &ProxyAddrs(
                 proxy.client_port.unwrap(),
                 proxy.gateway_host.as_ref().unwrap().to_string(),
                 proxy.gateway_port,
@@ -325,17 +312,25 @@ impl ManagementController {
         let mut authn_context = self.authn_context.lock().unwrap();
         let authn_type = authn_context.as_ref().unwrap().authn_type.clone();
 
-        let (console_output_text, response_authn_msg, authn_complete) =
+        let (shell_output_text, response_authn_msg, authn_complete) =
             if let Some(AuthnMessage::Authenticated) = authn_msg {
                 *self.authenticated.lock().unwrap() = true;
                 (
-                    format!("{}{}", AUTHN_RESPONSE_AUTHENTICATED, console::LINE_ENDING),
+                    format!(
+                        "{}{}",
+                        AUTHN_RESPONSE_AUTHENTICATED,
+                        replshell_io::LINE_ENDING
+                    ),
                     None,
                     true,
                 )
             } else if let Some(AuthnMessage::Unauthenticated(_)) = authn_msg {
                 (
-                    format!("{}{}", AUTHN_RESPONSE_UNAUTHENTICATED, console::LINE_ENDING),
+                    format!(
+                        "{}{}",
+                        AUTHN_RESPONSE_UNAUTHENTICATED,
+                        replshell_io::LINE_ENDING
+                    ),
                     None,
                     true,
                 )
@@ -376,18 +371,18 @@ impl ManagementController {
         }
 
         // Display text (if required)
-        if !console_output_text.is_empty() {
-            self.console_shell_output
+        if !shell_output_text.is_empty() {
+            self.repl_shell_output
                 .lock()
                 .unwrap()
-                .write_all(console_output_text.as_bytes())
+                .write_all(shell_output_text.as_bytes())
                 .map_err(|err| {
                     AppError::General(format!(
                         "Error writing login label to STDOUT: err={:?}",
                         &err
                     ))
                 })?;
-            self.console_shell_output
+            self.repl_shell_output
                 .lock()
                 .unwrap()
                 .flush()
@@ -400,7 +395,7 @@ impl ManagementController {
         }
 
         if authn_complete {
-            self.console_shell_output
+            self.repl_shell_output
                 .lock()
                 .unwrap()
                 .write_shell_prompt(false)?;
@@ -421,7 +416,7 @@ impl ManagementController {
     ///
     /// A [`Result`] containing a tuple of:
     ///
-    /// * Console output test
+    /// * REPL shell output text
     /// * Potential client response authentication message
     /// * Indication of whether authentication process is complete
     ///
@@ -430,18 +425,24 @@ impl ManagementController {
         authn_context: &mut MutexGuard<Option<AuthnContext>>,
         authn_msg: &Option<AuthnMessage>,
     ) -> Result<(String, Option<AuthnMessage>, bool), AppError> {
-        let mut console_output_text = String::new();
+        let mut shell_output_text = String::new();
         let mut response_authn_msg = None;
         let mut authn_complete = false;
 
         // Step 1: Prepare to receive username. Disable TTY echo for password input
         if authn_msg.is_none() {
-            console_output_text = AUTHN_LABEL_USERNAME.to_string();
-            *self.tty_echo_disabler.lock().unwrap() = true;
+            shell_output_text = AUTHN_LABEL_USERNAME.to_string();
+            *self
+                .repl_shell_input
+                .lock()
+                .unwrap()
+                .clone_disable_tty_echo()
+                .lock()
+                .unwrap() = true;
         }
         // Step 2: Save username. Prepare to receive password
         else if authn_context.as_ref().unwrap().username.is_none() {
-            console_output_text = AUTHN_LABEL_PASSWORD.to_string();
+            shell_output_text = AUTHN_LABEL_PASSWORD.to_string();
             if let Some(AuthnMessage::Payload(username)) = authn_msg {
                 authn_context
                     .as_mut()
@@ -473,11 +474,11 @@ impl ManagementController {
             match authn_msg {
                 Some(AuthnMessage::Payload(_)) => {}
                 Some(AuthnMessage::Error(msg)) => {
-                    console_output_text = format!(
+                    shell_output_text = format!(
                         "{}: msg={:?}{}",
                         AUTHN_RESPONSE_ERROR,
                         msg,
-                        console::LINE_ENDING
+                        replshell_io::LINE_ENDING
                     )
                 }
                 Some(_) => {}
@@ -500,17 +501,23 @@ impl ManagementController {
                     .is_authenticated()
                 {
                     *self.authenticated.lock().unwrap() = true;
-                    console_output_text =
-                        format!("{}{}", AUTHN_RESPONSE_AUTHENTICATED, console::LINE_ENDING);
-                } else if console_output_text.is_empty() {
-                    console_output_text =
-                        format!("{}{}", AUTHN_RESPONSE_UNAUTHENTICATED, console::LINE_ENDING);
+                    shell_output_text = format!(
+                        "{}{}",
+                        AUTHN_RESPONSE_AUTHENTICATED,
+                        replshell_io::LINE_ENDING
+                    );
+                } else if shell_output_text.is_empty() {
+                    shell_output_text = format!(
+                        "{}{}",
+                        AUTHN_RESPONSE_UNAUTHENTICATED,
+                        replshell_io::LINE_ENDING
+                    );
                 }
                 authn_complete = true;
             }
         }
 
-        Ok((console_output_text, response_authn_msg, authn_complete))
+        Ok((shell_output_text, response_authn_msg, authn_complete))
     }
 
     /// Insecure authentication state processor
@@ -524,7 +531,7 @@ impl ManagementController {
     ///
     /// A [`Result`] containing a tuple of:
     ///
-    /// * Console output test
+    /// * REPL shell output text
     /// * Potential client response authentication message
     /// * Indication of whether authentication process is complete
     ///
@@ -537,7 +544,11 @@ impl ManagementController {
     ) -> Result<(String, Option<AuthnMessage>, bool), AppError> {
         *self.authenticated.lock().unwrap() = true;
         Ok((
-            format!("{}{}", AUTHN_RESPONSE_AUTHENTICATED, console::LINE_ENDING),
+            format!(
+                "{}{}",
+                AUTHN_RESPONSE_AUTHENTICATED,
+                replshell_io::LINE_ENDING
+            ),
             None,
             true,
         ))
@@ -553,7 +564,7 @@ impl ChannelProcessor for ManagementController {
     ) -> Result<(), AppError> {
         self.event_channel_sender = Some(event_channel_sender.clone());
 
-        self.console_shell_output
+        self.repl_shell_output
             .lock()
             .unwrap()
             .write_shell_prompt(true)
@@ -561,7 +572,7 @@ impl ChannelProcessor for ManagementController {
 
     fn process_outbound_messages(&mut self) -> Result<(), AppError> {
         // Retrieve next command line (if available)
-        let line = self.stdin_connector.next_line()?;
+        let line = self.repl_shell_input.lock().unwrap().next_line()?;
         if line.is_none() {
             return Ok(());
         }
@@ -572,7 +583,7 @@ impl ChannelProcessor for ManagementController {
 
         match validated_request {
             Ok(management::request::Request::None) => {
-                self.console_shell_output
+                self.repl_shell_output
                     .lock()
                     .unwrap()
                     .write_shell_prompt(false)?;
@@ -582,7 +593,7 @@ impl ChannelProcessor for ManagementController {
                 return Ok(());
             }
             Err(err) => {
-                self.console_shell_output
+                self.repl_shell_output
                     .lock()
                     .unwrap()
                     .write_all(format!("{}\n", err).as_bytes())
@@ -592,7 +603,7 @@ impl ChannelProcessor for ManagementController {
                             &err
                         ))
                     })?;
-                self.console_shell_output
+                self.repl_shell_output
                     .lock()
                     .unwrap()
                     .write_shell_prompt(false)?;
@@ -659,7 +670,7 @@ impl ChannelProcessor for ManagementController {
             serde_json::to_string_pretty(&gateway_response).unwrap()
         );
 
-        self.console_shell_output
+        self.repl_shell_output
             .lock()
             .unwrap()
             .write_all(repl_shell_response.as_bytes())
@@ -667,7 +678,7 @@ impl ChannelProcessor for ManagementController {
                 AppError::General(format!("Error writing response to STDOUT: err={:?}", &err))
             })?;
 
-        self.console_shell_output
+        self.repl_shell_output
             .lock()
             .unwrap()
             .write_shell_prompt(false)?;
@@ -680,16 +691,19 @@ impl ChannelProcessor for ManagementController {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::config;
+    use crate::authn::authenticator::AuthenticatorServer;
+    use crate::authn::scram_sha256_authenticator::ScramSha256AuthenticatorServer;
+    use crate::client::replshell_io::tests::{
+        MockShellInputReader, MockShellOutputWriter, TestShellOutputWriter,
+    };
+    use crate::client::service::tests::MockClientControlSvcMgr;
+    use crate::testutils::ChannelWriter;
+    use crate::{model, testutils};
     use mockall::predicate;
     use regex::Regex;
     use ring::digest::SHA256_OUTPUT_LEN;
     use std::num::NonZeroU32;
     use std::sync::mpsc;
-    use trust0_common::authn::authenticator::AuthenticatorServer;
-    use trust0_common::authn::scram_sha256_authenticator::ScramSha256AuthenticatorServer;
-    use trust0_common::testutils::ChannelWriter;
-    use trust0_common::{model, testutils};
 
     // mocks/dummies
     // =============
@@ -724,16 +738,18 @@ pub mod tests {
 
     #[test]
     fn mgtcontrol_new() {
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
+        let input_reader = MockShellInputReader::new();
+        let output_writer = MockShellOutputWriter::new();
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         let controller = ManagementController::new(
-            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
             &service_mgr,
             &Arc::new(Mutex::new(VecDeque::new())),
         );
 
         assert!(controller.event_channel_sender.is_none());
-        assert!(!*controller.tty_echo_disabler.lock().unwrap());
         assert!(controller.authn_context.lock().unwrap().is_none());
         assert!(!*controller.authenticated.lock().unwrap());
         assert!(controller.service_ids.is_empty());
@@ -741,15 +757,16 @@ pub mod tests {
 
     #[test]
     fn mgtcontrol_on_connected() {
+        let input_reader = MockShellInputReader::new();
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         let mut controller = ManagementController::new(
-            &Arc::new(app_config),
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
             &service_mgr,
             &Arc::new(Mutex::new(VecDeque::new())),
         );
@@ -762,10 +779,10 @@ pub mod tests {
 
         let expected_data = format!(
             "{} v{} {}\n{}",
-            console::SHELL_MSG_APP_TITLE,
-            console::SHELL_MSG_APP_VERSION,
-            console::SHELL_MSG_APP_HELP,
-            console::SHELL_PROMPT,
+            replshell_io::SHELL_MSG_APP_TITLE,
+            replshell_io::SHELL_MSG_APP_VERSION,
+            replshell_io::SHELL_MSG_APP_HELP,
+            replshell_io::SHELL_PROMPT,
         );
         let output_data = String::from_utf8(testutils::gather_rcvd_bytearr_channel_data(
             &output_channel.1,
@@ -776,10 +793,13 @@ pub mod tests {
 
     #[test]
     fn mgtcontrol_validate_request_when_invalid_request() {
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
+        let input_reader = MockShellInputReader::new();
+        let output_writer = MockShellOutputWriter::new();
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         let mut controller = ManagementController::new(
-            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
             &service_mgr,
             &Arc::new(Mutex::new(VecDeque::new())),
         );
@@ -798,10 +818,13 @@ pub mod tests {
 
     #[test]
     fn mgtcontrol_validate_request_when_valid_ping_request() {
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
+        let input_reader = MockShellInputReader::new();
+        let output_writer = MockShellOutputWriter::new();
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         let mut controller = ManagementController::new(
-            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
             &service_mgr,
             &Arc::new(Mutex::new(VecDeque::new())),
         );
@@ -822,20 +845,22 @@ pub mod tests {
     #[test]
     fn mgtcontrol_process_outbound_messages_when_no_input_lines() {
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
-        let mut stdin_connector = console::tests::MockInpTxtStreamConnector::new();
-        stdin_connector.expect_next_line().return_once(|| Ok(None));
+        let mut input_reader = MockShellInputReader::new();
+        input_reader.expect_next_line().return_once(|| Ok(None));
 
-        let mut controller =
-            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
-        controller.stdin_connector = Box::new(stdin_connector);
+        let mut controller = ManagementController::new(
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
+            &service_mgr,
+            &message_outbox,
+        );
 
         if let Err(err) = controller.process_outbound_messages() {
             panic!("Unexpected result: err={:?}", &err);
@@ -850,22 +875,24 @@ pub mod tests {
     #[test]
     fn mgtcontrol_process_outbound_messages_when_blank_request() {
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
-        let mut stdin_connector = console::tests::MockInpTxtStreamConnector::new();
-        stdin_connector
+        let mut input_reader = MockShellInputReader::new();
+        input_reader
             .expect_next_line()
             .return_once(|| Ok(Some(String::new())));
 
-        let mut controller =
-            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
-        controller.stdin_connector = Box::new(stdin_connector);
+        let mut controller = ManagementController::new(
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
+            &service_mgr,
+            &message_outbox,
+        );
 
         if let Err(err) = controller.process_outbound_messages() {
             panic!("Unexpected result: err={:?}", &err);
@@ -873,7 +900,7 @@ pub mod tests {
 
         assert!(message_outbox.lock().unwrap().is_empty());
 
-        let expected_data = format!("Response: code=400, msg=COMMANDS:\n  about        Display context information for connected mTLS device user\n  connections  List current service proxy connections\n  login        Perform challenge-response authentication (if gateway configured for MFA)\n  ping         Simple gateway heartbeat request\n  proxies      List active service proxies, ready for new connections\n  services     List authorized services for connected mTLS device user\n  start        Startup proxy to authorized service via secure client-gateway proxy\n  stop         Shutdown active service proxy (previously started)\n  quit         Quit the control plane (and corresponding service connections)\n  help         Print this message or the help of the given subcommand(s)\n\n{}", console::SHELL_PROMPT);
+        let expected_data = format!("Response: code=400, msg=COMMANDS:\n  about        Display context information for connected mTLS device user\n  connections  List current service proxy connections\n  login        Perform challenge-response authentication (if gateway configured for MFA)\n  ping         Simple gateway heartbeat request\n  proxies      List active service proxies, ready for new connections\n  services     List authorized services for connected mTLS device user\n  start        Startup proxy to authorized service via secure client-gateway proxy\n  stop         Shutdown active service proxy (previously started)\n  quit         Quit the control plane (and corresponding service connections)\n  help         Print this message or the help of the given subcommand(s)\n\n{}", replshell_io::SHELL_PROMPT);
         let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
         assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
     }
@@ -881,22 +908,24 @@ pub mod tests {
     #[test]
     fn mgtcontrol_process_outbound_messages_when_invalid_request() {
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
-        let mut stdin_connector = console::tests::MockInpTxtStreamConnector::new();
-        stdin_connector
+        let mut input_reader = MockShellInputReader::new();
+        input_reader
             .expect_next_line()
             .return_once(|| Ok(Some("invalid1".to_string())));
 
-        let mut controller =
-            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
-        controller.stdin_connector = Box::new(stdin_connector);
+        let mut controller = ManagementController::new(
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
+            &service_mgr,
+            &message_outbox,
+        );
 
         if let Err(err) = controller.process_outbound_messages() {
             panic!("Unexpected result: err={:?}", &err);
@@ -904,7 +933,7 @@ pub mod tests {
 
         assert!(message_outbox.lock().unwrap().is_empty());
 
-        let expected_data = format!("Response: code=400, msg=error: unrecognized subcommand 'invalid1'\n\nUsage: <COMMAND>\n\nFor more information, try 'help'.\n\n{}", console::SHELL_PROMPT);
+        let expected_data = format!("Response: code=400, msg=error: unrecognized subcommand 'invalid1'\n\nUsage: <COMMAND>\n\nFor more information, try 'help'.\n\n{}", replshell_io::SHELL_PROMPT);
         let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
         assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
     }
@@ -912,22 +941,24 @@ pub mod tests {
     #[test]
     fn mgtcontrol_process_outbound_messages_when_valid_ping_request() {
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
-        let mut stdin_connector = console::tests::MockInpTxtStreamConnector::new();
-        stdin_connector
+        let mut input_reader = MockShellInputReader::new();
+        input_reader
             .expect_next_line()
             .return_once(|| Ok(Some("ping".to_string())));
 
-        let mut controller =
-            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
-        controller.stdin_connector = Box::new(stdin_connector);
+        let mut controller = ManagementController::new(
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
+            &service_mgr,
+            &message_outbox,
+        );
 
         if let Err(err) = controller.process_outbound_messages() {
             panic!("Unexpected result: err={:?}", &err);
@@ -944,7 +975,7 @@ pub mod tests {
         .unwrap();
         assert!(!message_outbox.lock().unwrap().is_empty());
         assert_eq!(
-            message_outbox.lock().unwrap().get(0).unwrap(),
+            message_outbox.lock().unwrap().front().unwrap(),
             &expected_request_pdu
         );
 
@@ -955,22 +986,24 @@ pub mod tests {
     #[test]
     fn mgtcontrol_process_outbound_messages_when_valid_login_flow_for_scramsha256_step2() {
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
-        let mut stdin_connector = console::tests::MockInpTxtStreamConnector::new();
-        stdin_connector
+        let mut input_reader = MockShellInputReader::new();
+        input_reader
             .expect_next_line()
             .return_once(|| Ok(Some("user1".to_string())));
 
-        let mut controller =
-            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
-        controller.stdin_connector = Box::new(stdin_connector);
+        let mut controller = ManagementController::new(
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
+            &service_mgr,
+            &message_outbox,
+        );
         *controller.authn_context.lock().unwrap() = Some(AuthnContext {
             authenticator: None,
             authn_type: AuthnType::ScramSha256,
@@ -978,7 +1011,7 @@ pub mod tests {
         });
 
         match controller.validate_request("user1") {
-            Ok(request) if management::request::Request::Ignore == request => {}
+            Ok(management::request::Request::Ignore) => {}
             Ok(request) => panic!("Unexpected validate result: req={:?}", &request),
             Err(err) => panic!("Unexpected validate result: err={:?}", &err),
         }
@@ -1015,20 +1048,28 @@ pub mod tests {
 
     #[test]
     fn mgtcontrol_process_inbound_message_when_valid_login_flow_for_scramsha256_step1() {
+        let mut input_reader = MockShellInputReader::new();
+        input_reader
+            .expect_clone_disable_tty_echo()
+            .times(1)
+            .return_once(|| Arc::new(Mutex::new(false)));
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
-        let mut controller =
-            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
+        let mut controller = ManagementController::new(
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
+            &service_mgr,
+            &message_outbox,
+        );
 
         let response_data_str = r#"[{"authnType":"scramSha256","message":null}]"#;
-        let response_data_json = serde_json::from_str(&response_data_str).unwrap();
+        let response_data_json = serde_json::from_str(response_data_str).unwrap();
 
         let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
@@ -1064,23 +1105,28 @@ pub mod tests {
 
     #[test]
     fn mgtcontrol_process_inbound_message_when_valid_proxies_response() {
+        let input_reader = MockShellInputReader::new();
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
-        let mut service_mgr = manager::tests::MockSvcMgr::new();
+        let mut service_mgr = MockClientControlSvcMgr::new();
         service_mgr
             .expect_get_proxy_addrs_for_service()
             .with(predicate::eq(200))
             .times(1)
-            .return_once(|_| Some(manager::ProxyAddrs(8501, "gwhost1".to_string(), 1234)));
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> = Arc::new(Mutex::new(service_mgr));
+            .return_once(|_| Some(ProxyAddrs(8501, "gwhost1".to_string(), 1234)));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(service_mgr)));
 
-        let mut controller =
-            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
+        let mut controller = ManagementController::new(
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
+            &service_mgr,
+            &message_outbox,
+        );
 
         let response_data = management::response::Proxy::new(
             &management::response::Service::new(
@@ -1109,18 +1155,18 @@ pub mod tests {
 
         assert!(message_outbox.lock().unwrap().is_empty());
 
-        let expected_data = format!("{{\n  \"code\": 200,\n  \"message\": null,\n  \"request\": \"Proxies\",\n  \"data\": [\n    {{\n      \"client_port\": 8501,\n      \"gateway_host\": null,\n      \"gateway_port\": 1234,\n      \"service\": {{\n        \"address\": null,\n        \"id\": 200,\n        \"name\": \"svc200\",\n        \"transport\": \"TCP\"\n      }}\n    }}\n  ]\n}}\n{}", console::SHELL_PROMPT);
+        let expected_data = format!("{{\n  \"code\": 200,\n  \"message\": null,\n  \"request\": \"Proxies\",\n  \"data\": [\n    {{\n      \"client_port\": 8501,\n      \"gateway_host\": null,\n      \"gateway_port\": 1234,\n      \"service\": {{\n        \"address\": null,\n        \"id\": 200,\n        \"name\": \"svc200\",\n        \"transport\": \"TCP\"\n      }}\n    }}\n  ]\n}}\n{}", replshell_io::SHELL_PROMPT);
         let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
         assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
     }
 
     #[test]
     fn mgtcontrol_process_inbound_message_when_valid_start_response() {
+        let input_reader = MockShellInputReader::new();
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
         let service = model::service::Service::new(
@@ -1136,10 +1182,10 @@ pub mod tests {
             &model::service::Transport::TCP,
             &Some("svchost1:9999".to_string()),
         );
-        let proxy_addrs = manager::ProxyAddrs(8501, "gwhost1".to_string(), 1234);
+        let proxy_addrs = ProxyAddrs(8501, "gwhost1".to_string(), 1234);
         let proxy_addrs_copy = proxy_addrs.clone();
 
-        let mut service_mgr = manager::tests::MockSvcMgr::new();
+        let mut service_mgr = MockClientControlSvcMgr::new();
         service_mgr
             .expect_startup()
             .with(
@@ -1148,10 +1194,15 @@ pub mod tests {
             )
             .times(1)
             .return_once(|_, _| Ok(proxy_addrs_copy));
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> = Arc::new(Mutex::new(service_mgr));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(service_mgr)));
 
-        let mut controller =
-            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
+        let mut controller = ManagementController::new(
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
+            &service_mgr,
+            &message_outbox,
+        );
 
         let response_data = management::response::Proxy::new(
             &response_service,
@@ -1181,7 +1232,7 @@ pub mod tests {
 
         assert!(message_outbox.lock().unwrap().is_empty());
 
-        let expected_data = format!("{{\n  \"code\": 200,\n  \"message\": null,\n  \"request\": {{\n    \"Start\": {{\n      \"service_name\": \"svc200\",\n      \"local_port\": 8501\n    }}\n  }},\n  \"data\": [\n    {{\n      \"client_port\": 8501,\n      \"gateway_host\": \"gwhost1\",\n      \"gateway_port\": 1234,\n      \"service\": {{\n        \"address\": \"svchost1:9999\",\n        \"id\": 200,\n        \"name\": \"svc200\",\n        \"transport\": \"TCP\"\n      }}\n    }}\n  ]\n}}\n{}", console::SHELL_PROMPT);
+        let expected_data = format!("{{\n  \"code\": 200,\n  \"message\": null,\n  \"request\": {{\n    \"Start\": {{\n      \"service_name\": \"svc200\",\n      \"local_port\": 8501\n    }}\n  }},\n  \"data\": [\n    {{\n      \"client_port\": 8501,\n      \"gateway_host\": \"gwhost1\",\n      \"gateway_port\": 1234,\n      \"service\": {{\n        \"address\": \"svchost1:9999\",\n        \"id\": 200,\n        \"name\": \"svc200\",\n        \"transport\": \"TCP\"\n      }}\n    }}\n  ]\n}}\n{}", replshell_io::SHELL_PROMPT);
         let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
         assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
 
@@ -1191,23 +1242,28 @@ pub mod tests {
 
     #[test]
     fn mgtcontrol_process_inbound_message_when_valid_stop_response() {
+        let input_reader = MockShellInputReader::new();
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
-        let mut service_mgr = manager::tests::MockSvcMgr::new();
+        let mut service_mgr = MockClientControlSvcMgr::new();
         service_mgr
             .expect_shutdown()
             .with(predicate::eq(Some(200)))
             .times(1)
             .return_once(|_| Ok(()));
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> = Arc::new(Mutex::new(service_mgr));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(service_mgr)));
 
-        let mut controller =
-            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
+        let mut controller = ManagementController::new(
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
+            &service_mgr,
+            &message_outbox,
+        );
         controller.service_ids.insert("svc200".to_string(), 200);
 
         let result = controller.process_inbound_message(MessageFrame::new(
@@ -1229,29 +1285,34 @@ pub mod tests {
 
         assert!(message_outbox.lock().unwrap().is_empty());
 
-        let expected_data = format!("{{\n  \"code\": 200,\n  \"message\": null,\n  \"request\": {{\n    \"Stop\": {{\n      \"service_name\": \"svc200\"\n    }}\n  }},\n  \"data\": null\n}}\n{}", console::SHELL_PROMPT);
+        let expected_data = format!("{{\n  \"code\": 200,\n  \"message\": null,\n  \"request\": {{\n    \"Stop\": {{\n      \"service_name\": \"svc200\"\n    }}\n  }},\n  \"data\": null\n}}\n{}", replshell_io::SHELL_PROMPT);
         let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
         assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
     }
 
     #[test]
     fn mgtcontrol_process_inbound_message_when_stop_response_and_unknown_service_name() {
+        let input_reader = MockShellInputReader::new();
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
-        let mut service_mgr = manager::tests::MockSvcMgr::new();
+        let mut service_mgr = MockClientControlSvcMgr::new();
         service_mgr
             .expect_shutdown()
             .with(predicate::always())
             .never();
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> = Arc::new(Mutex::new(service_mgr));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(service_mgr)));
 
-        let mut controller =
-            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
+        let mut controller = ManagementController::new(
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
+            &service_mgr,
+            &message_outbox,
+        );
 
         let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
@@ -1273,22 +1334,27 @@ pub mod tests {
 
     #[test]
     fn mgtcontrol_process_inbound_message_when_valid_quit_response() {
+        let input_reader = MockShellInputReader::new();
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
-        let mut service_mgr = manager::tests::MockSvcMgr::new();
+        let mut service_mgr = MockClientControlSvcMgr::new();
         service_mgr
             .expect_shutdown()
             .times(1)
             .return_once(|_| Ok(()));
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> = Arc::new(Mutex::new(service_mgr));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(service_mgr)));
 
-        let mut controller =
-            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
+        let mut controller = ManagementController::new(
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
+            &service_mgr,
+            &message_outbox,
+        );
 
         let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
@@ -1304,33 +1370,36 @@ pub mod tests {
 
         assert!(message_outbox.lock().unwrap().is_empty());
 
-        let expected_data = format!("{{\n  \"code\": 200,\n  \"message\": null,\n  \"request\": \"Quit\",\n  \"data\": null\n}}\n{}", console::SHELL_PROMPT);
+        let expected_data = format!("{{\n  \"code\": 200,\n  \"message\": null,\n  \"request\": \"Quit\",\n  \"data\": null\n}}\n{}", replshell_io::SHELL_PROMPT);
         let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
         assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
     }
 
     #[test]
     fn mgtcontrol_process_authn_message_when_given_authenticated_msg() {
+        let input_reader = MockShellInputReader::new();
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
-        let controller =
-            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
+        let controller = ManagementController::new(
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
+            &service_mgr,
+            &message_outbox,
+        );
         *controller.authn_context.lock().unwrap() = Some(AuthnContext {
             authenticator: None,
             authn_type: AuthnType::ScramSha256,
             username: Some("user1".to_string()),
         });
 
-        match controller.process_authn_message(&Some(AuthnMessage::Authenticated)) {
-            Err(err) => panic!("Unexpected process message result: err={:?}", &err),
-            Ok(()) => {}
+        if let Err(err) = controller.process_authn_message(&Some(AuthnMessage::Authenticated)) {
+            panic!("Unexpected process message result: err={:?}", &err);
         }
 
         assert!(controller.authn_context.lock().unwrap().is_none());
@@ -1340,8 +1409,8 @@ pub mod tests {
         let expected_data = format!(
             "{}{}{}",
             AUTHN_RESPONSE_AUTHENTICATED,
-            console::LINE_ENDING,
-            console::SHELL_PROMPT
+            replshell_io::LINE_ENDING,
+            replshell_io::SHELL_PROMPT
         );
         let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
         assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
@@ -1349,17 +1418,21 @@ pub mod tests {
 
     #[test]
     fn mgtcontrol_process_authn_message_when_given_unauthenticated_msg() {
+        let input_reader = MockShellInputReader::new();
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
-        let controller =
-            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
+        let controller = ManagementController::new(
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
+            &service_mgr,
+            &message_outbox,
+        );
 
         *controller.authn_context.lock().unwrap() = Some(AuthnContext {
             authenticator: None,
@@ -1367,11 +1440,10 @@ pub mod tests {
             username: Some("user1".to_string()),
         });
 
-        match controller
+        if let Err(err) = controller
             .process_authn_message(&Some(AuthnMessage::Unauthenticated("msg1".to_string())))
         {
-            Err(err) => panic!("Unexpected process message result: err={:?}", &err),
-            Ok(()) => {}
+            panic!("Unexpected process message result: err={:?}", &err);
         }
 
         assert!(controller.authn_context.lock().unwrap().is_none());
@@ -1381,8 +1453,8 @@ pub mod tests {
         let expected_data = format!(
             "{}{}{}",
             AUTHN_RESPONSE_UNAUTHENTICATED,
-            console::LINE_ENDING,
-            console::SHELL_PROMPT
+            replshell_io::LINE_ENDING,
+            replshell_io::SHELL_PROMPT
         );
         let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
         assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
@@ -1390,17 +1462,21 @@ pub mod tests {
 
     #[test]
     fn mgtcontrol_process_authn_message_when_valid_login_flow_for_scramsha256_step3() {
+        let input_reader = MockShellInputReader::new();
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
-        let controller =
-            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
+        let controller = ManagementController::new(
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
+            &service_mgr,
+            &message_outbox,
+        );
 
         *controller.authn_context.lock().unwrap() = Some(AuthnContext {
             authenticator: None,
@@ -1408,9 +1484,10 @@ pub mod tests {
             username: Some("user1".to_string()),
         });
 
-        match controller.process_authn_message(&Some(AuthnMessage::Payload("pass1".to_string()))) {
-            Err(err) => panic!("Unexpected process message result: err={:?}", &err),
-            Ok(()) => {}
+        if let Err(err) =
+            controller.process_authn_message(&Some(AuthnMessage::Payload("pass1".to_string())))
+        {
+            panic!("Unexpected process message result: err={:?}", &err);
         }
 
         assert!(controller.authn_context.lock().unwrap().is_some());
@@ -1453,19 +1530,23 @@ pub mod tests {
 
     #[test]
     fn mgtcontrol_process_inbound_message_when_valid_login_flow_for_scramsha256_final_steps() {
+        let input_reader = MockShellInputReader::new();
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         let login_data_payload_regex =
             Regex::new(r#"login-data --message "[{]\\"payload\\":\\"(?<data>[\S]+)\\"}""#).unwrap();
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
-        let mut controller =
-            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
+        let mut controller = ManagementController::new(
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
+            &service_mgr,
+            &message_outbox,
+        );
 
         *controller.authn_context.lock().unwrap() = Some(AuthnContext {
             authenticator: None,
@@ -1474,9 +1555,10 @@ pub mod tests {
         });
 
         // Perform step 3: In - None, Out - client first msg
-        match controller.process_authn_message(&Some(AuthnMessage::Payload("pass1".to_string()))) {
-            Err(err) => panic!("Unexpected process message result: step=3, err={:?}", &err),
-            Ok(()) => {}
+        if let Err(err) =
+            controller.process_authn_message(&Some(AuthnMessage::Payload("pass1".to_string())))
+        {
+            panic!("Unexpected process message result: step=3, err={:?}", &err);
         }
 
         assert_eq!(message_outbox.lock().unwrap().len(), 1);
@@ -1669,8 +1751,8 @@ pub mod tests {
         let expected_data = format!(
             "{}{}{}",
             AUTHN_RESPONSE_AUTHENTICATED,
-            console::LINE_ENDING,
-            console::SHELL_PROMPT
+            replshell_io::LINE_ENDING,
+            replshell_io::SHELL_PROMPT
         );
         let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
         assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
@@ -1678,17 +1760,21 @@ pub mod tests {
 
     #[test]
     fn mgtcontrol_process_inbound_message_when_valid_login_response_for_insecure_step1() {
+        let input_reader = MockShellInputReader::new();
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
-        let mut controller =
-            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
+        let mut controller = ManagementController::new(
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
+            &service_mgr,
+            &message_outbox,
+        );
 
         let response: MessageFrame = serde_json::from_str(&format!(
             r#"{{"channel":"Management","code":200,"message":null,"context":"Login","data":{}}}"#,
@@ -1709,8 +1795,8 @@ pub mod tests {
         let expected_data = format!(
             "{}{}{}",
             AUTHN_RESPONSE_AUTHENTICATED,
-            console::LINE_ENDING,
-            console::SHELL_PROMPT
+            replshell_io::LINE_ENDING,
+            replshell_io::SHELL_PROMPT
         );
         let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
         assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
@@ -1718,17 +1804,21 @@ pub mod tests {
 
     #[test]
     fn mgtcontrol_process_inbound_message_when_valid_proxies_response_for_no_proxies() {
+        let input_reader = MockShellInputReader::new();
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
-        let mut controller =
-            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
+        let mut controller = ManagementController::new(
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
+            &service_mgr,
+            &message_outbox,
+        );
 
         let response: MessageFrame = serde_json::from_str(
             r#"{"channel":"Management","code":200,"message":null,"context":"Proxies","data":[]}"#,
@@ -1742,7 +1832,7 @@ pub mod tests {
 
         assert!(message_outbox.lock().unwrap().is_empty());
 
-        let expected_data = format!("{{\n  \"code\": 200,\n  \"message\": null,\n  \"request\": \"Proxies\",\n  \"data\": []\n}}\n{}", console::SHELL_PROMPT);
+        let expected_data = format!("{{\n  \"code\": 200,\n  \"message\": null,\n  \"request\": \"Proxies\",\n  \"data\": []\n}}\n{}", replshell_io::SHELL_PROMPT);
         let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
 
         assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
@@ -1750,28 +1840,33 @@ pub mod tests {
 
     #[test]
     fn mgtcontrol_process_inbound_message_when_valid_proxies_response_for_2_proxies() {
+        let input_reader = MockShellInputReader::new();
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
 
-        let mut service_mgr = manager::tests::MockSvcMgr::new();
+        let mut service_mgr = MockClientControlSvcMgr::new();
         service_mgr
             .expect_get_proxy_addrs_for_service()
             .with(predicate::eq(203))
             .times(1)
-            .return_once(|_| Some(manager::ProxyAddrs(8501, "gwhost1".to_string(), 8400)));
+            .return_once(|_| Some(ProxyAddrs(8501, "gwhost1".to_string(), 8400)));
         service_mgr
             .expect_get_proxy_addrs_for_service()
             .with(predicate::eq(204))
             .times(1)
-            .return_once(|_| Some(manager::ProxyAddrs(8601, "gwhost1".to_string(), 8400)));
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> = Arc::new(Mutex::new(service_mgr));
+            .return_once(|_| Some(ProxyAddrs(8601, "gwhost1".to_string(), 8400)));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(service_mgr)));
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
-        let mut controller =
-            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
+        let mut controller = ManagementController::new(
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
+            &service_mgr,
+            &message_outbox,
+        );
 
         let response_data_str = "[
                 {
@@ -1810,7 +1905,7 @@ pub mod tests {
 
         assert!(message_outbox.lock().unwrap().is_empty());
 
-        let expected_data = format!("{{\n  \"code\": 200,\n  \"message\": null,\n  \"request\": \"Proxies\",\n  \"data\": [\n    {{\n      \"client_port\": 8601,\n      \"gateway_host\": \"gwhost1\",\n      \"gateway_port\": 8400,\n      \"service\": {{\n        \"address\": \"echohost1:8600\",\n        \"id\": 204,\n        \"name\": \"echo-udp\",\n        \"transport\": \"UDP\"\n      }}\n    }},\n    {{\n      \"client_port\": 8501,\n      \"gateway_host\": \"gwhost1\",\n      \"gateway_port\": 8400,\n      \"service\": {{\n        \"address\": \"chathost1:8500\",\n        \"id\": 203,\n        \"name\": \"chat-tcp\",\n        \"transport\": \"TCP\"\n      }}\n    }}\n  ]\n}}\n{}", console::SHELL_PROMPT);
+        let expected_data = format!("{{\n  \"code\": 200,\n  \"message\": null,\n  \"request\": \"Proxies\",\n  \"data\": [\n    {{\n      \"client_port\": 8601,\n      \"gateway_host\": \"gwhost1\",\n      \"gateway_port\": 8400,\n      \"service\": {{\n        \"address\": \"echohost1:8600\",\n        \"id\": 204,\n        \"name\": \"echo-udp\",\n        \"transport\": \"UDP\"\n      }}\n    }},\n    {{\n      \"client_port\": 8501,\n      \"gateway_host\": \"gwhost1\",\n      \"gateway_port\": 8400,\n      \"service\": {{\n        \"address\": \"chathost1:8500\",\n        \"id\": 203,\n        \"name\": \"chat-tcp\",\n        \"transport\": \"TCP\"\n      }}\n    }}\n  ]\n}}\n{}", replshell_io::SHELL_PROMPT);
         let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
 
         assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);
@@ -1818,20 +1913,24 @@ pub mod tests {
 
     #[test]
     fn mgtcontrol_process_inbound_message_when_valid_non200_response() {
+        let input_reader = MockShellInputReader::new();
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let app_config = config::tests::create_app_config(Some(output_writer)).unwrap();
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
-        let mut controller =
-            ManagementController::new(&Arc::new(app_config), &service_mgr, &message_outbox);
+        let mut controller = ManagementController::new(
+            &Arc::new(Mutex::new(Box::new(input_reader))),
+            &Arc::new(Mutex::new(Box::new(output_writer))),
+            &service_mgr,
+            &message_outbox,
+        );
 
         let response_str = "{\"channel\":\"Management\",\"code\":500,\"message\":\"System error encountered\",\"context\":\"Ping\",\"data\":null}";
-        let response: MessageFrame = serde_json::from_str(&response_str).unwrap();
+        let response: MessageFrame = serde_json::from_str(response_str).unwrap();
 
         let result = controller.process_inbound_message(response);
 
@@ -1841,7 +1940,7 @@ pub mod tests {
 
         assert!(message_outbox.lock().unwrap().is_empty());
 
-        let expected_data = format!("{{\n  \"code\": 500,\n  \"message\": \"System error encountered\",\n  \"request\": \"Ping\",\n  \"data\": null\n}}\n{}", console::SHELL_PROMPT);
+        let expected_data = format!("{{\n  \"code\": 500,\n  \"message\": \"System error encountered\",\n  \"request\": \"Ping\",\n  \"data\": null\n}}\n{}", replshell_io::SHELL_PROMPT);
         let output_data = testutils::gather_rcvd_bytearr_channel_data(&output_channel.1);
 
         assert_eq!(String::from_utf8(output_data).unwrap(), expected_data);

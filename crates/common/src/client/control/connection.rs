@@ -1,33 +1,48 @@
+use anyhow::Result;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
-
-use crate::config::AppConfig;
-use crate::gateway::controller::{ControlPlane, MessageProcessor};
-use crate::service::manager::ServiceMgr;
-use trust0_common::error::AppError;
-use trust0_common::logging::error;
-use trust0_common::net::tls_client::conn_std;
-use trust0_common::target;
+use crate::client::control::controller::{ControlPlane, MessageProcessor};
+use crate::client::replshell_io::{ReplShellInputReader, ReplShellOutputWriter};
+use crate::client::service::ClientControlServiceMgr;
+use crate::error::AppError;
+use crate::logging::error;
+use crate::net::tls_client::conn_std;
+use crate::target;
 
 /// tls_client::std_conn::Connection strategy visitor pattern implementation
 pub struct ServerConnVisitor {
-    _app_config: Arc<AppConfig>,
+    /// Channel sender for connection events
     event_channel_sender: Option<Sender<conn_std::ConnectionEvent>>,
+    /// Control plane processor
     message_processor: Box<dyn MessageProcessor>,
 }
 
 impl ServerConnVisitor {
     /// ServerConnVisitor constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `repl_shell_input` - REPL shell input reader
+    /// * `repl_shell_output` - REPL shell output writer
+    /// * `service_mgr` - Service manager object
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing a newly constructed [`ServerConnVisitor`] object.
+    ///
     pub fn new(
-        app_config: &Arc<AppConfig>,
-        service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
+        repl_shell_input: &Arc<Mutex<Box<dyn ReplShellInputReader>>>,
+        repl_shell_output: &Arc<Mutex<Box<dyn ReplShellOutputWriter>>>,
+        service_mgr: &Arc<Mutex<Box<dyn ClientControlServiceMgr>>>,
     ) -> Result<Self, AppError> {
         Ok(Self {
-            _app_config: app_config.clone(),
             event_channel_sender: None,
-            message_processor: Box::new(ControlPlane::new(app_config, service_mgr)?),
+            message_processor: Box::new(ControlPlane::new(
+                repl_shell_input,
+                repl_shell_output,
+                service_mgr,
+            )?),
         })
     }
 }
@@ -59,13 +74,13 @@ unsafe impl Send for ServerConnVisitor {}
 /// Unit tests
 #[cfg(test)]
 pub mod tests {
-
     use super::*;
-    use crate::gateway::controller;
-    use crate::{config, service};
+    use crate::client::control::controller::tests::MockGwMsgProcessor;
+    use crate::client::replshell_io::tests::{MockShellInputReader, MockShellOutputWriter};
+    use crate::client::service::tests::MockClientControlSvcMgr;
+    use crate::net::tls_client::conn_std::ConnectionVisitor;
     use mockall::{mock, predicate};
     use std::sync::mpsc;
-    use trust0_common::net::tls_client::conn_std::ConnectionVisitor;
 
     // mocks
     // =====
@@ -89,10 +104,11 @@ pub mod tests {
 
     #[test]
     fn srvconnvis_new() {
-        let service_mgr: Arc<Mutex<dyn ServiceMgr>> =
-            Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         match ServerConnVisitor::new(
-            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Arc::new(Mutex::new(Box::new(MockShellInputReader::new()))),
+            &Arc::new(Mutex::new(Box::new(MockShellOutputWriter::new()))),
             &service_mgr,
         ) {
             Ok(server_conn_visitor) => assert!(server_conn_visitor.event_channel_sender.is_none()),
@@ -102,9 +118,7 @@ pub mod tests {
 
     #[test]
     fn srvconnvis_on_connected() {
-        let app_config = config::tests::create_app_config(None).unwrap();
-
-        let mut msg_processor = controller::tests::MockGwMsgProcessor::new();
+        let mut msg_processor = MockGwMsgProcessor::new();
         msg_processor
             .expect_on_connected()
             .with(predicate::always())
@@ -112,7 +126,6 @@ pub mod tests {
             .return_once(|_| Ok(()));
 
         let mut server_conn_visitor = ServerConnVisitor {
-            _app_config: Arc::new(app_config),
             event_channel_sender: None,
             message_processor: Box::new(msg_processor),
         };
@@ -128,12 +141,11 @@ pub mod tests {
 
     #[test]
     fn srvconnvis_on_connection_read_when_simple_ping_response() {
-        let app_config = config::tests::create_app_config(None).unwrap();
         let event_channel = mpsc::channel();
 
         let data = vec![65, 66, 67];
 
-        let mut msg_processor = controller::tests::MockGwMsgProcessor::new();
+        let mut msg_processor = MockGwMsgProcessor::new();
         msg_processor
             .expect_process_inbound_messages()
             .with(predicate::eq(data.clone()))
@@ -141,7 +153,6 @@ pub mod tests {
             .return_once(|_| Ok(()));
 
         let mut server_conn_visitor = ServerConnVisitor {
-            _app_config: Arc::new(app_config),
             event_channel_sender: Some(event_channel.0),
             message_processor: Box::new(msg_processor),
         };
@@ -153,17 +164,15 @@ pub mod tests {
 
     #[test]
     fn srvconnvis_on_polling_cycle_when_no_pending_line() {
-        let app_config = config::tests::create_app_config(None).unwrap();
         let event_channel = mpsc::channel();
 
-        let mut msg_processor = controller::tests::MockGwMsgProcessor::new();
+        let mut msg_processor = MockGwMsgProcessor::new();
         msg_processor
             .expect_process_outbound_messages()
             .times(1)
             .return_once(|| Ok(()));
 
         let mut server_conn_visitor = ServerConnVisitor {
-            _app_config: Arc::new(app_config),
             event_channel_sender: Some(event_channel.0),
             message_processor: Box::new(msg_processor),
         };
@@ -175,12 +184,10 @@ pub mod tests {
 
     #[test]
     fn srvconnvis_send_error_response() {
-        let app_config = config::tests::create_app_config(None).unwrap();
         let event_channel = mpsc::channel();
-        let msg_processor = controller::tests::MockGwMsgProcessor::new();
+        let msg_processor = MockGwMsgProcessor::new();
 
         let mut server_conn_visitor = ServerConnVisitor {
-            _app_config: Arc::new(app_config),
             event_channel_sender: Some(event_channel.0),
             message_processor: Box::new(msg_processor),
         };

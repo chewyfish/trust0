@@ -1,56 +1,10 @@
 use anyhow::Result;
-use std::sync::mpsc::Sender;
-use trust0_common::control::tls::message::ConnectionAddrs;
-
 use trust0_common::error::AppError;
-use trust0_common::model::service::Service;
-use trust0_common::proxy::executor::ProxyExecutorEvent;
 
 /// Service proxy trait for the client end of the proxy (implementations are transport-layer,... specific)
 pub trait ClientServiceProxy: Send {
     /// Startup proxy listener (for clients to connect to gateway proxy for service)
     fn startup(&mut self) -> Result<(), AppError>;
-}
-
-/// Client service proxy visitor trait (implementations are transport-layer,... specific)
-pub trait ClientServiceProxyVisitor: Send {
-    /// Service accessor
-    fn get_service(&self) -> Service;
-
-    /// Client port for service proxy
-    #[allow(dead_code)]
-    fn get_client_proxy_port(&self) -> u16;
-
-    /// Gateway host for service proxy
-    #[allow(dead_code)]
-    fn get_gateway_proxy_host(&self) -> &str;
-
-    /// Gateway port for service proxy
-    #[allow(dead_code)]
-    fn get_gateway_proxy_port(&self) -> u16;
-
-    /// Client and gateway proxy key and stream addresses list for proxy connections (else None if no proxy active)
-    /// Returns list of tuple of (proxy key, (client address, gateway address))
-    fn get_proxy_keys(&self) -> Vec<(String, ConnectionAddrs)>;
-
-    /// Request a server shutdown
-    fn set_shutdown_requested(&mut self);
-
-    /// Shutdown proxy connection for service
-    fn shutdown_connections(
-        &mut self,
-        proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
-    ) -> Result<(), AppError>;
-
-    /// Shutdown service proxy connection.
-    fn shutdown_connection(
-        &mut self,
-        proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
-        proxy_key: &str,
-    ) -> Result<(), AppError>;
-
-    /// Remove proxy for given proxy key. Returns whether removed else not found
-    fn remove_proxy_for_key(&mut self, proxy_key: &str) -> bool;
 }
 
 /// Unit tests
@@ -64,13 +18,18 @@ pub mod tests {
     use rustls::ServerConfig;
     use std::io::Write;
     use std::path::PathBuf;
+    use std::sync::mpsc::Sender;
     use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
+    use trust0_common::client::service::ClientServiceProxyVisitor;
     use trust0_common::control::pdu::MessageFrame;
     use trust0_common::control::tls;
+    use trust0_common::control::tls::message::ConnectionAddrs;
     use trust0_common::crypto;
     use trust0_common::crypto::file::{load_certificates, load_private_key};
+    use trust0_common::model::service::Service;
+    use trust0_common::proxy::executor::ProxyExecutorEvent;
 
     const CERTFILE_ROOTCA_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "root-ca.crt.pem"];

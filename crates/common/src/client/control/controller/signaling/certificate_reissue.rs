@@ -1,23 +1,20 @@
+use anyhow::Result;
 use std::collections::VecDeque;
-use std::io::Write;
 use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
-
-use crate::console;
-use crate::console::ShellOutputWriter;
-use crate::gateway::controller::signaling::SignalingEventHandler;
-use trust0_common::control::signaling::event::SignalEvent;
-use trust0_common::control::signaling::security::CertificateReissueEvent;
-use trust0_common::distro::AppInstallFile;
-use trust0_common::error::AppError;
-use trust0_common::logging::warn;
-use trust0_common::target;
+use crate::client::control::controller::signaling::SignalingEventHandler;
+use crate::client::replshell_io::{ReplShellOutputWriter, LINE_ENDING};
+use crate::control::signaling::event::SignalEvent;
+use crate::control::signaling::security::CertificateReissueEvent;
+use crate::distro::AppInstallFile;
+use crate::error::AppError;
+use crate::logging::warn;
+use crate::target;
 
 /// Process inbound certificate/key pair CA re-issuance events
 pub struct CertReissuanceProcessor {
     /// Console output writer
-    console_shell_output: Arc<Mutex<ShellOutputWriter>>,
+    repl_shell_output: Arc<Mutex<Box<dyn ReplShellOutputWriter>>>,
 }
 
 impl CertReissuanceProcessor {
@@ -25,15 +22,15 @@ impl CertReissuanceProcessor {
     ///
     /// # Arguments
     ///
-    /// * `console_shell_output` - Console output writer
+    /// * `repl_shell_output` - Console output writer
     ///
     /// # Returns
     ///
     /// A newly constructed [`CertReissuanceProcessor`] object.
     ///
-    pub fn new(console_shell_output: &Arc<Mutex<ShellOutputWriter>>) -> Self {
+    pub fn new(repl_shell_output: &Arc<Mutex<Box<dyn ReplShellOutputWriter>>>) -> Self {
         Self {
-            console_shell_output: console_shell_output.clone(),
+            repl_shell_output: repl_shell_output.clone(),
         }
     }
 
@@ -111,11 +108,11 @@ impl CertReissuanceProcessor {
     /// A [`Result`] indicating success/failure of write operation.
     ///
     fn write_console_line(&self, output_text: &str) -> Result<(), AppError> {
-        let mut console_shell_output = self.console_shell_output.lock().unwrap();
-        console_shell_output
-            .write_all(format!("{}{}", output_text, console::LINE_ENDING).as_bytes())
+        let mut repl_shell_output = self.repl_shell_output.lock().unwrap();
+        repl_shell_output
+            .write_all(format!("{}{}", output_text, LINE_ENDING).as_bytes())
             .map_err(|err| AppError::General(format!("Error writing to STDOUT: err={:?}", &err)))?;
-        console_shell_output
+        repl_shell_output
             .flush()
             .map_err(|err| AppError::General(format!("Error flushing STDOUT: err={:?}", &err)))
     }
@@ -128,7 +125,7 @@ impl SignalingEventHandler for CertReissuanceProcessor {
         if !signal_events.is_empty() {
             for signal_event in signal_events {
                 self.process_inbound_event(signal_event)?;
-                self.console_shell_output
+                self.repl_shell_output
                     .lock()
                     .unwrap()
                     .write_shell_prompt(false)?;
@@ -143,33 +140,36 @@ impl SignalingEventHandler for CertReissuanceProcessor {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::{config, console};
+    use crate::client::replshell_io::tests::TestShellOutputWriter;
+    use crate::client::replshell_io::SHELL_PROMPT;
+    use crate::control;
+    use crate::control::signaling::event::EventType;
+    use crate::distro::AppInstallDir;
+    use crate::testutils::{self, ChannelWriter, TEST_MUTEX};
     use regex::Regex;
     use serde_json::json;
     use std::fs;
     use std::fs::File;
+    use std::io::Write;
     use std::sync::mpsc;
-    use trust0_common::control;
-    use trust0_common::control::signaling::event::EventType;
-    use trust0_common::distro::AppInstallDir;
-    use trust0_common::testutils::{self, ChannelWriter};
 
     #[test]
     fn certreissueproc_new() {
-        _ = CertReissuanceProcessor::new(&Arc::new(Mutex::new(ShellOutputWriter::new(Some(
-            Box::new(ChannelWriter {
+        _ = CertReissuanceProcessor::new(&Arc::new(Mutex::new(Box::new(
+            TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
                 channel_sender: mpsc::channel().0,
-            }),
-        )))));
+            }))),
+        ))));
     }
 
     #[test]
     fn certreissueproc_on_loop_cycle_when_no_events() {
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let mut processor = CertReissuanceProcessor::new(&Arc::new(Mutex::new(output_writer)));
+        let mut processor =
+            CertReissuanceProcessor::new(&Arc::new(Mutex::new(Box::new(output_writer))));
 
         let result = processor.on_loop_cycle(VecDeque::new());
 
@@ -184,10 +184,11 @@ pub mod tests {
     #[test]
     fn certreissueproc_on_loop_cycle_when_wrong_event() {
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let mut processor = CertReissuanceProcessor::new(&Arc::new(Mutex::new(output_writer)));
+        let mut processor =
+            CertReissuanceProcessor::new(&Arc::new(Mutex::new(Box::new(output_writer))));
 
         let result = processor.on_loop_cycle(VecDeque::from(vec![SignalEvent::new(
             control::pdu::CODE_OK,
@@ -212,10 +213,11 @@ pub mod tests {
     #[test]
     fn certreissueproc_on_loop_cycle_when_missing_event_data() {
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let mut processor = CertReissuanceProcessor::new(&Arc::new(Mutex::new(output_writer)));
+        let mut processor =
+            CertReissuanceProcessor::new(&Arc::new(Mutex::new(Box::new(output_writer))));
 
         let result = processor.on_loop_cycle(VecDeque::from(vec![SignalEvent::new(
             control::pdu::CODE_OK,
@@ -233,22 +235,23 @@ pub mod tests {
         ))
         .unwrap()
         .replace("\\", "");
-        assert_eq!(output_data, console::SHELL_PROMPT.to_string());
+        assert_eq!(output_data, SHELL_PROMPT.to_string());
     }
 
     #[test]
     fn certreissueproc_on_loop_cycle_when_cert_reissue_event_and_no_existing_files() {
-        let mutex = config::tests::TEST_MUTEX.clone();
+        let mutex = TEST_MUTEX.clone();
         let _lock = mutex.lock().unwrap();
         testutils::setup_xdg_vars().unwrap();
         let cert_install_file = AppInstallFile::ClientCertificate;
         let key_install_file = AppInstallFile::ClientKey;
 
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let mut processor = CertReissuanceProcessor::new(&Arc::new(Mutex::new(output_writer)));
+        let mut processor =
+            CertReissuanceProcessor::new(&Arc::new(Mutex::new(Box::new(output_writer))));
 
         let cert_install_file_path = cert_install_file.pathspec();
         let key_install_file_path = key_install_file.pathspec();
@@ -284,13 +287,13 @@ pub mod tests {
             Created new key pair file: path=\"{}\"{}\
             New certificate will be used upon client restart{}\
             {}",
-            console::LINE_ENDING,
+            LINE_ENDING,
             cert_install_file_path.to_str().unwrap(),
-            console::LINE_ENDING,
+            LINE_ENDING,
             key_install_file_path.to_str().unwrap(),
-            console::LINE_ENDING,
-            console::LINE_ENDING,
-            console::SHELL_PROMPT,
+            LINE_ENDING,
+            LINE_ENDING,
+            SHELL_PROMPT,
         )
         .replace("\\", "");
 
@@ -304,20 +307,20 @@ pub mod tests {
 
         let cert_file_contents = fs::read_to_string(&cert_install_file_path).unwrap();
         assert_eq!(
-            cert_file_contents.replace(&['\r', '\n'], "<NL>"),
+            cert_file_contents.replace(['\r', '\n'], "<NL>"),
             "CERTIFICATE PEM".to_string()
         );
 
         let key_file_contents = fs::read_to_string(&key_install_file_path).unwrap();
         assert_eq!(
-            key_file_contents.replace(&['\r', '\n'], "<NL>"),
+            key_file_contents.replace(['\r', '\n'], "<NL>"),
             "KEY PAIR PEM".to_string()
         );
     }
 
     #[test]
     fn certreissueproc_on_loop_cycle_when_cert_reissue_event_and_existing_files() {
-        let mutex = config::tests::TEST_MUTEX.clone();
+        let mutex = TEST_MUTEX.clone();
         let _lock = mutex.lock().unwrap();
         testutils::setup_xdg_vars().unwrap();
         let cert_install_file = AppInstallFile::ClientCertificate;
@@ -338,10 +341,11 @@ pub mod tests {
         );
 
         let output_channel = mpsc::channel();
-        let output_writer = ShellOutputWriter::new(Some(Box::new(ChannelWriter {
+        let output_writer = TestShellOutputWriter::new(Some(Box::new(ChannelWriter {
             channel_sender: output_channel.0,
         })));
-        let mut processor = CertReissuanceProcessor::new(&Arc::new(Mutex::new(output_writer)));
+        let mut processor =
+            CertReissuanceProcessor::new(&Arc::new(Mutex::new(Box::new(output_writer))));
 
         let backup_cert_install_file_path = backup_cert_install_file.pathspec();
         let backup_key_install_file_path = backup_key_install_file.pathspec();
@@ -393,17 +397,17 @@ pub mod tests {
             Created new key pair file: path=\"{}\"{}\
             New certificate will be used upon client restart{}\
             {}",
-            console::LINE_ENDING,
+            LINE_ENDING,
             backup_cert_install_file_path.to_str().unwrap(),
-            console::LINE_ENDING,
+            LINE_ENDING,
             backup_key_install_file_path.to_str().unwrap(),
-            console::LINE_ENDING,
+            LINE_ENDING,
             cert_install_file_path.to_str().unwrap(),
-            console::LINE_ENDING,
+            LINE_ENDING,
             key_install_file_path.to_str().unwrap(),
-            console::LINE_ENDING,
-            console::LINE_ENDING,
-            console::SHELL_PROMPT,
+            LINE_ENDING,
+            LINE_ENDING,
+            SHELL_PROMPT,
         )
         .replace("\\", "");
 
@@ -418,13 +422,13 @@ pub mod tests {
 
         let cert_file_contents = fs::read_to_string(&cert_install_file_path).unwrap();
         assert_eq!(
-            cert_file_contents.replace(&['\r', '\n'], "<NL>"),
+            cert_file_contents.replace(['\r', '\n'], "<NL>"),
             "CERTIFICATE PEM".to_string()
         );
 
         let key_file_contents = fs::read_to_string(&key_install_file_path).unwrap();
         assert_eq!(
-            key_file_contents.replace(&['\r', '\n'], "<NL>"),
+            key_file_contents.replace(['\r', '\n'], "<NL>"),
             "KEY PAIR PEM".to_string()
         );
     }

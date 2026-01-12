@@ -1,15 +1,15 @@
-use std::env;
-use std::sync::{Arc, Mutex};
-
 use clap::Parser;
 use rustls::crypto::CryptoProvider;
 use rustls::{RootCertStore, SupportedCipherSuite};
-
-use crate::console::ShellOutputWriter;
+use std::env;
+use std::sync::{Arc, Mutex};
+use trust0_common::client::replshell_io::{ReplShellInputReader, ReplShellOutputWriter};
 use trust0_common::crypto::file::{load_certificates, load_private_key};
 use trust0_common::distro::AppInstallFile;
 use trust0_common::error::AppError;
 use trust0_common::file;
+
+use crate::console::{ShellInputReader, ShellOutputWriter};
 
 /// Connects to the Trust0 gateway server at HOSTNAME:PORT (default PORT is 443).
 /// An control plane REPL shell allows service proxies to be opened (among other features).
@@ -91,7 +91,8 @@ pub struct AppConfig {
     pub gateway_port: u16,
     pub tls_client_config: rustls::ClientConfig,
     pub verbose_logging: bool,
-    pub console_shell_output: Arc<Mutex<ShellOutputWriter>>,
+    pub repl_shell_input: Arc<Mutex<Box<dyn ReplShellInputReader>>>,
+    pub repl_shell_output: Arc<Mutex<Box<dyn ReplShellOutputWriter>>>,
     pub command_script_lines: Vec<String>,
 }
 
@@ -170,6 +171,16 @@ impl AppConfig {
                 .set_certificate_verifier(Arc::new(danger::NoCertificateVerification {}));
         }
 
+        let repl_shell_output: Box<dyn ReplShellOutputWriter> =
+            Box::new(ShellOutputWriter::new(None));
+
+        let repl_shell_input: Box<dyn ReplShellInputReader> = Box::new(ShellInputReader::new(
+            None,
+            command_script_lines.as_slice(),
+            repl_shell_output.prompted_toggle(),
+        ));
+        spawn_line_reader(&*repl_shell_input);
+
         // Instantiate AppConfig
         Ok(AppConfig {
             client_host: config_args.host.clone(),
@@ -177,7 +188,8 @@ impl AppConfig {
             gateway_port: config_args.gateway_port,
             tls_client_config,
             verbose_logging: config_args.verbose,
-            console_shell_output: Arc::new(Mutex::new(ShellOutputWriter::new(None))),
+            repl_shell_input: Arc::new(Mutex::new(repl_shell_input)),
+            repl_shell_output: Arc::new(Mutex::new(repl_shell_output)),
             command_script_lines,
         })
     }
@@ -194,6 +206,14 @@ impl AppConfig {
         AppConfigArgs::parse_from::<Vec<_>, String>(vec![])
     }
 }
+
+/// Startup thread to read input (STDIN) lines
+#[cfg(not(test))]
+fn spawn_line_reader(reader: &dyn ReplShellInputReader) {
+    reader.spawn_line_reader();
+}
+#[cfg(test)]
+fn spawn_line_reader(_reader: &dyn ReplShellInputReader) {}
 
 mod danger {
     use pki_types::{CertificateDer, ServerName, UnixTime};
@@ -257,11 +277,13 @@ mod danger {
 pub mod tests {
     use super::*;
     use crate::config::danger::NoCertificateVerification;
-    use once_cell::sync::Lazy;
+    use crate::console::ShellInputReader;
     use pki_types::{ServerName, UnixTime};
     use rustls::client::danger::ServerCertVerifier;
     use std::env;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use trust0_common::testutils::TEST_MUTEX;
 
     const CONFIG_FILE_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "config-file.rc"];
@@ -280,14 +302,10 @@ pub mod tests {
     const COMMAND_SCRIPT_FILE_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "command-script.txt"];
 
-    pub static TEST_MUTEX: Lazy<Arc<Mutex<bool>>> = Lazy::new(|| Arc::new(Mutex::new(true)));
-
     // utils
     // =====
 
-    pub fn create_app_config(
-        shell_output_writer: Option<ShellOutputWriter>,
-    ) -> Result<AppConfig, AppError> {
+    pub fn create_app_config() -> Result<AppConfig, AppError> {
         let rootca_cert_file: PathBuf = CERTFILE_ROOT_CA_PATHPARTS.iter().collect();
         let rootca_cert = load_certificates(rootca_cert_file.to_str().as_ref().unwrap())?;
         let client_pki_files: (PathBuf, PathBuf) = (
@@ -319,7 +337,12 @@ pub mod tests {
         .with_client_auth_cert(client_cert, client_key)
         .expect("Invalid client auth certs/key");
 
-        let shell_output_writer = shell_output_writer.unwrap_or(ShellOutputWriter::new(None));
+        let repl_shell_input = Box::new(ShellInputReader::new(
+            None,
+            &[],
+            &Arc::new(AtomicBool::new(false)),
+        ));
+        let repl_shell_output = Box::new(ShellOutputWriter::new(None));
 
         Ok(AppConfig {
             client_host: "127.0.0.1".to_string(),
@@ -327,7 +350,8 @@ pub mod tests {
             gateway_port: 2000,
             tls_client_config,
             verbose_logging: false,
-            console_shell_output: Arc::new(Mutex::new(shell_output_writer)),
+            repl_shell_input: Arc::new(Mutex::new(repl_shell_input)),
+            repl_shell_output: Arc::new(Mutex::new(repl_shell_output)),
             command_script_lines: Vec::new(),
         })
     }
@@ -407,6 +431,21 @@ pub mod tests {
             vec!["command1".to_string(), "command2".to_string()]
         );
         assert!(config.verbose_logging);
+
+        assert_eq!(
+            config
+                .repl_shell_output
+                .lock()
+                .unwrap()
+                .prompted_toggle()
+                .load(Ordering::SeqCst),
+            config
+                .repl_shell_input
+                .lock()
+                .unwrap()
+                .prompted_toggle()
+                .load(Ordering::SeqCst),
+        );
     }
 
     #[test]

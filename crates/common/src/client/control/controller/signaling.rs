@@ -1,6 +1,7 @@
 mod certificate_reissue;
 mod proxy_connections;
 
+use anyhow::Result;
 use std::collections::{HashMap, VecDeque};
 use std::ops::DerefMut;
 use std::rc::Rc;
@@ -8,19 +9,17 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use anyhow::Result;
-
-use crate::config::AppConfig;
-use crate::gateway::controller::signaling::certificate_reissue::CertReissuanceProcessor;
-use crate::gateway::controller::signaling::proxy_connections::ProxyConnectionsProcessor;
-use crate::gateway::controller::ChannelProcessor;
-use crate::service::manager::ServiceMgr;
-use trust0_common::control::pdu::MessageFrame;
-use trust0_common::control::signaling::event::{EventType, SignalEvent};
-use trust0_common::error::AppError;
-use trust0_common::logging::error;
-use trust0_common::net::tls_client::conn_std;
-use trust0_common::{sync, target};
+use crate::client::control::controller::signaling::certificate_reissue::CertReissuanceProcessor;
+use crate::client::control::controller::signaling::proxy_connections::ProxyConnectionsProcessor;
+use crate::client::control::controller::ChannelProcessor;
+use crate::client::replshell_io::ReplShellOutputWriter;
+use crate::client::service::ClientControlServiceMgr;
+use crate::control::pdu::MessageFrame;
+use crate::control::signaling::event::{EventType, SignalEvent};
+use crate::error::AppError;
+use crate::logging::error;
+use crate::net::tls_client::conn_std;
+use crate::{sync, target};
 
 const EVENT_LOOP_CYCLE_DELAY_MSECS: u64 = 6_000;
 
@@ -41,7 +40,7 @@ impl SignalingController {
     ///
     /// # Arguments
     ///
-    /// * `app_config` - Application configuration object
+    /// * `repl_shell_output` - REPL shell output writer
     /// * `service_mgr` - Service manager
     /// * `message_outbox` - Queued PDU responses to be sent to client
     ///
@@ -50,13 +49,12 @@ impl SignalingController {
     /// A newly constructed [`SignalingController`] object.
     ///
     pub fn new(
-        app_config: &Arc<AppConfig>,
-        service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
+        repl_shell_output: &Arc<Mutex<Box<dyn ReplShellOutputWriter>>>,
+        service_mgr: &Arc<Mutex<Box<dyn ClientControlServiceMgr>>>,
         message_outbox: &Arc<Mutex<VecDeque<Vec<u8>>>>,
     ) -> Self {
-        let cert_reissue_processor = Rc::new(Mutex::new(CertReissuanceProcessor::new(
-            &app_config.console_shell_output,
-        )));
+        let cert_reissue_processor =
+            Rc::new(Mutex::new(CertReissuanceProcessor::new(repl_shell_output)));
         let proxy_conns_processor = Rc::new(Mutex::new(ProxyConnectionsProcessor::new(
             service_mgr,
             message_outbox,
@@ -200,13 +198,13 @@ pub trait SignalingEventHandler {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::config;
-    use crate::service::manager::tests::MockSvcMgr;
+    use crate::client::replshell_io::tests::MockShellOutputWriter;
+    use crate::client::service::tests::MockClientControlSvcMgr;
+    use crate::control;
+    use crate::control::pdu::ControlChannel;
     use mockall::{mock, predicate};
     use serde_json::json;
     use std::sync::mpsc;
-    use trust0_common::control;
-    use trust0_common::control::pdu::ControlChannel;
 
     // mocks
     // =====
@@ -245,10 +243,10 @@ pub mod tests {
 
     #[test]
     fn sigcontrol_new() {
-        let app_config = Arc::new(config::tests::create_app_config(None).unwrap());
-        let service_mgr: Arc<Mutex<dyn ServiceMgr>> = Arc::new(Mutex::new(MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
         let _ = SignalingController::new(
-            &app_config,
+            &Arc::new(Mutex::new(Box::new(MockShellOutputWriter::new()))),
             &service_mgr,
             &Arc::new(Mutex::new(VecDeque::new())),
         );
@@ -587,7 +585,7 @@ pub mod tests {
                 .unwrap()
                 .get(&EventType::CertificateReissue)
                 .unwrap()
-                .get(0)
+                .front()
                 .unwrap(),
             SignalEvent::new(
                 control::pdu::CODE_OK,
@@ -665,7 +663,7 @@ pub mod tests {
                 .unwrap()
                 .get(&EventType::ProxyConnections)
                 .unwrap()
-                .get(0)
+                .front()
                 .unwrap(),
             SignalEvent::new(
                 control::pdu::CODE_OK,

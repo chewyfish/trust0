@@ -6,12 +6,12 @@ use std::collections::{HashMap, VecDeque};
 use std::ops::DerefMut;
 use std::sync::{mpsc, Arc, Mutex};
 
-use crate::config::AppConfig;
-use crate::service::manager::ServiceMgr;
-use trust0_common::control::pdu::{ControlChannel, MessageFrame};
-use trust0_common::error::AppError;
-use trust0_common::net::tls_client::conn_std;
-use trust0_common::sync;
+use crate::client::replshell_io::{ReplShellInputReader, ReplShellOutputWriter};
+use crate::client::service::ClientControlServiceMgr;
+use crate::control::pdu::{ControlChannel, MessageFrame};
+use crate::error::AppError;
+use crate::net::tls_client::conn_std;
+use crate::sync;
 
 /// Control plane processor. Handles management and signaling channel messages
 pub struct ControlPlane {
@@ -30,7 +30,8 @@ impl ControlPlane {
     ///
     /// # Arguments
     ///
-    /// * `app_config` - Application configuration
+    /// * `repl_shell_input` - REPL shell input reader
+    /// * `repl_shell_output` - REPL shell output writer
     /// * `service_mgr` - Service manager object
     ///
     /// # Returns
@@ -38,18 +39,20 @@ impl ControlPlane {
     /// A [`Result`] containing a newly constructed [`ControlPlane`] object.
     ///
     pub fn new(
-        app_config: &Arc<AppConfig>,
-        service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
+        repl_shell_input: &Arc<Mutex<Box<dyn ReplShellInputReader>>>,
+        repl_shell_output: &Arc<Mutex<Box<dyn ReplShellOutputWriter>>>,
+        service_mgr: &Arc<Mutex<Box<dyn ClientControlServiceMgr>>>,
     ) -> Result<Self, AppError> {
         let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
 
         let management_controller = Arc::new(Mutex::new(management::ManagementController::new(
-            app_config,
+            repl_shell_input,
+            repl_shell_output,
             service_mgr,
             &message_outbox,
         )));
         let signaling_controller = Arc::new(Mutex::new(signaling::SignalingController::new(
-            app_config,
+            repl_shell_output,
             service_mgr,
             &message_outbox,
         )));
@@ -241,11 +244,10 @@ pub trait ChannelProcessor {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::config;
-    use crate::service::manager;
+    use crate::client::replshell_io::tests::{MockShellInputReader, MockShellOutputWriter};
+    use crate::client::service::{tests::MockClientControlSvcMgr, ClientControlServiceMgr};
     use mockall::{mock, predicate};
-    use std::sync::mpsc;
-    use std::sync::mpsc::TryRecvError;
+    use std::sync::mpsc::{self, TryRecvError};
 
     // mocks
     // =====
@@ -276,11 +278,12 @@ pub mod tests {
 
     #[test]
     fn ctlplane_new() {
-        let service_mgr: Arc<Mutex<dyn ServiceMgr + 'static>> =
-            Arc::new(Mutex::new(manager::tests::MockSvcMgr::new()));
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
 
         let result = ControlPlane::new(
-            &Arc::new(config::tests::create_app_config(None).unwrap()),
+            &Arc::new(Mutex::new(Box::new(MockShellInputReader::new()))),
+            &Arc::new(Mutex::new(Box::new(MockShellOutputWriter::new()))),
             &service_mgr,
         );
 
