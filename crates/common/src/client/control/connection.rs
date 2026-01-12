@@ -1,14 +1,14 @@
 use anyhow::Result;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
-use trust0_common::client::replshell_io::{ReplShellInputReader, ReplShellOutputWriter};
-use trust0_common::client::service::ClientControlServiceMgr;
-use trust0_common::error::AppError;
-use trust0_common::logging::error;
-use trust0_common::net::tls_client::conn_std;
-use trust0_common::target;
 
-use crate::gateway::controller::{ControlPlane, MessageProcessor};
+use crate::client::control::controller::{ControlPlane, MessageProcessor};
+use crate::client::replshell_io::{ReplShellInputReader, ReplShellOutputWriter};
+use crate::client::service::ClientControlServiceMgr;
+use crate::error::AppError;
+use crate::logging::error;
+use crate::net::tls_client::conn_std;
+use crate::target;
 
 /// tls_client::std_conn::Connection strategy visitor pattern implementation
 pub struct ServerConnVisitor {
@@ -74,14 +74,13 @@ unsafe impl Send for ServerConnVisitor {}
 /// Unit tests
 #[cfg(test)]
 pub mod tests {
-
     use super::*;
-    use crate::console::tests::{MockShellInputReader, MockShellOutputWriter};
-    use crate::gateway::controller;
-    use crate::gateway::controller::tests::MockClientControlSvcMgr;
+    use crate::client::control::controller::tests::MockGwMsgProcessor;
+    use crate::client::replshell_io::tests::{MockShellInputReader, MockShellOutputWriter};
+    use crate::client::service::tests::MockClientControlSvcMgr;
+    use crate::net::tls_client::conn_std::ConnectionVisitor;
     use mockall::{mock, predicate};
     use std::sync::mpsc;
-    use trust0_common::net::tls_client::conn_std::ConnectionVisitor;
 
     // mocks
     // =====
@@ -119,7 +118,7 @@ pub mod tests {
 
     #[test]
     fn srvconnvis_on_connected() {
-        let mut msg_processor = controller::tests::MockGwMsgProcessor::new();
+        let mut msg_processor = MockGwMsgProcessor::new();
         msg_processor
             .expect_on_connected()
             .with(predicate::always())
@@ -146,7 +145,7 @@ pub mod tests {
 
         let data = vec![65, 66, 67];
 
-        let mut msg_processor = controller::tests::MockGwMsgProcessor::new();
+        let mut msg_processor = MockGwMsgProcessor::new();
         msg_processor
             .expect_process_inbound_messages()
             .with(predicate::eq(data.clone()))
@@ -167,7 +166,7 @@ pub mod tests {
     fn srvconnvis_on_polling_cycle_when_no_pending_line() {
         let event_channel = mpsc::channel();
 
-        let mut msg_processor = controller::tests::MockGwMsgProcessor::new();
+        let mut msg_processor = MockGwMsgProcessor::new();
         msg_processor
             .expect_process_outbound_messages()
             .times(1)
@@ -186,7 +185,7 @@ pub mod tests {
     #[test]
     fn srvconnvis_send_error_response() {
         let event_channel = mpsc::channel();
-        let msg_processor = controller::tests::MockGwMsgProcessor::new();
+        let msg_processor = MockGwMsgProcessor::new();
 
         let mut server_conn_visitor = ServerConnVisitor {
             event_channel_sender: Some(event_channel.0),

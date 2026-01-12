@@ -1,15 +1,15 @@
 use anyhow::Result;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
-use trust0_common::client::replshell_io::{ReplShellOutputWriter, LINE_ENDING};
-use trust0_common::control::signaling::event::SignalEvent;
-use trust0_common::control::signaling::security::CertificateReissueEvent;
-use trust0_common::distro::AppInstallFile;
-use trust0_common::error::AppError;
-use trust0_common::logging::warn;
-use trust0_common::target;
 
-use crate::gateway::controller::signaling::SignalingEventHandler;
+use crate::client::control::controller::signaling::SignalingEventHandler;
+use crate::client::replshell_io::{ReplShellOutputWriter, LINE_ENDING};
+use crate::control::signaling::event::SignalEvent;
+use crate::control::signaling::security::CertificateReissueEvent;
+use crate::distro::AppInstallFile;
+use crate::error::AppError;
+use crate::logging::warn;
+use crate::target;
 
 /// Process inbound certificate/key pair CA re-issuance events
 pub struct CertReissuanceProcessor {
@@ -140,19 +140,18 @@ impl SignalingEventHandler for CertReissuanceProcessor {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::client::replshell_io::tests::TestShellOutputWriter;
+    use crate::client::replshell_io::SHELL_PROMPT;
+    use crate::control;
+    use crate::control::signaling::event::EventType;
+    use crate::distro::AppInstallDir;
+    use crate::testutils::{self, ChannelWriter, TEST_MUTEX};
     use regex::Regex;
     use serde_json::json;
     use std::fs;
     use std::fs::File;
     use std::io::Write;
     use std::sync::mpsc;
-    use trust0_common::client::replshell_io::SHELL_PROMPT;
-    use trust0_common::control;
-    use trust0_common::control::signaling::event::EventType;
-    use trust0_common::distro::AppInstallDir;
-    use trust0_common::testutils::{self, ChannelWriter, TEST_MUTEX};
-
-    use crate::console::tests::TestShellOutputWriter;
 
     #[test]
     fn certreissueproc_new() {

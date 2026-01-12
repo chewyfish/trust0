@@ -185,42 +185,6 @@ pub mod tests {
         unsafe impl Send for ShellOutputWriter {}
     }
 
-    pub struct TestShellOutputWriter {
-        writer: Option<Box<dyn Write + Send>>,
-        prompted_toggle: Arc<AtomicBool>,
-    }
-
-    impl TestShellOutputWriter {
-        pub fn new(writer: Option<Box<dyn Write + Send>>) -> Self {
-            Self {
-                writer,
-                prompted_toggle: Arc::new(AtomicBool::new(false)),
-            }
-        }
-    }
-
-    impl Write for TestShellOutputWriter {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            let writer = self.writer.as_mut().unwrap();
-            writer.write(buf)
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            let writer = self.writer.as_mut().unwrap();
-            writer.flush()
-        }
-    }
-
-    impl ReplShellOutputWriter for TestShellOutputWriter {
-        fn prompted_toggle(&self) -> &Arc<AtomicBool> {
-            &self.prompted_toggle
-        }
-
-        fn writer(&mut self) -> &mut Option<Box<dyn Write + Send>> {
-            &mut self.writer
-        }
-    }
-
     // tests
     // =====
 

@@ -5,16 +5,16 @@ use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::{mpsc, Arc, Mutex, MutexGuard};
 use std::time::Duration;
-use trust0_common::authn::authenticator::{AuthenticatorClient, AuthnMessage, AuthnType};
-use trust0_common::authn::scram_sha256_authenticator::ScramSha256AuthenticatorClient;
-use trust0_common::client::replshell_io::{self, ReplShellInputReader, ReplShellOutputWriter};
-use trust0_common::client::service::{ClientControlServiceMgr, ProxyAddrs};
-use trust0_common::control::pdu::{ControlChannel, MessageFrame};
-use trust0_common::control::{self, management};
-use trust0_common::error::AppError;
-use trust0_common::net::tls_client::conn_std;
 
-use crate::gateway::controller::ChannelProcessor;
+use crate::authn::authenticator::{AuthenticatorClient, AuthnMessage, AuthnType};
+use crate::authn::scram_sha256_authenticator::ScramSha256AuthenticatorClient;
+use crate::client::control::controller::ChannelProcessor;
+use crate::client::replshell_io::{self, ReplShellInputReader, ReplShellOutputWriter};
+use crate::client::service::{ClientControlServiceMgr, ProxyAddrs};
+use crate::control::pdu::{ControlChannel, MessageFrame};
+use crate::control::{self, management};
+use crate::error::AppError;
+use crate::net::tls_client::conn_std;
 
 const AUTHN_LABEL_USERNAME: &str = "Username: ";
 const AUTHN_LABEL_PASSWORD: &str = "Password: ";
@@ -691,19 +691,19 @@ impl ChannelProcessor for ManagementController {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::console::tests::{
+    use crate::authn::authenticator::AuthenticatorServer;
+    use crate::authn::scram_sha256_authenticator::ScramSha256AuthenticatorServer;
+    use crate::client::replshell_io::tests::{
         MockShellInputReader, MockShellOutputWriter, TestShellOutputWriter,
     };
-    use crate::gateway::controller::tests::MockClientControlSvcMgr;
+    use crate::client::service::tests::MockClientControlSvcMgr;
+    use crate::testutils::ChannelWriter;
+    use crate::{model, testutils};
     use mockall::predicate;
     use regex::Regex;
     use ring::digest::SHA256_OUTPUT_LEN;
     use std::num::NonZeroU32;
     use std::sync::mpsc;
-    use trust0_common::authn::authenticator::AuthenticatorServer;
-    use trust0_common::authn::scram_sha256_authenticator::ScramSha256AuthenticatorServer;
-    use trust0_common::testutils::ChannelWriter;
-    use trust0_common::{model, testutils};
 
     // mocks/dummies
     // =============
@@ -975,7 +975,7 @@ pub mod tests {
         .unwrap();
         assert!(!message_outbox.lock().unwrap().is_empty());
         assert_eq!(
-            message_outbox.lock().unwrap().get(0).unwrap(),
+            message_outbox.lock().unwrap().front().unwrap(),
             &expected_request_pdu
         );
 
@@ -1011,7 +1011,7 @@ pub mod tests {
         });
 
         match controller.validate_request("user1") {
-            Ok(request) if management::request::Request::Ignore == request => {}
+            Ok(management::request::Request::Ignore) => {}
             Ok(request) => panic!("Unexpected validate result: req={:?}", &request),
             Err(err) => panic!("Unexpected validate result: err={:?}", &err),
         }
@@ -1069,7 +1069,7 @@ pub mod tests {
         );
 
         let response_data_str = r#"[{"authnType":"scramSha256","message":null}]"#;
-        let response_data_json = serde_json::from_str(&response_data_str).unwrap();
+        let response_data_json = serde_json::from_str(response_data_str).unwrap();
 
         let result = controller.process_inbound_message(MessageFrame::new(
             ControlChannel::Management,
@@ -1398,9 +1398,8 @@ pub mod tests {
             username: Some("user1".to_string()),
         });
 
-        match controller.process_authn_message(&Some(AuthnMessage::Authenticated)) {
-            Err(err) => panic!("Unexpected process message result: err={:?}", &err),
-            Ok(()) => {}
+        if let Err(err) = controller.process_authn_message(&Some(AuthnMessage::Authenticated)) {
+            panic!("Unexpected process message result: err={:?}", &err);
         }
 
         assert!(controller.authn_context.lock().unwrap().is_none());
@@ -1441,11 +1440,10 @@ pub mod tests {
             username: Some("user1".to_string()),
         });
 
-        match controller
+        if let Err(err) = controller
             .process_authn_message(&Some(AuthnMessage::Unauthenticated("msg1".to_string())))
         {
-            Err(err) => panic!("Unexpected process message result: err={:?}", &err),
-            Ok(()) => {}
+            panic!("Unexpected process message result: err={:?}", &err);
         }
 
         assert!(controller.authn_context.lock().unwrap().is_none());
@@ -1486,9 +1484,10 @@ pub mod tests {
             username: Some("user1".to_string()),
         });
 
-        match controller.process_authn_message(&Some(AuthnMessage::Payload("pass1".to_string()))) {
-            Err(err) => panic!("Unexpected process message result: err={:?}", &err),
-            Ok(()) => {}
+        if let Err(err) =
+            controller.process_authn_message(&Some(AuthnMessage::Payload("pass1".to_string())))
+        {
+            panic!("Unexpected process message result: err={:?}", &err);
         }
 
         assert!(controller.authn_context.lock().unwrap().is_some());
@@ -1556,9 +1555,10 @@ pub mod tests {
         });
 
         // Perform step 3: In - None, Out - client first msg
-        match controller.process_authn_message(&Some(AuthnMessage::Payload("pass1".to_string()))) {
-            Err(err) => panic!("Unexpected process message result: step=3, err={:?}", &err),
-            Ok(()) => {}
+        if let Err(err) =
+            controller.process_authn_message(&Some(AuthnMessage::Payload("pass1".to_string())))
+        {
+            panic!("Unexpected process message result: step=3, err={:?}", &err);
         }
 
         assert_eq!(message_outbox.lock().unwrap().len(), 1);
@@ -1930,7 +1930,7 @@ pub mod tests {
         );
 
         let response_str = "{\"channel\":\"Management\",\"code\":500,\"message\":\"System error encountered\",\"context\":\"Ping\",\"data\":null}";
-        let response: MessageFrame = serde_json::from_str(&response_str).unwrap();
+        let response: MessageFrame = serde_json::from_str(response_str).unwrap();
 
         let result = controller.process_inbound_message(response);
 

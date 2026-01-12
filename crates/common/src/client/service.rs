@@ -148,3 +148,46 @@ pub trait ClientServiceProxyVisitor: Send {
     /// Remove proxy for given proxy key. Returns whether removed else not found
     fn remove_proxy_for_key(&mut self, proxy_key: &str) -> bool;
 }
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    use mockall::mock;
+
+    // mocks
+    // =====
+    //
+    mock! {
+        pub ClientControlSvcMgr {}
+        impl ClientControlServiceMgr for ClientControlSvcMgr {
+            fn get_proxy_addrs_for_service(&self, service_id: i64) -> Option<ProxyAddrs>;
+            fn get_service_proxies(&self) -> Vec<Arc<Mutex<dyn ClientServiceProxyVisitor>>>;
+            fn startup(&mut self, service: &Service, proxy_addrs: &ProxyAddrs) -> Result<ProxyAddrs, AppError>;
+            fn shutdown(&mut self, service_id: Option<i64>) -> Result<(), AppError>;
+            fn shutdown_connection(&mut self, service_id: i64, proxy_key: &str) -> Result<(), AppError>;
+        }
+    }
+
+    mock! {
+        pub ClientSvcProxyVisitor {}
+        impl ClientServiceProxyVisitor for ClientSvcProxyVisitor {
+            fn get_service(&self) -> Service;
+            fn get_client_proxy_port(&self) -> u16;
+            fn get_gateway_proxy_host(&self) -> &str;
+            fn get_gateway_proxy_port(&self) -> u16;
+            fn get_proxy_keys(&self) -> Vec<(String, ConnectionAddrs)>;
+            fn set_shutdown_requested(&mut self);
+            fn shutdown_connections(
+                &mut self,
+                proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
+            ) -> Result<(), AppError>;
+            fn shutdown_connection(
+                &mut self,
+                proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
+                proxy_key: &str,
+            ) -> Result<(), AppError>;
+            fn remove_proxy_for_key(&mut self, proxy_key: &str) -> bool;
+        }
+        unsafe impl Send for ClientSvcProxyVisitor {}
+    }
+}

@@ -269,6 +269,36 @@ pub mod tests {
         }
     }
 
+    mock! {
+        pub ShellInputReader {}
+        impl ReplShellInputReader for ShellInputReader {
+            fn reader(&self) -> &Option<Arc<Mutex<Box<dyn BufRead + Send>>>>;
+            fn channel_receiver(&self) -> &Receiver<io::Result<String>>;
+            fn prompted_toggle(&mut self) -> &mut Arc<AtomicBool>;
+            fn clone_disable_tty_echo(&self) -> Arc<Mutex<bool>>;
+            fn clone_channel_sender(&self) -> Sender<io::Result<String>>;
+            fn initial_lines(&mut self) -> &mut VecDeque<String>;
+            fn spawn_line_reader(&self);
+            fn next_line(&mut self) -> Result<Option<String>, AppError>;
+            fn test_input_lines(&self) -> i32;
+        }
+        unsafe impl Send for ShellInputReader {}
+    }
+
+    mock! {
+        pub ShellOutputWriter {}
+        impl ReplShellOutputWriter for ShellOutputWriter {
+            fn prompted_toggle(&self) -> &Arc<AtomicBool>;
+            fn writer(&mut self) -> &mut Option<Box<dyn Write + Send>>;
+            fn write_shell_prompt(&mut self, include_welcome: bool) -> Result<(), AppError>;
+        }
+        impl Write for ShellOutputWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize>;
+            fn flush(&mut self) -> io::Result<()>;
+        }
+        unsafe impl Send for ShellOutputWriter {}
+    }
+
     pub struct TestShellOutputWriter {
         writer: Option<Box<dyn Write + Send>>,
         prompted_toggle: Arc<AtomicBool>,

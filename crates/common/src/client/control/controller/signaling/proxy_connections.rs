@@ -3,16 +3,16 @@ use serde_json::Value;
 use serde_json::Value::Array;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
-use trust0_common::client::service::ClientControlServiceMgr;
-use trust0_common::control::signaling::event::{EventType, SignalEvent};
-use trust0_common::control::signaling::heartbeat::ProxyConnectionEvent;
-use trust0_common::control::tls::message::ConnectionAddrs;
-use trust0_common::error::AppError;
-use trust0_common::error::AppError::General;
-use trust0_common::logging::{error, warn};
-use trust0_common::{control, target};
 
-use crate::gateway::controller::signaling::SignalingEventHandler;
+use crate::client::control::controller::signaling::SignalingEventHandler;
+use crate::client::service::ClientControlServiceMgr;
+use crate::control::signaling::event::{EventType, SignalEvent};
+use crate::control::signaling::heartbeat::ProxyConnectionEvent;
+use crate::control::tls::message::ConnectionAddrs;
+use crate::error::AppError;
+use crate::error::AppError::General;
+use crate::logging::{error, warn};
+use crate::{control, target};
 
 const LIVENESS_MAX_CONSECUTIVE_MISSING_CONNECTION_PROBES: u16 = 5;
 const LIVENESS_MAX_CONSECUTIVE_MISSING_SIGNAL_PROBES: u16 = 5;
@@ -274,12 +274,12 @@ impl SignalingEventHandler for ProxyConnectionsProcessor {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::gateway::controller::tests::{MockClientControlSvcMgr, MockClientSvcProxyVisitor};
+    use crate::client::service::tests::{MockClientControlSvcMgr, MockClientSvcProxyVisitor};
+    use crate::control::pdu;
+    use crate::control::pdu::ControlChannel;
+    use crate::model;
     use mockall::predicate;
     use serde_json::json;
-    use trust0_common::control::pdu;
-    use trust0_common::control::pdu::ControlChannel;
-    use trust0_common::model;
 
     // utils
     // =====

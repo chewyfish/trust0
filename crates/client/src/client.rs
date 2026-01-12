@@ -3,6 +3,8 @@ use anyhow::Result;
 use mockall::predicate;
 use std::sync::{Arc, Mutex};
 #[cfg(not(test))]
+use trust0_common::client::control::connection::ServerConnVisitor;
+#[cfg(not(test))]
 use trust0_common::client::service::ClientControlServiceMgr;
 use trust0_common::control::tls;
 use trust0_common::crypto::alpn;
@@ -10,10 +12,6 @@ use trust0_common::error::AppError;
 use trust0_common::net::tls_client::{client_std, conn_std};
 
 use crate::config::AppConfig;
-#[cfg(test)]
-use crate::gateway;
-#[cfg(not(test))]
-use crate::gateway::connection::ServerConnVisitor;
 #[cfg(not(test))]
 use crate::service::manager::ControllerServiceMgr;
 use crate::service::manager::ServiceMgr;
@@ -103,7 +101,7 @@ fn create_server_conn_visitor(
 fn create_server_conn_visitor(
     _client_visitor: &ClientVisitor,
 ) -> Result<Box<dyn conn_std::ConnectionVisitor>, AppError> {
-    let mut visitor = gateway::connection::tests::MockConnVisit::new();
+    let mut visitor = tests::MockConnVisit::new();
     visitor
         .expect_on_connected()
         .with(predicate::always())
@@ -148,10 +146,29 @@ impl client_std::ClientVisitor for ClientVisitor {
 pub mod tests {
     use super::*;
     use crate::{config, service};
+    use mockall::mock;
     use pki_types::ServerName;
     use rustls::StreamOwned;
+    use std::sync::mpsc::Sender;
     use trust0_common::net::stream_utils;
     use trust0_common::net::tls_client::client_std::ClientVisitor;
+
+    // mocks
+    // =====
+
+    mock! {
+        pub ConnVisit {}
+        impl conn_std::ConnectionVisitor for ConnVisit {
+            fn on_connected(&mut self, _event_channel_sender: &Sender<conn_std::ConnectionEvent>) -> Result<(), AppError>;
+            fn on_connection_read(&mut self, _data: &[u8]) -> Result<(), AppError>;
+            fn on_polling_cycle(&mut self) -> Result<(), AppError>;
+            fn on_shutdown(&mut self) -> Result<(), AppError>;
+            fn send_error_response(&mut self, err: &AppError);
+        }
+    }
+
+    // tests
+    // =====
 
     #[test]
     fn client_new() {

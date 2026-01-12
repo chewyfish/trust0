@@ -1,24 +1,25 @@
-use anyhow::Result;
 mod certificate_reissue;
 mod proxy_connections;
+
+use anyhow::Result;
 use std::collections::{HashMap, VecDeque};
 use std::ops::DerefMut;
 use std::rc::Rc;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use trust0_common::client::replshell_io::ReplShellOutputWriter;
-use trust0_common::client::service::ClientControlServiceMgr;
-use trust0_common::control::pdu::MessageFrame;
-use trust0_common::control::signaling::event::{EventType, SignalEvent};
-use trust0_common::error::AppError;
-use trust0_common::logging::error;
-use trust0_common::net::tls_client::conn_std;
-use trust0_common::{sync, target};
 
-use crate::gateway::controller::signaling::certificate_reissue::CertReissuanceProcessor;
-use crate::gateway::controller::signaling::proxy_connections::ProxyConnectionsProcessor;
-use crate::gateway::controller::ChannelProcessor;
+use crate::client::control::controller::signaling::certificate_reissue::CertReissuanceProcessor;
+use crate::client::control::controller::signaling::proxy_connections::ProxyConnectionsProcessor;
+use crate::client::control::controller::ChannelProcessor;
+use crate::client::replshell_io::ReplShellOutputWriter;
+use crate::client::service::ClientControlServiceMgr;
+use crate::control::pdu::MessageFrame;
+use crate::control::signaling::event::{EventType, SignalEvent};
+use crate::error::AppError;
+use crate::logging::error;
+use crate::net::tls_client::conn_std;
+use crate::{sync, target};
 
 const EVENT_LOOP_CYCLE_DELAY_MSECS: u64 = 6_000;
 
@@ -197,14 +198,13 @@ pub trait SignalingEventHandler {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::client::replshell_io::tests::MockShellOutputWriter;
+    use crate::client::service::tests::MockClientControlSvcMgr;
+    use crate::control;
+    use crate::control::pdu::ControlChannel;
     use mockall::{mock, predicate};
     use serde_json::json;
     use std::sync::mpsc;
-    use trust0_common::control;
-    use trust0_common::control::pdu::ControlChannel;
-
-    use crate::console::tests::MockShellOutputWriter;
-    use crate::gateway::controller::tests::MockClientControlSvcMgr;
 
     // mocks
     // =====
