@@ -16,9 +16,9 @@ use trust0_common::logging::error;
 use trust0_common::net::tls_server::conn_std;
 use trust0_common::{control, model, sync, target};
 
-use crate::client::controller::ChannelProcessor;
-use crate::client::device::Device;
 use crate::config::AppConfig;
+use crate::control::client::controller::ChannelProcessor;
+use crate::control::client::device::Device;
 use crate::repository::access_repo::AccessRepository;
 use crate::repository::service_repo::ServiceRepository;
 use crate::repository::user_repo::UserRepository;
@@ -726,10 +726,10 @@ impl ChannelProcessor for ManagementController {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::client::controller::tests::{
+    use crate::config;
+    use crate::control::client::controller::tests::{
         assert_msg_frame_pdu_contains, assert_msg_frame_pdu_equality, create_device, create_user,
     };
-    use crate::config;
     use crate::repository::access_repo::tests::MockAccessRepo;
     use crate::repository::role_repo::tests::MockRoleRepo;
     use crate::repository::service_repo::tests::MockServiceRepo;

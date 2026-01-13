@@ -13,11 +13,11 @@ use trust0_common::error::AppError;
 use trust0_common::logging::info;
 use trust0_common::{control, file, target};
 
-use crate::client::controller::signaling;
-use crate::client::controller::signaling::SignalingEventHandler;
-use crate::client::device;
-use crate::client::device::Device;
 use crate::config::AppConfig;
+use crate::control::client::controller::signaling;
+use crate::control::client::controller::signaling::SignalingEventHandler;
+use crate::control::client::device;
+use crate::control::client::device::Device;
 
 const PROCESSING_RECHECK_DURATION_SECS: u64 = 3_600;
 

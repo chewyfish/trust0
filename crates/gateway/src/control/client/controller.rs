@@ -13,9 +13,9 @@ use trust0_common::net::tls_server::conn_std::TlsServerConnection;
 use trust0_common::net::tls_server::{conn_std, server_std};
 use trust0_common::{model, sync};
 
-use crate::client::connection::ClientConnVisitor;
-use crate::client::device::Device;
 use crate::config::AppConfig;
+use crate::control::client::connection::ClientConnVisitor;
+use crate::control::client::device::Device;
 use crate::repository::access_repo::AccessRepository;
 use crate::repository::service_repo::ServiceRepository;
 use crate::repository::user_repo::UserRepository;

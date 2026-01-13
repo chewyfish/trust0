@@ -15,8 +15,8 @@ use trust0_common::target;
 
 use super::proxy::proxy_base::GatewayServiceProxy;
 use super::proxy::tcp_proxy::TcpGatewayProxy;
-use crate::client::controller::MessageProcessor;
 use crate::config::AppConfig;
+use crate::control::client::controller::MessageProcessor;
 use crate::service::proxy::proxy_base::GatewayServiceProxyVisitor;
 use crate::service::proxy::tcp_proxy::TcpGatewayProxyServerVisitor;
 use crate::service::proxy::udp_proxy::{UdpGatewayProxy, UdpGatewayProxyServerVisitor};
@@ -410,8 +410,8 @@ impl ServiceMgr for GatewayServiceMgr {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::client::controller::tests::MockMsgProcessor;
     use crate::config;
+    use crate::control::client::controller::tests::MockMsgProcessor;
     use crate::repository::access_repo::tests::MockAccessRepo;
     use crate::repository::role_repo::tests::MockRoleRepo;
     use crate::repository::service_repo::tests::MockServiceRepo;

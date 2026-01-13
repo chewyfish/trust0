@@ -1,5 +1,5 @@
-pub(crate) mod client;
 pub(crate) mod config;
+pub(crate) mod control;
 pub(crate) mod gateway;
 pub(crate) mod repository;
 pub(crate) mod service;

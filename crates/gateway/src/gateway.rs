@@ -13,9 +13,9 @@ use trust0_common::net::tls_server::conn_std::TlsConnection;
 use trust0_common::net::tls_server::conn_std::TlsServerConnection;
 use trust0_common::net::tls_server::{conn_std, server_std};
 
-use crate::client::connection::ClientConnVisitor;
-use crate::client::controller::ControlPlaneServerVisitor;
 use crate::config::{self, AppConfig};
+use crate::control::client::connection::ClientConnVisitor;
+use crate::control::client::controller::ControlPlaneServerVisitor;
 use crate::service::manager::ServiceMgr;
 use crate::service::proxy::proxy_base::GatewayServiceProxyVisitor;
 

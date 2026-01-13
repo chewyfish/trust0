@@ -26,10 +26,10 @@ use trust0_common::sync;
 #[cfg(test)]
 use x509_parser::prelude::{ASN1Time, Validity};
 
-use crate::client::connection::ClientConnVisitor;
-#[cfg(test)]
-use crate::client::device::Device;
 use crate::config::AppConfig;
+use crate::control::client::connection::ClientConnVisitor;
+#[cfg(test)]
+use crate::control::client::device::Device;
 use crate::service::manager::ServiceMgr;
 use crate::service::proxy::proxy_base::{GatewayServiceProxy, GatewayServiceProxyVisitor};
 

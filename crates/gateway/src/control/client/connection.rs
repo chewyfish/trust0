@@ -10,9 +10,9 @@ use trust0_common::net::tls_server::conn_std::{self, TlsConnection};
 use trust0_common::{crypto, sync, target};
 use x509_parser::nom::AsBytes;
 
-use crate::client::controller::{ControlPlane, MessageProcessor};
-use crate::client::device::Device;
 use crate::config::{self, AppConfig};
+use crate::control::client::controller::{ControlPlane, MessageProcessor};
+use crate::control::client::device::Device;
 use crate::repository::access_repo::AccessRepository;
 use crate::repository::service_repo::ServiceRepository;
 use crate::repository::user_repo::UserRepository;
@@ -457,7 +457,7 @@ unsafe impl Send for ClientConnVisitor {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::controller::tests::MockMsgProcessor;
+    use crate::control::client::controller::tests::MockMsgProcessor;
     use crate::repository::access_repo::tests::MockAccessRepo;
     use crate::repository::role_repo::tests::MockRoleRepo;
     use crate::repository::role_repo::RoleRepository;

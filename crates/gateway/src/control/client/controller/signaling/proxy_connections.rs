@@ -11,7 +11,7 @@ use trust0_common::error::AppError::General;
 use trust0_common::logging::{error, warn};
 use trust0_common::{control, target};
 
-use crate::client::controller::signaling::SignalingEventHandler;
+use crate::control::client::controller::signaling::SignalingEventHandler;
 use crate::service::manager::ServiceMgr;
 
 const LIVENESS_MAX_CONSECUTIVE_MISSING_CONNECTION_PROBES: u16 = 5;
