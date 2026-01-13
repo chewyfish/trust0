@@ -508,8 +508,7 @@ mod tests {
             &proxy_tasks_sender,
             &proxy_events_sender,
         )));
-        if device_control_plane.is_some() {
-            let device_control_plane = device_control_plane.unwrap();
+        if let Some(device_control_plane) = device_control_plane {
             service_mgr
                 .lock()
                 .unwrap()
@@ -579,22 +578,20 @@ mod tests {
         assert!(cli_conn_visitor.protocol.is_none());
 
         let result = cli_conn_visitor.process_authorization(&tls_conn, None);
-        if let Ok(protocol) = &result {
-            if let alpn::Protocol::ControlPlane = protocol {
-                assert!(cli_conn_visitor.device.is_some());
-                assert!(cli_conn_visitor.user.is_some());
-                assert_eq!(
-                    cli_conn_visitor.device.as_ref().unwrap().get_id().as_str(),
-                    device_id
-                );
-                assert_eq!(cli_conn_visitor.user.as_ref().unwrap().user_id, 100);
-                assert!(cli_conn_visitor.protocol.is_some());
-                assert_eq!(
-                    cli_conn_visitor.protocol.as_ref().unwrap(),
-                    &alpn::Protocol::ControlPlane
-                );
-                return Ok(());
-            }
+        if let Ok(alpn::Protocol::ControlPlane) = &result {
+            assert!(cli_conn_visitor.device.is_some());
+            assert!(cli_conn_visitor.user.is_some());
+            assert_eq!(
+                cli_conn_visitor.device.as_ref().unwrap().get_id().as_str(),
+                device_id
+            );
+            assert_eq!(cli_conn_visitor.user.as_ref().unwrap().user_id, 100);
+            assert!(cli_conn_visitor.protocol.is_some());
+            assert_eq!(
+                cli_conn_visitor.protocol.as_ref().unwrap(),
+                &alpn::Protocol::ControlPlane
+            );
+            return Ok(());
         }
 
         panic!("Unexpected result: val={:?}", &result);
@@ -652,14 +649,12 @@ mod tests {
         assert!(cli_conn_visitor.protocol.is_none());
 
         let result = cli_conn_visitor.process_authorization(&tls_conn, None);
-        if let Err(err) = &result {
-            if let AppError::GenWithCodeAndMsg(code, _) = err {
-                if *code == config::RESPCODE_0426_CONTROL_PLANE_ALREADY_CONNECTED {
-                    assert!(cli_conn_visitor.device.is_none());
-                    assert!(cli_conn_visitor.user.is_none());
-                    assert!(cli_conn_visitor.protocol.is_none());
-                    return Ok(());
-                }
+        if let Err(AppError::GenWithCodeAndMsg(code, _)) = &result {
+            if *code == config::RESPCODE_0426_CONTROL_PLANE_ALREADY_CONNECTED {
+                assert!(cli_conn_visitor.device.is_none());
+                assert!(cli_conn_visitor.user.is_none());
+                assert!(cli_conn_visitor.protocol.is_none());
+                return Ok(());
             }
         }
 
@@ -731,23 +726,21 @@ mod tests {
         assert!(cli_conn_visitor.protocol.is_none());
 
         let result = cli_conn_visitor.process_authorization(&tls_conn, Some(200));
-        if let Ok(protocol) = &result {
-            if let alpn::Protocol::Service(service_id) = protocol {
-                if *service_id == 200 {
-                    assert!(cli_conn_visitor.device.is_some());
-                    assert!(cli_conn_visitor.user.is_some());
-                    assert_eq!(
-                        cli_conn_visitor.device.as_ref().unwrap().get_id().as_str(),
-                        device_id
-                    );
-                    assert_eq!(cli_conn_visitor.user.as_ref().unwrap().user_id, 100);
-                    assert!(cli_conn_visitor.protocol.is_some());
-                    assert_eq!(
-                        cli_conn_visitor.protocol.as_ref().unwrap(),
-                        &alpn::Protocol::Service(200)
-                    );
-                    return Ok(());
-                }
+        if let Ok(alpn::Protocol::Service(service_id)) = &result {
+            if *service_id == 200 {
+                assert!(cli_conn_visitor.device.is_some());
+                assert!(cli_conn_visitor.user.is_some());
+                assert_eq!(
+                    cli_conn_visitor.device.as_ref().unwrap().get_id().as_str(),
+                    device_id
+                );
+                assert_eq!(cli_conn_visitor.user.as_ref().unwrap().user_id, 100);
+                assert!(cli_conn_visitor.protocol.is_some());
+                assert_eq!(
+                    cli_conn_visitor.protocol.as_ref().unwrap(),
+                    &alpn::Protocol::Service(200)
+                );
+                return Ok(());
             }
         }
 
@@ -808,14 +801,12 @@ mod tests {
         assert!(cli_conn_visitor.protocol.is_none());
 
         let result = cli_conn_visitor.process_authorization(&tls_conn, Some(201));
-        if let Err(err) = &result {
-            if let AppError::GenWithCodeAndMsg(code, _) = err {
-                if *code == config::RESPCODE_0427_CONTROL_PLANE_NOT_AUTHENTICATED {
-                    assert!(cli_conn_visitor.device.is_none());
-                    assert!(cli_conn_visitor.user.is_none());
-                    assert!(cli_conn_visitor.protocol.is_none());
-                    return Ok(());
-                }
+        if let Err(AppError::GenWithCodeAndMsg(code, _)) = &result {
+            if *code == config::RESPCODE_0427_CONTROL_PLANE_NOT_AUTHENTICATED {
+                assert!(cli_conn_visitor.device.is_none());
+                assert!(cli_conn_visitor.user.is_none());
+                assert!(cli_conn_visitor.protocol.is_none());
+                return Ok(());
             }
         }
 
@@ -877,14 +868,12 @@ mod tests {
         assert!(cli_conn_visitor.protocol.is_none());
 
         let result = cli_conn_visitor.process_authorization(&tls_conn, Some(201));
-        if let Err(err) = &result {
-            if let AppError::GenWithCodeAndMsg(code, _) = err {
-                if *code == config::RESPCODE_0427_CONTROL_PLANE_NOT_AUTHENTICATED {
-                    assert!(cli_conn_visitor.device.is_none());
-                    assert!(cli_conn_visitor.user.is_none());
-                    assert!(cli_conn_visitor.protocol.is_none());
-                    return Ok(());
-                }
+        if let Err(AppError::GenWithCodeAndMsg(code, _)) = &result {
+            if *code == config::RESPCODE_0427_CONTROL_PLANE_NOT_AUTHENTICATED {
+                assert!(cli_conn_visitor.device.is_none());
+                assert!(cli_conn_visitor.user.is_none());
+                assert!(cli_conn_visitor.protocol.is_none());
+                return Ok(());
             }
         }
 
@@ -949,14 +938,12 @@ mod tests {
         assert!(cli_conn_visitor.protocol.is_none());
 
         let result = cli_conn_visitor.process_authorization(&tls_conn, Some(201));
-        if let Err(err) = &result {
-            if let AppError::GenWithCodeAndMsg(code, _) = err {
-                if *code == config::RESPCODE_0424_INVALID_ALPN_PROTOCOL {
-                    assert!(cli_conn_visitor.device.is_none());
-                    assert!(cli_conn_visitor.user.is_none());
-                    assert!(cli_conn_visitor.protocol.is_none());
-                    return Ok(());
-                }
+        if let Err(AppError::GenWithCodeAndMsg(code, _)) = &result {
+            if *code == config::RESPCODE_0424_INVALID_ALPN_PROTOCOL {
+                assert!(cli_conn_visitor.device.is_none());
+                assert!(cli_conn_visitor.user.is_none());
+                assert!(cli_conn_visitor.protocol.is_none());
+                return Ok(());
             }
         }
 
@@ -1015,14 +1002,12 @@ mod tests {
         assert!(cli_conn_visitor.protocol.is_none());
 
         let result = cli_conn_visitor.process_authorization(&tls_conn, Some(200));
-        if let Err(err) = &result {
-            if let AppError::GenWithCodeAndMsg(code, _) = err {
-                if *code == config::RESPCODE_0424_INVALID_ALPN_PROTOCOL {
-                    assert!(cli_conn_visitor.device.is_none());
-                    assert!(cli_conn_visitor.user.is_none());
-                    assert!(cli_conn_visitor.protocol.is_none());
-                    return Ok(());
-                }
+        if let Err(AppError::GenWithCodeAndMsg(code, _)) = &result {
+            if *code == config::RESPCODE_0424_INVALID_ALPN_PROTOCOL {
+                assert!(cli_conn_visitor.device.is_none());
+                assert!(cli_conn_visitor.user.is_none());
+                assert!(cli_conn_visitor.protocol.is_none());
+                return Ok(());
             }
         }
 
@@ -1063,14 +1048,12 @@ mod tests {
         assert!(cli_conn_visitor.protocol.is_none());
 
         let result = cli_conn_visitor.process_authorization(&tls_conn, Some(200));
-        if let Err(err) = &result {
-            if let AppError::GenWithCodeAndMsg(code, _) = err {
-                if *code == config::RESPCODE_0420_INVALID_CLIENT_CERTIFICATE {
-                    assert!(cli_conn_visitor.device.is_none());
-                    assert!(cli_conn_visitor.user.is_none());
-                    assert!(cli_conn_visitor.protocol.is_none());
-                    return Ok(());
-                }
+        if let Err(AppError::GenWithCodeAndMsg(code, _)) = &result {
+            if *code == config::RESPCODE_0420_INVALID_CLIENT_CERTIFICATE {
+                assert!(cli_conn_visitor.device.is_none());
+                assert!(cli_conn_visitor.user.is_none());
+                assert!(cli_conn_visitor.protocol.is_none());
+                return Ok(());
             }
         }
 
@@ -1115,14 +1098,12 @@ mod tests {
         assert!(cli_conn_visitor.protocol.is_none());
 
         let result = cli_conn_visitor.process_authorization(&tls_conn, None);
-        if let Err(err) = &result {
-            if let AppError::GenWithCodeAndMsg(code, _) = err {
-                if *code == config::RESPCODE_0421_UNKNOWN_USER {
-                    assert!(cli_conn_visitor.device.is_none());
-                    assert!(cli_conn_visitor.user.is_none());
-                    assert!(cli_conn_visitor.protocol.is_none());
-                    return Ok(());
-                }
+        if let Err(AppError::GenWithCodeAndMsg(code, _)) = &result {
+            if *code == config::RESPCODE_0421_UNKNOWN_USER {
+                assert!(cli_conn_visitor.device.is_none());
+                assert!(cli_conn_visitor.user.is_none());
+                assert!(cli_conn_visitor.protocol.is_none());
+                return Ok(());
             }
         }
 
@@ -1176,14 +1157,12 @@ mod tests {
         assert!(cli_conn_visitor.protocol.is_none());
 
         let result = cli_conn_visitor.process_authorization(&tls_conn, None);
-        if let Err(err) = &result {
-            if let AppError::GenWithCodeAndMsg(code, _) = err {
-                if *code == config::RESPCODE_0422_INACTIVE_USER {
-                    assert!(cli_conn_visitor.device.is_none());
-                    assert!(cli_conn_visitor.user.is_none());
-                    assert!(cli_conn_visitor.protocol.is_none());
-                    return Ok(());
-                }
+        if let Err(AppError::GenWithCodeAndMsg(code, _)) = &result {
+            if *code == config::RESPCODE_0422_INACTIVE_USER {
+                assert!(cli_conn_visitor.device.is_none());
+                assert!(cli_conn_visitor.user.is_none());
+                assert!(cli_conn_visitor.protocol.is_none());
+                return Ok(());
             }
         }
 

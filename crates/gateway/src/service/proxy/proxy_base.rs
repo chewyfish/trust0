@@ -1,8 +1,6 @@
-use std::sync::mpsc::Sender;
-
 use anyhow::Result;
+use std::sync::mpsc::Sender;
 use trust0_common::control::tls::message::ConnectionAddrs;
-
 use trust0_common::error::AppError;
 use trust0_common::model::service::Service;
 use trust0_common::net::tls_server::server_std;

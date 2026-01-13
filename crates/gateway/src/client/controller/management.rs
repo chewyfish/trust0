@@ -1,19 +1,10 @@
+use anyhow::Result;
+use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
-
-use anyhow::Result;
-use serde_json::Value;
-
-use crate::client::controller::ChannelProcessor;
-use crate::client::device::Device;
-use crate::config::AppConfig;
-use crate::repository::access_repo::AccessRepository;
-use crate::repository::service_repo::ServiceRepository;
-use crate::repository::user_repo::UserRepository;
-use crate::service::manager::ServiceMgr;
 use trust0_common::authn::authenticator::{AuthenticatorServer, AuthnMessage, AuthnType};
 use trust0_common::authn::insecure_authenticator::InsecureAuthenticatorServer;
 use trust0_common::authn::scram_sha256_authenticator::ScramSha256AuthenticatorServer;
@@ -24,6 +15,14 @@ use trust0_common::error::AppError;
 use trust0_common::logging::error;
 use trust0_common::net::tls_server::conn_std;
 use trust0_common::{control, model, sync, target};
+
+use crate::client::controller::ChannelProcessor;
+use crate::client::device::Device;
+use crate::config::AppConfig;
+use crate::repository::access_repo::AccessRepository;
+use crate::repository::service_repo::ServiceRepository;
+use crate::repository::user_repo::UserRepository;
+use crate::service::manager::ServiceMgr;
 
 /// (MFA) Authentication context
 struct AuthnContext {
@@ -760,6 +759,7 @@ pub mod tests {
     // utils
     // =====
 
+    #[allow(clippy::type_complexity)]
     fn create_repos(
         expect_user_get: bool,
         expect_access_get_all_for_user: bool,
@@ -980,17 +980,17 @@ pub mod tests {
         )?;
         app_config.mfa_scheme = mfa_scheme;
 
-        Ok(ManagementController::new(
+        ManagementController::new(
             &Arc::new(app_config),
             &service_mgr,
-            &access_repo,
-            &service_repo,
-            &user_repo,
+            access_repo,
+            service_repo,
+            user_repo,
             &event_channel_sender,
             &create_device().unwrap(),
             &create_user(),
             &message_outbox,
-        )?)
+        )
     }
 
     // tests

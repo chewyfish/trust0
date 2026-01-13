@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::fs;
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
-
-use crate::repository::user_repo::UserRepository;
 use trust0_common::error::AppError;
 use trust0_common::file::{ReloadableFile, ReloadableTextFile};
 use trust0_common::logging::error;
 use trust0_common::model::user::User;
 use trust0_common::target;
+
+use crate::repository::user_repo::UserRepository;
 
 pub struct InMemUserRepo {
     users: RwLock<HashMap<i64, User>>,
@@ -439,7 +439,7 @@ mod tests {
         let returned_user = result.unwrap();
 
         let stored_map = user_repo.users.read().unwrap();
-        let stored_entry = stored_map.iter().map(|e| e.1).cloned().next();
+        let stored_entry = stored_map.iter().map(|e| e.1).next().cloned();
 
         user.user_id = 1;
 

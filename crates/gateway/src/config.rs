@@ -1,9 +1,3 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::str::FromStr;
-use std::sync::{Arc, Mutex};
-use std::{env, fmt};
-
 use clap::*;
 use hickory_resolver::Resolver;
 use lazy_static::lazy_static;
@@ -11,6 +5,21 @@ use pki_types::{
     CertificateDer, CertificateRevocationListDer, PrivateKeyDer, PrivatePkcs1KeyDer,
     PrivatePkcs8KeyDer, PrivateSec1KeyDer,
 };
+use regex::Regex;
+use rustls::crypto::CryptoProvider;
+use rustls::server::danger::ClientCertVerifier;
+use rustls::server::WebPkiClientVerifier;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::str::FromStr;
+use std::sync::{Arc, Mutex};
+use std::{env, fmt};
+use trust0_common::authn::authenticator::AuthnType;
+use trust0_common::crypto::crl::CRLFile;
+use trust0_common::crypto::file::{load_certificates, load_private_key};
+use trust0_common::crypto::{alpn, ca};
+use trust0_common::error::AppError;
+use trust0_common::file::ReloadableFile;
 
 use crate::repository::access_repo::AccessRepository;
 use crate::repository::in_memory_db::access_repo::InMemAccessRepo;
@@ -36,16 +45,6 @@ use crate::repository::postgres_db::user_repo::PostgresUserRepo;
 use crate::repository::role_repo::RoleRepository;
 use crate::repository::service_repo::ServiceRepository;
 use crate::repository::user_repo::UserRepository;
-use regex::Regex;
-use rustls::crypto::CryptoProvider;
-use rustls::server::danger::ClientCertVerifier;
-use rustls::server::WebPkiClientVerifier;
-use trust0_common::authn::authenticator::AuthnType;
-use trust0_common::crypto::crl::CRLFile;
-use trust0_common::crypto::file::{load_certificates, load_private_key};
-use trust0_common::crypto::{alpn, ca};
-use trust0_common::error::AppError;
-use trust0_common::file::ReloadableFile;
 
 #[cfg(test)]
 static mut COMMAND_LINE_ARGS: Vec<String> = vec![];
@@ -1449,6 +1448,7 @@ pub mod tests {
             .to_str()
             .unwrap()
             .to_string();
+        #[allow(clippy::type_complexity)]
         let repo_factories: (
             Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
             Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,
@@ -1546,6 +1546,7 @@ pub mod tests {
 
     #[test]
     fn appconfig_create_datasource_repositories_when_nodb_ds() {
+        #[allow(clippy::type_complexity)]
         let repo_factories: (
             Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
             Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,

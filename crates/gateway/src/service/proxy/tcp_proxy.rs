@@ -1,25 +1,15 @@
-use std::collections::HashMap;
-use std::net::{SocketAddr, TcpStream};
-use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
-
 #[cfg(test)]
 use ::time::macros::datetime;
 use anyhow::Result;
 use rustls::server::Accepted;
 use rustls::ServerConfig;
+use std::collections::HashMap;
+use std::net::{SocketAddr, TcpStream};
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
 use trust0_common::control::tls;
 use trust0_common::control::tls::message::ConnectionAddrs;
 use trust0_common::crypto::alpn;
-#[cfg(test)]
-use x509_parser::prelude::{ASN1Time, Validity};
-
-use crate::client::connection::ClientConnVisitor;
-#[cfg(test)]
-use crate::client::device::Device;
-use crate::config::AppConfig;
-use crate::service::manager::ServiceMgr;
-use crate::service::proxy::proxy_base::{GatewayServiceProxy, GatewayServiceProxyVisitor};
 #[cfg(test)]
 use trust0_common::crypto::ca::{CertAccessContext, EntityType};
 use trust0_common::error::AppError;
@@ -33,6 +23,15 @@ use trust0_common::proxy::event::ProxyEvent;
 use trust0_common::proxy::executor::ProxyExecutorEvent;
 use trust0_common::proxy::proxy_base::ProxyType;
 use trust0_common::sync;
+#[cfg(test)]
+use x509_parser::prelude::{ASN1Time, Validity};
+
+use crate::client::connection::ClientConnVisitor;
+#[cfg(test)]
+use crate::client::device::Device;
+use crate::config::AppConfig;
+use crate::service::manager::ServiceMgr;
+use crate::service::proxy::proxy_base::{GatewayServiceProxy, GatewayServiceProxyVisitor};
 
 /// Gateway service proxy (TCP trust0 gateway <-> TCP service)
 pub struct TcpGatewayProxy {

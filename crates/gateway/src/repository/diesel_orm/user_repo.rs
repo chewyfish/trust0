@@ -5,12 +5,12 @@ use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 #[cfg(feature = "postgres_db")]
 use std::time::SystemTime;
+use trust0_common::error::AppError;
+use trust0_common::model;
 
 use crate::repository::diesel_orm::db_schema::user_roles;
 use crate::repository::diesel_orm::db_schema::users::dsl::*;
 use crate::repository::user_repo::UserRepository;
-use trust0_common::error::AppError;
-use trust0_common::model;
 
 /// User ORM model struct
 #[derive(Debug, AsChangeset, Identifiable, Insertable, Queryable, Selectable, PartialEq)]

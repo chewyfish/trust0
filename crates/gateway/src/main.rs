@@ -3,11 +3,9 @@ compile_error!(
     "feature \"mysql_db\" and feature \"postgres_db\" cannot be enabled at the same time"
 );
 
+use anyhow::Result;
 use std::time::Duration;
 use std::{process, thread};
-
-use anyhow::Result;
-
 use trust0_common::crypto;
 use trust0_common::error::AppError;
 use trust0_common::logging::{debug, error, LogLevel, LOG};

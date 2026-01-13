@@ -1,15 +1,13 @@
-use std::collections::HashMap;
-
 use ::time::OffsetDateTime;
 use anyhow::Result;
 use iter_group::IntoGroup;
 use pki_types::CertificateDer;
-use x509_parser::nom::AsBytes;
-use x509_parser::prelude::*;
-
+use std::collections::HashMap;
 use trust0_common::crypto::asn;
 use trust0_common::crypto::ca::{CertAccessContext, EntityType};
 use trust0_common::error::AppError;
+use x509_parser::nom::AsBytes;
+use x509_parser::prelude::*;
 
 pub const CERT_OID_COMMON_NAME: &str = "2.5.4.3";
 pub const CERT_OID_ORGANIZATION: &str = "2.5.4.10";

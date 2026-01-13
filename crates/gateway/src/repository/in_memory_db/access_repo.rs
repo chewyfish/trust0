@@ -1,14 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
-
-use crate::repository::access_repo::AccessRepository;
 use trust0_common::error::AppError;
 use trust0_common::file::{ReloadableFile, ReloadableTextFile};
 use trust0_common::logging::error;
 use trust0_common::model::access::{EntityType, ServiceAccess};
 use trust0_common::model::user::User;
 use trust0_common::target;
+
+use crate::repository::access_repo::AccessRepository;
 
 #[derive(Clone, Hash, Eq, PartialEq)]
 struct AccessKey(i64, EntityType, i64);
@@ -624,7 +624,7 @@ mod tests {
             Some("pass10"),
             "name10",
             &Status::Active,
-            &vec![],
+            &[],
         ));
 
         if let Err(err) = &result {
@@ -682,7 +682,7 @@ mod tests {
             Some("pass1"),
             "name1",
             &Status::Active,
-            &vec![],
+            &[],
         ));
 
         if let Err(err) = &result {
@@ -772,7 +772,7 @@ mod tests {
             Some("pass1"),
             "name1",
             &Status::Active,
-            &vec![10],
+            &[10],
         ));
 
         if let Err(err) = &result {
@@ -864,7 +864,7 @@ mod tests {
                 Some("pass10"),
                 "name10",
                 &Status::Active,
-                &vec![50],
+                &[50],
             ),
         );
 
@@ -925,7 +925,7 @@ mod tests {
                 Some("pass1"),
                 "name1",
                 &Status::Active,
-                &vec![50],
+                &[50],
             ),
         );
 
@@ -995,7 +995,7 @@ mod tests {
                 Some("pass1"),
                 "name1",
                 &Status::Active,
-                &vec![10],
+                &[10],
             ),
         );
 

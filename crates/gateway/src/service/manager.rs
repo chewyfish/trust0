@@ -1,3 +1,4 @@
+use anyhow::Result;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::ops::DerefMut;
@@ -5,8 +6,12 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
-
-use anyhow::Result;
+use trust0_common::error::AppError;
+use trust0_common::logging::info;
+use trust0_common::model::service::{Service, Transport};
+use trust0_common::proxy::event::ProxyEvent;
+use trust0_common::proxy::executor::ProxyExecutorEvent;
+use trust0_common::target;
 
 use super::proxy::proxy_base::GatewayServiceProxy;
 use super::proxy::tcp_proxy::TcpGatewayProxy;
@@ -15,12 +20,6 @@ use crate::config::AppConfig;
 use crate::service::proxy::proxy_base::GatewayServiceProxyVisitor;
 use crate::service::proxy::tcp_proxy::TcpGatewayProxyServerVisitor;
 use crate::service::proxy::udp_proxy::{UdpGatewayProxy, UdpGatewayProxyServerVisitor};
-use trust0_common::error::AppError;
-use trust0_common::logging::info;
-use trust0_common::model::service::{Service, Transport};
-use trust0_common::proxy::event::ProxyEvent;
-use trust0_common::proxy::executor::ProxyExecutorEvent;
-use trust0_common::target;
 
 const DEFAULT_SERVICE_PORT_START: u16 = 8200;
 const DEFAULT_SERVICE_PORT_END: u16 = 8250;
