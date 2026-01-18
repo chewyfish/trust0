@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::net::TcpStream;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
-use trust0_common::client::service::ClientServiceProxyVisitor;
 use trust0_common::control::tls::message::ConnectionAddrs;
 use trust0_common::crypto::alpn;
 use trust0_common::error::AppError;
@@ -18,7 +17,7 @@ use trust0_common::proxy::proxy_base::ProxyType;
 use trust0_common::sync;
 
 use crate::config::AppConfig;
-use crate::service::proxy::proxy_base::ClientServiceProxy;
+use crate::service::proxy::proxy_base::{ClientServiceProxy, ClientServiceProxyVisitor};
 use crate::service::proxy::proxy_client::ClientVisitor;
 
 /// Client service proxy (TCP service client <-> TCP trust0 client)

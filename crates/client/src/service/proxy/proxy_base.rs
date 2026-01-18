@@ -1,10 +1,72 @@
 use anyhow::Result;
+use std::sync::mpsc::Sender;
+use trust0_common::client::service::ClientControlServiceProxyVisitor;
+use trust0_common::control::tls::message::ConnectionAddrs;
 use trust0_common::error::AppError;
+use trust0_common::model::service::Service;
+use trust0_common::proxy::executor::ProxyExecutorEvent;
 
 /// Service proxy trait for the client end of the proxy (implementations are transport-layer,... specific)
 pub trait ClientServiceProxy: Send {
     /// Startup proxy listener (for clients to connect to gateway proxy for service)
     fn startup(&mut self) -> Result<(), AppError>;
+}
+
+/// Client service proxy visitor trait (implementations are transport-layer,... specific)
+pub trait ClientServiceProxyVisitor: Send {
+    /// Service accessor
+    fn get_service(&self) -> Service;
+
+    /// Client port for service proxy
+    #[allow(dead_code)]
+    fn get_client_proxy_port(&self) -> u16;
+
+    /// Gateway host for service proxy
+    #[allow(dead_code)]
+    fn get_gateway_proxy_host(&self) -> &str;
+
+    /// Gateway port for service proxy
+    #[allow(dead_code)]
+    fn get_gateway_proxy_port(&self) -> u16;
+
+    /// Client and gateway proxy key and stream addresses list for proxy connections (else None if no proxy active)
+    /// Returns list of tuple of (proxy key, (client address, gateway address))
+    fn get_proxy_keys(&self) -> Vec<(String, ConnectionAddrs)>;
+
+    /// Request a server shutdown
+    fn set_shutdown_requested(&mut self);
+
+    /// Shutdown proxy connection for service
+    fn shutdown_connections(
+        &mut self,
+        proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
+    ) -> Result<(), AppError>;
+
+    /// Shutdown service proxy connection.
+    fn shutdown_connection(
+        &mut self,
+        proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
+        proxy_key: &str,
+    ) -> Result<(), AppError>;
+
+    /// Remove proxy for given proxy key. Returns whether removed else not found
+    fn remove_proxy_for_key(&mut self, proxy_key: &str) -> bool;
+}
+
+/// Service proxy visitor used by the controller service manager
+pub struct ControlServiceProxyVisitor {
+    pub service: Service,
+    pub proxy_keys: Vec<(String, ConnectionAddrs)>,
+}
+
+impl ClientControlServiceProxyVisitor for ControlServiceProxyVisitor {
+    fn get_service(&self) -> Service {
+        self.service.clone()
+    }
+
+    fn get_proxy_keys(&self) -> Vec<(String, ConnectionAddrs)> {
+        self.proxy_keys.clone()
+    }
 }
 
 /// Unit tests
@@ -18,18 +80,16 @@ pub mod tests {
     use rustls::ServerConfig;
     use std::io::Write;
     use std::path::PathBuf;
-    use std::sync::mpsc::Sender;
     use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
-    use trust0_common::client::service::ClientServiceProxyVisitor;
     use trust0_common::control::pdu::MessageFrame;
     use trust0_common::control::tls;
     use trust0_common::control::tls::message::ConnectionAddrs;
     use trust0_common::crypto;
     use trust0_common::crypto::file::{load_certificates, load_private_key};
     use trust0_common::model::service::Service;
-    use trust0_common::proxy::executor::ProxyExecutorEvent;
+    use trust0_common::model::service::Transport;
 
     const CERTFILE_ROOTCA_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "root-ca.crt.pem"];
@@ -53,6 +113,14 @@ pub mod tests {
             fn shutdown_connections(&mut self, proxy_tasks_sender: &Sender<ProxyExecutorEvent>) -> Result<(), AppError>;
             fn shutdown_connection(&mut self, proxy_tasks_sender: &Sender<ProxyExecutorEvent>, proxy_key: &str) -> Result<(), AppError>;
             fn remove_proxy_for_key(&mut self, proxy_key: &str) -> bool;
+        }
+    }
+
+    mock! {
+        pub CliCtlSvcProxyVisitor {}
+        impl ClientControlServiceProxyVisitor for CliCtlSvcProxyVisitor {
+            fn get_service(&self) -> Service;
+            fn get_proxy_keys(&self) -> Vec<(String, ConnectionAddrs)>;
         }
     }
 
@@ -170,5 +238,55 @@ pub mod tests {
         });
 
         Ok(())
+    }
+
+    // tests
+    // =====
+
+    #[test]
+    fn clictlproxyvis_get_service() {
+        let expected_service = Service {
+            service_id: 200,
+            name: "svc200".to_string(),
+            transport: Transport::TCP,
+            host: "svchost1".to_string(),
+            port: 4000,
+        };
+
+        let visitor = ControlServiceProxyVisitor {
+            service: expected_service.clone(),
+            proxy_keys: vec![],
+        };
+
+        assert_eq!(visitor.get_service(), expected_service);
+    }
+
+    #[test]
+    fn clictlproxyvis_get_proxy_keys() {
+        let service = Service {
+            service_id: 200,
+            name: "svc200".to_string(),
+            transport: Transport::TCP,
+            host: "svchost1".to_string(),
+            port: 4000,
+        };
+
+        let expected_proxy_keys = vec![
+            (
+                "key2".to_string(),
+                ("addr3".to_string(), "addr4".to_string()),
+            ),
+            (
+                "key3".to_string(),
+                ("addr5".to_string(), "addr6".to_string()),
+            ),
+        ];
+
+        let visitor = ControlServiceProxyVisitor {
+            service,
+            proxy_keys: expected_proxy_keys.clone(),
+        };
+
+        assert_eq!(visitor.get_proxy_keys(), expected_proxy_keys);
     }
 }

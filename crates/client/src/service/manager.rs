@@ -5,9 +5,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
-use trust0_common::client::service::{
-    ClientControlServiceMgr, ClientServiceProxyVisitor, ProxyAddrs,
-};
+use trust0_common::client::service::{ClientControlServiceMgr, ProxyAddrs};
 use trust0_common::error::AppError;
 use trust0_common::logging::info;
 use trust0_common::model::service::{Service, Transport};
@@ -15,7 +13,9 @@ use trust0_common::proxy::event::ProxyEvent;
 use trust0_common::proxy::executor::ProxyExecutorEvent;
 use trust0_common::target;
 
-use super::proxy::proxy_base::ClientServiceProxy;
+use super::proxy::proxy_base::{
+    ClientServiceProxy, ClientServiceProxyVisitor, ControlServiceProxyVisitor,
+};
 use super::proxy::tcp_proxy::TcpClientProxy;
 use crate::config::AppConfig;
 use crate::service::proxy::tcp_proxy::TcpClientProxyServerVisitor;
@@ -466,8 +466,18 @@ impl ClientControlServiceMgr for ControllerServiceMgr {
 
     fn get_service_proxies(
         &self,
-    ) -> Vec<Arc<Mutex<dyn trust0_common::client::service::ClientServiceProxyVisitor>>> {
-        self.service_mgr.lock().unwrap().get_service_proxies()
+    ) -> Vec<Arc<Mutex<dyn trust0_common::client::service::ClientControlServiceProxyVisitor>>> {
+        let mut proxies: Vec<
+            Arc<Mutex<dyn trust0_common::client::service::ClientControlServiceProxyVisitor>>,
+        > = vec![];
+        for proxy in self.service_mgr.lock().unwrap().get_service_proxies() {
+            let locked_proxy = proxy.lock().unwrap();
+            proxies.push(Arc::new(Mutex::new(ControlServiceProxyVisitor {
+                service: locked_proxy.get_service(),
+                proxy_keys: locked_proxy.get_proxy_keys(),
+            })));
+        }
+        proxies
     }
 
     fn startup(
@@ -574,7 +584,7 @@ pub mod tests {
 
         match ClientServiceMgr::process_next_proxy_event(&service_mgr, &events_channel.1) {
             Ok(processed) => {
-                assert_eq!(processed, false);
+                assert!(!processed);
             }
             Err(err) => panic!("Unexpected result: err={:?}", &err),
         }
@@ -612,7 +622,7 @@ pub mod tests {
 
         match ClientServiceMgr::process_next_proxy_event(&service_mgr, &events_channel.1) {
             Ok(processed) => {
-                assert_eq!(processed, true);
+                assert!(processed);
             }
             Err(err) => panic!("Unexpected result: err={:?}", &err),
         }
@@ -1002,7 +1012,23 @@ pub mod tests {
 
     #[test]
     fn ctlsvcmgr_get_svc_proxies() {
-        let clisvc_proxy_visitor = MockCliSvcProxyVisitor::new();
+        let service = Service {
+            service_id: 200,
+            name: "Service200".to_string(),
+            transport: Transport::UDP,
+            host: "localhost".to_string(),
+            port: 8200,
+        };
+
+        let mut clisvc_proxy_visitor = MockCliSvcProxyVisitor::new();
+        clisvc_proxy_visitor
+            .expect_get_service()
+            .times(1)
+            .return_once(move || service);
+        clisvc_proxy_visitor
+            .expect_get_proxy_keys()
+            .times(1)
+            .return_once(Vec::new);
 
         let mut service_mgr = MockSvcMgr::new();
         service_mgr.expect_get_proxy_addrs_for_service().never();
@@ -1025,6 +1051,7 @@ pub mod tests {
     #[test]
     fn ctlsvcmgr_startup() {
         let proxy_addrs = ProxyAddrs(3000, "gwhost1".to_string(), 8000);
+        let proxy_addrs_copy = proxy_addrs.clone();
         let service = Service {
             service_id: 200,
             name: "Service200".to_string(),
@@ -1043,7 +1070,7 @@ pub mod tests {
                 predicate::eq(proxy_addrs.clone()),
             )
             .times(1)
-            .return_once(move |_, _| Ok(proxy_addrs));
+            .return_once(move |_, _| Ok(proxy_addrs_copy));
         service_mgr.expect_shutdown().never();
         service_mgr.expect_shutdown_connection().never();
 
@@ -1051,9 +1078,13 @@ pub mod tests {
             service_mgr: Arc::new(Mutex::new(service_mgr)),
         };
 
-        let result =
-            ctl_service_mgr.startup(&service, &ProxyAddrs(3000, "gwhost1".to_string(), 8000));
+        let result = ctl_service_mgr.startup(&service, &proxy_addrs);
         assert!(result.is_ok());
+
+        let res_proxy_addrs = result.unwrap();
+        assert_eq!(res_proxy_addrs.0, proxy_addrs.0);
+        assert_eq!(res_proxy_addrs.1, proxy_addrs.1);
+        assert_eq!(res_proxy_addrs.2, proxy_addrs.2);
     }
 
     #[test]

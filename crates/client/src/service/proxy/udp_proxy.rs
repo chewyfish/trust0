@@ -4,7 +4,6 @@ use std::net::{SocketAddr, UdpSocket};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use trust0_common::client::service::ClientServiceProxyVisitor;
 use trust0_common::control::tls::message::ConnectionAddrs;
 use trust0_common::crypto::alpn;
 use trust0_common::error::AppError;
@@ -20,7 +19,7 @@ use trust0_common::proxy::proxy_base::ProxyType;
 use trust0_common::{sync, target};
 
 use crate::config::AppConfig;
-use crate::service::proxy::proxy_base::ClientServiceProxy;
+use crate::service::proxy::proxy_base::{ClientServiceProxy, ClientServiceProxyVisitor};
 use crate::service::proxy::proxy_client::ClientVisitor;
 
 /// Client service proxy (UDP service client <-> TCP trust0 client)
