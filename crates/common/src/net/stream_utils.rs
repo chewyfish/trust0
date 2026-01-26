@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::io::BufRead;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 use std::{io, thread};
@@ -513,6 +514,118 @@ impl SessionMsgExchanger {
             )));
         }
         Ok(())
+    }
+}
+
+/// Implements [`io::Write`] for a byte vector channel sender
+pub struct ChannelWriter {
+    /// Byte vector channel sender
+    channel_sender: mpsc::Sender<Vec<u8>>,
+}
+
+impl ChannelWriter {
+    /// Construct new [`ChannelWriter`]
+    ///
+    /// # Arguments
+    ///
+    /// * `channel_sender` : [`mpsc::Sender`] for writing byte vectors
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`ChannelWriter`]
+    ///
+    pub fn new(channel_sender: mpsc::Sender<Vec<u8>>) -> Self {
+        ChannelWriter { channel_sender }
+    }
+}
+
+impl io::Write for ChannelWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.channel_sender
+            .send(buf.to_vec())
+            .map(|_| buf.len())
+            .map_err(io::Error::other)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Implements [`io::Read`] for a byte vector channel receiver
+pub struct ChannelReader {
+    /// Byte vector channel receiver
+    channel_receiver: mpsc::Receiver<Vec<u8>>,
+    /// Pending read buffer data
+    pending_buffer: VecDeque<u8>,
+}
+
+impl ChannelReader {
+    /// Construct new [`ChannelReader`]
+    ///
+    /// # Arguments
+    ///
+    /// * `channel_receiver` : [`mpsc::Reading`] for reading byte vectors
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`ChannelReader`]
+    ///
+    pub fn new(channel_receiver: mpsc::Receiver<Vec<u8>>) -> ChannelReader {
+        ChannelReader {
+            channel_receiver,
+            pending_buffer: VecDeque::new(),
+        }
+    }
+}
+
+impl io::Read for ChannelReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let src_buf = self.fill_buf()?;
+
+        let src_buf_len = src_buf.len();
+        let buf_len = buf.len();
+        let msg_len = if src_buf_len < buf_len {
+            src_buf_len
+        } else {
+            buf_len
+        };
+
+        buf[..msg_len].copy_from_slice(&src_buf[..msg_len]);
+        self.consume(msg_len);
+
+        Ok(msg_len)
+    }
+}
+
+impl io::BufRead for ChannelReader {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        // Read data from receiver
+        if self.pending_buffer.is_empty() {
+            #[cfg(not(test))]
+            let msg = self.channel_receiver.recv().map_err(io::Error::other)?;
+            #[cfg(test)]
+            let msg = {
+                match self.channel_receiver.try_recv() {
+                    Ok(msg) => msg,
+                    Err(mpsc::TryRecvError::Empty) => vec![],
+                    Err(err) => return Err(io::Error::other(err)),
+                }
+            };
+            self.pending_buffer.append(&mut VecDeque::from(msg));
+        }
+
+        // return buffer
+        self.pending_buffer.make_contiguous();
+        Ok(self.pending_buffer.as_slices().0)
+    }
+
+    fn consume(&mut self, amt: usize) {
+        if amt >= self.pending_buffer.len() {
+            self.pending_buffer.clear();
+        } else {
+            let _ = self.pending_buffer.drain(..amt);
+        }
     }
 }
 
@@ -1230,6 +1343,100 @@ pub mod tests {
 
         if let Ok(sessmsg) = result {
             panic!("Unexpected successful result: msg={:?}", &sessmsg);
+        }
+    }
+
+    #[test]
+    fn chanwriter_write_msg() {
+        use std::io::Write;
+
+        let (sender, receiver) = mpsc::channel();
+        let msg_text = "hello".as_bytes();
+
+        let mut channel_writer = ChannelWriter::new(sender);
+
+        match channel_writer.write(msg_text) {
+            Ok(write_len) => assert_eq!(write_len, 5),
+            Err(err) => panic!("Unexpected write result: err={:?}", &err),
+        }
+
+        match receiver.try_recv() {
+            Ok(msg) => assert_eq!(msg, msg_text.to_vec()),
+            Err(err) => panic!("Unexpected channel received result: err={:?}", &err),
+        }
+    }
+
+    #[test]
+    fn chanreader_read_msg() {
+        use std::io::Read;
+
+        let (sender, receiver) = mpsc::channel();
+        let msg_text = "hello".as_bytes();
+
+        let mut channel_reader = ChannelReader::new(receiver);
+
+        sender.send(msg_text.to_vec()).unwrap();
+
+        let mut buf = vec![0; 7];
+        let buf_slice = buf.as_mut_slice();
+        match channel_reader.read(buf_slice) {
+            Ok(read_len) => {
+                assert_eq!(read_len, 5);
+                assert_eq!(buf_slice, [b'h', b'e', b'l', b'l', b'o', 0u8, 0u8]);
+            }
+            Err(err) => panic!("Unexpected read result: err={:?}", &err),
+        }
+
+        let mut buf = vec![0; 7];
+        let buf_slice = buf.as_mut_slice();
+        match channel_reader.read(buf_slice) {
+            Ok(read_len) => {
+                assert_eq!(read_len, 0);
+                assert_eq!(buf_slice, [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]);
+            }
+            Err(err) => panic!("Unexpected read result: err={:?}", &err),
+        }
+    }
+
+    #[test]
+    fn chanreader_read_msg_with_buf_too_small() {
+        use std::io::Read;
+
+        let (sender, receiver) = mpsc::channel();
+        let msg_text = "hello".as_bytes();
+
+        let mut channel_reader = ChannelReader::new(receiver);
+
+        sender.send(msg_text.to_vec()).unwrap();
+
+        let mut buf = vec![0; 3];
+        let buf_slice = buf.as_mut_slice();
+        match channel_reader.read(buf_slice) {
+            Ok(read_len) => {
+                assert_eq!(read_len, 3);
+                assert_eq!(buf_slice, [b'h', b'e', b'l']);
+            }
+            Err(err) => panic!("Unexpected read result #1: err={:?}", &err),
+        }
+
+        let mut buf = vec![0; 3];
+        let buf_slice = buf.as_mut_slice();
+        match channel_reader.read(buf_slice) {
+            Ok(read_len) => {
+                assert_eq!(read_len, 2);
+                assert_eq!(buf_slice, [b'l', b'o', 0u8]);
+            }
+            Err(err) => panic!("Unexpected read result #2: err={:?}", &err),
+        }
+
+        let mut buf = vec![0; 3];
+        let buf_slice = buf.as_mut_slice();
+        match channel_reader.read(buf_slice) {
+            Ok(read_len) => {
+                assert_eq!(read_len, 0);
+                assert_eq!(buf_slice, [0u8, 0u8, 0u8]);
+            }
+            Err(err) => panic!("Unexpected read result: err={:?}", &err),
         }
     }
 }

@@ -2,10 +2,11 @@ use std::collections::VecDeque;
 use std::io::{self, BufRead, Write};
 use std::ops::DerefMut;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 
 use crate::error::AppError;
+use crate::net::stream_utils::{ChannelReader, ChannelWriter};
 
 pub const SHELL_MSG_APP_TITLE: &str = "Trust0 SDP Platform";
 pub const SHELL_MSG_APP_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -86,7 +87,7 @@ pub trait ReplShellInputReader: Send {
     ///
     fn reader(&self) -> &Option<Arc<Mutex<Box<dyn BufRead + Send>>>>;
 
-    /// Channel receiver accessor for incoming text lines
+    /// Channel receiver accessor for incoming text lines from line reader thread
     ///
     /// # Returns
     ///
@@ -110,7 +111,7 @@ pub trait ReplShellInputReader: Send {
     ///
     fn clone_disable_tty_echo(&self) -> Arc<Mutex<bool>>;
 
-    /// Clone message channel sender
+    /// Clone message channel sender (used by line reader thread to send new message lines)
     ///
     /// # Returns
     ///
@@ -229,6 +230,135 @@ fn process_next_line(
         _ => {
             let _ = channel_sender.send(read_result);
         }
+    }
+}
+
+/// Shell output writer ([`ReplShellOutputWriter`]) using [`ChannelWriter`] as underlying writer
+pub struct ChannelShellOutputWriter {
+    /// Writer accessor (implements [`Write`], used to write output)
+    writer: Option<Box<dyn Write + Send>>,
+    /// Shell prompt status toggler accessor. Indicates whether prompt has currently been written.
+    prompted_toggle: Arc<AtomicBool>,
+}
+
+impl ChannelShellOutputWriter {
+    /// ShellOutputWriter constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `channel_sender` - A [`Sender`] object used to send shell output
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`ChannelShellOutputWriter`] object.
+    ///
+    pub fn new(channel_sender: Sender<Vec<u8>>) -> Self {
+        let channel_writer: Box<dyn Write + Send> = Box::new(ChannelWriter::new(channel_sender));
+        Self {
+            writer: Some(channel_writer),
+            prompted_toggle: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+impl Write for ChannelShellOutputWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let writer = self.writer.as_mut().unwrap();
+        writer.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        let writer = self.writer.as_mut().unwrap();
+        writer.flush()
+    }
+}
+
+unsafe impl Send for ChannelShellOutputWriter {}
+
+impl ReplShellOutputWriter for ChannelShellOutputWriter {
+    fn prompted_toggle(&self) -> &Arc<AtomicBool> {
+        &self.prompted_toggle
+    }
+
+    fn writer(&mut self) -> &mut Option<Box<dyn Write + Send>> {
+        &mut self.writer
+    }
+}
+
+/// Shell input reader ([`ReplShellInputReader`]) using [`ChannelReader`] as underlying reader
+pub struct ChannelShellInputReader {
+    /// Reader accessor (implements [`Read`], used to read input)
+    reader: Option<Arc<Mutex<Box<dyn BufRead + Send>>>>,
+    /// TTY echo disable state (to be able to control whether keyed input is shown on the terminal - next line only)
+    disable_tty_echo: Arc<Mutex<bool>>,
+    /// Channel sender for outgoing text lines. Used by line reader thread to send new lines)
+    channel_send: Sender<io::Result<String>>,
+    /// Channel receiver for incoming text lines sent from line reader thread
+    channel_recv: Receiver<io::Result<String>>,
+    /// Initial input lines to use upon shell readiness
+    initial_lines: VecDeque<String>,
+    /// Prompt recently displayed accessor/mutator
+    prompted_toggle: Arc<AtomicBool>,
+    // (for testing)
+    test_input_lines: i32,
+}
+
+impl ChannelShellInputReader {
+    /// ChannelShellInputReader constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `channel_receiver` - A [`Receiver`] used to read input to send to REPL shell
+    /// * `initial_lines` - A vector of initial input lines to use upon shell readiness
+    /// * `prompted_toggle` - Shell output prompt toggler
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`ChannelShellInputReader`] object.
+    ///
+    pub fn new(
+        channel_receiver: Receiver<Vec<u8>>,
+        initial_lines: &[String],
+        prompted_toggle: &Arc<AtomicBool>,
+    ) -> Self {
+        let channel_reader: Box<dyn BufRead + Send> =
+            Box::new(ChannelReader::new(channel_receiver));
+        let (send, recv) = mpsc::channel();
+        ChannelShellInputReader {
+            reader: Some(Arc::new(Mutex::new(channel_reader))),
+            disable_tty_echo: Arc::new(Mutex::new(false)),
+            channel_send: send,
+            channel_recv: recv,
+            initial_lines: VecDeque::from(initial_lines.to_vec()),
+            prompted_toggle: prompted_toggle.clone(),
+            test_input_lines: 0,
+        }
+    }
+}
+
+unsafe impl Send for ChannelShellInputReader {}
+
+impl ReplShellInputReader for ChannelShellInputReader {
+    fn reader(&self) -> &Option<Arc<Mutex<Box<dyn BufRead + Send>>>> {
+        &self.reader
+    }
+    fn channel_receiver(&self) -> &Receiver<io::Result<String>> {
+        &self.channel_recv
+    }
+    fn prompted_toggle(&mut self) -> &mut Arc<AtomicBool> {
+        &mut self.prompted_toggle
+    }
+    fn clone_disable_tty_echo(&self) -> Arc<Mutex<bool>> {
+        self.disable_tty_echo.clone()
+    }
+    fn clone_channel_sender(&self) -> Sender<io::Result<String>> {
+        self.channel_send.clone()
+    }
+    fn initial_lines(&mut self) -> &mut VecDeque<String> {
+        &mut self.initial_lines
+    }
+    fn test_input_lines(&self) -> i32 {
+        self.test_input_lines
     }
 }
 
@@ -803,5 +933,188 @@ pub mod tests {
         if let Ok(line) = input_reader.next_line() {
             panic!("Unexpected successful received line: line={:?}", &line);
         }
+    }
+
+    #[test]
+    fn chanshellout_new() {
+        let (iosrc_channel_send, _iosrc_channel_recv) = mpsc::channel();
+        let shell_output = ChannelShellOutputWriter::new(iosrc_channel_send);
+
+        assert!(shell_output.writer.is_some());
+        assert!(!shell_output.prompted_toggle().load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn chanshellout_prompted_toggle() {
+        let (iosrc_channel_send, _iosrc_channel_recv) = mpsc::channel();
+        let channel_writer = ChannelWriter {
+            channel_sender: iosrc_channel_send,
+        };
+
+        let shell_output = ChannelShellOutputWriter {
+            writer: Some(Box::new(channel_writer)),
+            prompted_toggle: Arc::new(AtomicBool::new(true)),
+        };
+
+        assert!(shell_output
+            .prompted_toggle()
+            .as_ref()
+            .load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn shellout_writer() {
+        let (iosrc_channel_send, iosrc_channel_recv) = mpsc::channel();
+        let channel_writer = ChannelWriter {
+            channel_sender: iosrc_channel_send,
+        };
+
+        let mut shell_output = ChannelShellOutputWriter {
+            writer: Some(Box::new(channel_writer)),
+            prompted_toggle: Arc::new(AtomicBool::new(true)),
+        };
+
+        let writer = shell_output.writer().as_mut();
+        assert!(writer.is_some());
+
+        let write_result = writer.unwrap().write_all("hi".as_bytes());
+        if let Err(err) = write_result {
+            panic!("Unexpected write result: err={:?}", &err);
+        }
+
+        let mut output_data: Vec<u8> = vec![];
+        loop {
+            let output_result = iosrc_channel_recv.try_recv();
+            if let Err(err) = output_result {
+                if let TryRecvError::Empty = err {
+                    break;
+                }
+                panic!("Unexpected output result: err={:?}", &err);
+            }
+            output_data.append(&mut output_result.unwrap());
+        }
+
+        assert_eq!(output_data, "hi".as_bytes());
+    }
+
+    #[test]
+    fn shellout_default_write_and_flush() {
+        let expected_output = "hi".as_bytes();
+
+        let (iosrc_channel_send, iosrc_channel_recv) = mpsc::channel();
+        let channel_writer = ChannelWriter {
+            channel_sender: iosrc_channel_send,
+        };
+
+        let mut shell_output = ChannelShellOutputWriter {
+            writer: Some(Box::new(channel_writer)),
+            prompted_toggle: Arc::new(AtomicBool::new(true)),
+        };
+
+        if let Err(err) = shell_output.write(expected_output) {
+            panic!("Unexpected write result: err={:?}", &err);
+        }
+
+        if let Err(err) = shell_output.flush() {
+            panic!("Unexpected flush result: err={:?}", &err);
+        }
+
+        let mut output_data: Vec<u8> = vec![];
+
+        loop {
+            let output_result = iosrc_channel_recv.try_recv();
+            if let Err(err) = output_result {
+                if let TryRecvError::Empty = err {
+                    break;
+                }
+                panic!("Unexpected output result: err={:?}", &err);
+            }
+            output_data.append(&mut output_result.unwrap());
+        }
+
+        assert_eq!(output_data, expected_output);
+    }
+
+    #[test]
+    fn shellinp_new() {
+        let (_iosrc_channel_send, iosrc_channel_recv) = mpsc::channel();
+        let prompted_toggle = Arc::new(AtomicBool::new(true));
+        let initial_lines = vec!["line1".to_string(), "line2".to_string()];
+
+        let input_reader = ChannelShellInputReader::new(
+            iosrc_channel_recv,
+            initial_lines.as_slice(),
+            &prompted_toggle,
+        );
+
+        let disable_tty_echo = input_reader.clone_disable_tty_echo();
+        assert!(!*disable_tty_echo.lock().unwrap());
+
+        assert!(input_reader.prompted_toggle.as_ref().load(Ordering::SeqCst));
+        assert_eq!(input_reader.initial_lines, VecDeque::from(initial_lines));
+
+        let channel_sender = input_reader.clone_channel_sender();
+        let channel_receiver = &input_reader.channel_recv;
+        if let Err(err) = channel_sender.send(Ok("hi".to_string())) {
+            panic!("Unexpected channel send result: err={:?}", &err);
+        }
+        match channel_receiver.try_recv() {
+            Ok(msg_result) => match msg_result {
+                Ok(msg) => assert_eq!(msg, "hi"),
+                Err(err) => panic!("Unexpected channel recv message result: err={:?}", &err),
+            },
+            Err(err) => panic!("Unexpected channel recv result: err={:?}", &err),
+        }
+    }
+
+    #[test]
+    fn shellinp_accessors() {
+        let (iosrc_channel_send, iosrc_channel_recv) = mpsc::channel();
+        let reader: Arc<Mutex<Box<dyn BufRead + Send>>> =
+            Arc::new(Mutex::new(Box::new(ChannelReader::new(iosrc_channel_recv))));
+        let (send, recv) = mpsc::channel();
+        let mut input_reader = ChannelShellInputReader {
+            reader: Some(reader.clone()),
+            disable_tty_echo: Arc::new(Mutex::new(true)),
+            channel_send: send,
+            channel_recv: recv,
+            initial_lines: VecDeque::new(),
+            prompted_toggle: Arc::new(AtomicBool::new(true)),
+            test_input_lines: 0,
+        };
+
+        iosrc_channel_send.send(vec![b'h', b'i']).unwrap();
+
+        let reader = input_reader.reader();
+        let mut read_line = String::new();
+        let read_result = reader
+            .clone()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .read_line(&mut read_line);
+        assert!(read_result.is_ok());
+        assert_eq!(read_line, "hi".to_string());
+
+        let channel_recv = input_reader.channel_receiver();
+        let channel_send = input_reader.clone_channel_sender();
+        if let Err(err) = channel_send.send(Ok("hi".to_string())) {
+            panic!("Unexpected channel send result: err={:?}", &err);
+        }
+        match channel_recv.try_recv() {
+            Ok(msg_result) => match msg_result {
+                Ok(msg) => assert_eq!(msg, "hi"),
+                Err(err) => panic!("Unexpected channel recv message result: err={:?}", &err),
+            },
+            Err(err) => panic!("Unexpected channel recv result: err={:?}", &err),
+        }
+
+        assert!(input_reader.prompted_toggle().load(Ordering::SeqCst));
+
+        assert!(*input_reader.clone_disable_tty_echo().lock().unwrap());
+
+        assert!(input_reader.initial_lines().is_empty());
+
+        assert_eq!(input_reader.test_input_lines(), 0);
     }
 }
