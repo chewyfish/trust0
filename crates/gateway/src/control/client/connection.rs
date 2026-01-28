@@ -109,7 +109,7 @@ impl ClientConnVisitor {
             .map(|c| crypto::x509::create_der_certificate(c.as_bytes()))
             .collect();
 
-        let device = Device::new(peer_certificates)?;
+        let device = Device::new(peer_certificates, None)?;
         let device_id = device.get_id();
         let serial_num = hex::encode(device.get_cert_serial_num());
 
@@ -1293,7 +1293,7 @@ mod tests {
         });
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
-        cli_conn_visitor.device = Some(Device::new(peer_certs)?);
+        cli_conn_visitor.device = Some(Device::new(peer_certs, None)?);
 
         assert!(cli_conn_visitor
             .service_mgr
@@ -1526,7 +1526,7 @@ mod tests {
         let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
 
-        let expected_device = Device::new(certs)?;
+        let expected_device = Device::new(certs, None)?;
         let expected_user = User::new(100, None, None, "name100", &Status::Active, &[]);
 
         cli_conn_visitor.device = Some(expected_device.clone());

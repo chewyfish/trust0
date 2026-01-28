@@ -288,7 +288,7 @@ mod tests {
         app_config.ca_reissuance_threshold_days = Some(20);
         let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
-        let device = Device::new(certs).unwrap();
+        let device = Device::new(certs, None).unwrap();
 
         let processor = CertReissuanceProcessor::new(
             &Arc::new(app_config),
@@ -324,7 +324,7 @@ mod tests {
         app_config.ca_root_cert_file = rootca_certs_file.to_str().unwrap().to_string();
         app_config.ca_root_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
-        let device = Device::new(certs).unwrap();
+        let device = Device::new(certs, None).unwrap();
 
         let mut processor = CertReissuanceProcessor::new(
             &Arc::new(app_config),
@@ -364,7 +364,7 @@ mod tests {
         app_config.ca_root_cert_file = rootca_certs_file.to_str().unwrap().to_string();
         app_config.ca_root_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
-        let device = Device::new(certs).unwrap();
+        let device = Device::new(certs, None).unwrap();
 
         let mut processor = CertReissuanceProcessor::new(
             &Arc::new(app_config),
@@ -403,7 +403,7 @@ mod tests {
         app_config.ca_root_cert_file = rootca_certs_file.to_str().unwrap().to_string();
         app_config.ca_root_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
-        let device = Device::new(certs).unwrap();
+        let device = Device::new(certs, None).unwrap();
 
         let mut processor = CertReissuanceProcessor::new(
             &Arc::new(app_config),
@@ -442,7 +442,7 @@ mod tests {
         app_config.ca_root_cert_file = rootca_certs_file.to_str().unwrap().to_string();
         app_config.ca_root_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
-        let device = Device::new(certs).unwrap();
+        let device = Device::new(certs, None).unwrap();
 
         let mut processor = CertReissuanceProcessor::new(
             &Arc::new(app_config),
@@ -485,7 +485,7 @@ mod tests {
         app_config.ca_root_cert_file = rootca_certs_file.to_str().unwrap().to_string();
         app_config.ca_root_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
-        let device = Device::new(certs).unwrap();
+        let device = Device::new(certs, None).unwrap();
 
         let mut processor = CertReissuanceProcessor::new(
             &Arc::new(app_config),

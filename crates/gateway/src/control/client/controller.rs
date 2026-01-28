@@ -385,7 +385,7 @@ pub mod tests {
     pub fn create_device() -> Result<Device, AppError> {
         let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
-        Device::new(certs)
+        Device::new(certs, None)
     }
 
     pub fn create_user() -> model::user::User {

@@ -188,6 +188,7 @@ impl TcpGatewayProxyServerVisitor {
                 platform: "plat1".to_string(),
                 user_id: 100,
             },
+            proxied_access_context: None,
             cert_serial_num: vec![0x03u8, 0xe8u8],
             cert_validity: Validity {
                 not_before: ASN1Time::from(datetime!(2025-12-21 19:04:45.0 +00:00:00)),
