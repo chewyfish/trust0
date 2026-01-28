@@ -10,11 +10,12 @@ use trust0_common::client::replshell_io::{
 #[cfg(not(test))]
 use trust0_common::client::service::ClientControlServiceMgr;
 use trust0_common::control::tls;
-use trust0_common::crypto::alpn;
+use trust0_common::crypto::{alpn, ca};
 use trust0_common::error::AppError;
 use trust0_common::net::tls_client::{client_std, conn_std};
 
 use crate::config::AppConfig;
+use crate::control::client::device::Device;
 #[cfg(not(test))]
 use crate::control::gateway::service::ControllerServiceMgr;
 use crate::service::manager::ServiceMgr;
@@ -23,8 +24,8 @@ use crate::service::manager::ServiceMgr;
 pub struct ControllerClient {
     /// TLS client object
     tls_client: client_std::Client,
-    /// Device ID of entity (Trust0 client or gateway) connecting to service-gateway
-    device_id: String,
+    /// Trust0 client device
+    device: Device,
     /// Receiver to retrieve REPL shell output messages (sender used [`ChannelShellOutputWriter`])
     shell_msg_receiver: mpsc::Receiver<Vec<u8>>,
     /// Sender used to send new REPL shell messages (receiver used in [`ChannelShellInputReader`])
@@ -38,7 +39,7 @@ impl ControllerClient {
     ///
     /// * `app_config` - Application configuration
     /// * `service_mgr` - Service manager
-    /// * `device_id` - Device ID of proxied Trust0 client or this client-gateway
+    /// * `device` - Trust0 client device
     ///
     /// # Returns
     ///
@@ -47,7 +48,7 @@ impl ControllerClient {
     pub fn new(
         app_config: &Arc<AppConfig>,
         service_mgr: Arc<Mutex<dyn ServiceMgr>>,
-        device_id: &str,
+        device: &Device,
     ) -> Self {
         let mut tls_client_config = app_config
             .as_ref()
@@ -65,7 +66,7 @@ impl ControllerClient {
             tls_client: client_std::Client::new(
                 Box::new(ControllerClientVisitor::new(
                     &service_mgr,
-                    device_id,
+                    device,
                     shell_writer_sender,
                     shell_reader_receiver,
                 )),
@@ -79,7 +80,7 @@ impl ControllerClient {
                 *app_config.as_ref().service_gateway_port.as_ref().unwrap(),
                 false,
             ),
-            device_id: String::from(device_id),
+            device: device.clone(),
             shell_msg_receiver: shell_writer_receiver,
             shell_msg_sender: shell_reader_sender,
         }
@@ -91,10 +92,10 @@ impl ControllerClient {
         &self.tls_client
     }
 
-    /// Device ID of entity (Trust0 client or gateway) connecting to service-gateway
+    /// Trust0 client device
     ///
-    pub fn get_device_id(&self) -> &String {
-        &self.device_id
+    pub fn get_device(&self) -> &Device {
+        &self.device
     }
 
     /// Receiver to retrieve REPL shell output messages (sender used [`ChannelShellOutputWriter`])
@@ -126,8 +127,8 @@ unsafe impl Send for ControllerClient {}
 pub struct ControllerClientVisitor {
     /// Service manager
     service_mgr: Arc<Mutex<dyn ServiceMgr>>,
-    /// Device ID of entity (Trust0 client or gateway) connecting to service-gateway
-    device_id: String,
+    /// Trust0 client device
+    device: Device,
     /// REPL shell command input reader
     repl_shell_input: Arc<Mutex<Box<dyn ReplShellInputReader>>>,
     /// REPL shell response output writer
@@ -142,7 +143,7 @@ impl ControllerClientVisitor {
     /// # Arguments
     ///
     /// * `service_mgr` - Service manager
-    /// * `device_id` - Device ID of proxied Trust0 client or this client-gateway
+    /// * `device` - Trust0 client device
     /// * `shell_writer_sender` - Sender to writer REPL shell output messages
     /// * `shell_reader_receiver` - Receiver used to read new REPL shell input messages
     ///
@@ -152,7 +153,7 @@ impl ControllerClientVisitor {
     ///
     pub fn new(
         service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
-        device_id: &str,
+        device: &Device,
         shell_writer_sender: mpsc::Sender<Vec<u8>>,
         shell_reader_receiver: mpsc::Receiver<Vec<u8>>,
     ) -> Self {
@@ -166,10 +167,31 @@ impl ControllerClientVisitor {
             ));
         Self {
             service_mgr: service_mgr.clone(),
-            device_id: String::from(device_id),
+            device: device.clone(),
             repl_shell_input: Arc::new(Mutex::new(repl_shell_input)),
             repl_shell_output: Arc::new(Mutex::new(repl_shell_output)),
         }
+    }
+
+    /// Generate cljent access context session message
+    ///
+    /// # Returns
+    ///
+    /// The [`tls::message::SessionMessage`] of a [`tls::message::DataType::ClientAccessContext`]
+    /// message type for the given device's [`ca::CertAccessContext`]
+    ///
+    fn create_access_session_message(
+        &self,
+    ) -> Result<Option<tls::message::SessionMessage>, AppError> {
+        Ok(Some(tls::message::SessionMessage::new(
+            &tls::message::DataType::ClientAccessContext,
+            &Some(
+                serde_json::to_value(tls::message::ClientAccessContext {
+                    access: self.device.get_cert_access_context().clone(),
+                })
+                .unwrap(),
+            ),
+        )))
     }
 }
 
@@ -189,7 +211,7 @@ fn create_server_conn_visitor(
 ) -> Result<Box<dyn conn_std::ConnectionVisitor>, AppError> {
     let clictl_svc_mgr: Box<dyn ClientControlServiceMgr> = Box::new(ControllerServiceMgr {
         service_mgr: client_visitor.service_mgr.clone(),
-        device_id: client_visitor.device_id.clone(),
+        device_id: client_visitor.device.get_id(),
     });
     Ok(Box::new(ServerConnVisitor::new(
         &client_visitor.repl_shell_input,
@@ -239,6 +261,13 @@ impl client_std::ClientVisitor for ControllerClientVisitor {
 
         conn_std::Connection::new(conn_visitor, tls_conn, &session_addrs)
     }
+
+    fn on_client_msg_provider(
+        &mut self,
+        _tls_conn: &conn_std::TlsClientConnection,
+    ) -> Result<Option<tls::message::SessionMessage>, AppError> {
+        self.create_access_session_message()
+    }
 }
 
 /// Unit tests
@@ -253,9 +282,18 @@ pub mod tests {
     use mockall::mock;
     use pki_types::ServerName;
     use rustls::StreamOwned;
+    use serde_json::json;
+    use std::path::PathBuf;
     use std::sync::mpsc::Sender;
+    use trust0_common::crypto::file::load_certificates;
     use trust0_common::net::stream_utils;
     use trust0_common::net::tls_client::client_std::ClientVisitor;
+
+    const CERTFILE_CLIENT_UID100_PATHPARTS: [&str; 3] = [
+        env!("CARGO_MANIFEST_DIR"),
+        "testdata",
+        "client-uid100.crt.pem",
+    ];
 
     // utils
     // =====
@@ -276,6 +314,13 @@ pub mod tests {
         )
         .unwrap()
     }
+
+    fn create_client_device() -> Device {
+        let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
+        Device::new(certs, None).unwrap()
+    }
+
     // mocks
     // =====
 
@@ -298,8 +343,9 @@ pub mod tests {
         let app_config = Arc::new(create_app_config());
         let service_mgr: Arc<Mutex<dyn ServiceMgr>> =
             Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+        let device = create_client_device();
 
-        let _ = ControllerClient::new(&app_config, service_mgr, "dev300");
+        let _ = ControllerClient::new(&app_config, service_mgr, &device);
     }
 
     #[test]
@@ -307,13 +353,14 @@ pub mod tests {
         let app_config = Arc::new(create_app_config());
         let service_mgr: Arc<Mutex<dyn ServiceMgr>> =
             Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+        let device = create_client_device();
 
-        let client = ControllerClient::new(&app_config, service_mgr, "dev300");
+        let client = ControllerClient::new(&app_config, service_mgr, &device);
 
         let _ = client.get_tls_client();
         let _ = client.get_shell_msg_receiver();
         let _ = client.get_shell_msg_sender();
-        assert_eq!(client.get_device_id(), &String::from("dev300"));
+        assert_eq!(client.get_device().get_id(), device.get_id());
     }
 
     #[test]
@@ -321,8 +368,9 @@ pub mod tests {
         let service_mgr: Arc<Mutex<dyn ServiceMgr>> =
             Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
         let shell_channel = mpsc::channel();
+        let device = create_client_device();
         let _ =
-            ControllerClientVisitor::new(&service_mgr, "dev300", shell_channel.0, shell_channel.1);
+            ControllerClientVisitor::new(&service_mgr, &device, shell_channel.0, shell_channel.1);
     }
 
     #[test]
@@ -334,9 +382,10 @@ pub mod tests {
         let service_mgr: Arc<Mutex<dyn ServiceMgr>> =
             Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
         let shell_channel = mpsc::channel();
+        let device = create_client_device();
 
         let mut client_visitor =
-            ControllerClientVisitor::new(&service_mgr, "dev300", shell_channel.0, shell_channel.1);
+            ControllerClientVisitor::new(&service_mgr, &device, shell_channel.0, shell_channel.1);
 
         let result = client_visitor.create_server_conn(
             StreamOwned::new(
@@ -365,5 +414,33 @@ pub mod tests {
         let connection = result.unwrap();
 
         assert_eq!(connection.get_session_addrs(), &session_addrs);
+    }
+
+    #[test]
+    fn ctlclivisit_create_access_session_message() {
+        let service_mgr: Arc<Mutex<dyn ServiceMgr>> =
+            Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+        let shell_channel = mpsc::channel();
+        let device = create_client_device();
+
+        let client_visitor =
+            ControllerClientVisitor::new(&service_mgr, &device, shell_channel.0, shell_channel.1);
+
+        match client_visitor.create_access_session_message() {
+            Ok(session_msg) => match session_msg {
+                Some(session_msg) => {
+                    let expected_cli_access_json = Some(
+                        json!({"access": {"userId": 100, "entityType": "client", "platform": "Linux"}}),
+                    );
+                    let expected_session_msg = tls::message::SessionMessage::new(
+                        &tls::message::DataType::ClientAccessContext,
+                        &expected_cli_access_json,
+                    );
+                    assert_eq!(session_msg, expected_session_msg);
+                }
+                None => panic!("Session message not provided"),
+            },
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
     }
 }
