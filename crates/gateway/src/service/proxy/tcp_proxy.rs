@@ -8,7 +8,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use trust0_common::control::tls;
-use trust0_common::control::tls::message::ConnectionAddrs;
+use trust0_common::control::tls::message::{self, ConnectionAddrs};
 use trust0_common::crypto::alpn;
 #[cfg(test)]
 use trust0_common::crypto::ca::{CertAccessContext, EntityType};
@@ -157,6 +157,7 @@ impl TcpGatewayProxyServerVisitor {
     /// # Arguments
     ///
     /// * `tls_conn` - TLS server connection object
+    /// * `client_msg`: Optional initial message from client
     ///
     /// # Returns
     ///
@@ -166,10 +167,14 @@ impl TcpGatewayProxyServerVisitor {
     fn process_connection_authorization(
         &self,
         tls_conn: &TlsServerConnection,
+        client_msg: Option<message::SessionMessage>,
     ) -> Result<(ClientConnVisitor, String, i64, alpn::Protocol), AppError> {
         let mut conn_visitor = ClientConnVisitor::new(&self.app_config, &self.service_mgr);
-        let protocol =
-            conn_visitor.process_authorization(tls_conn, Some(self.service.service_id))?;
+        let protocol = conn_visitor.process_authorization(
+            tls_conn,
+            Some(self.service.service_id),
+            client_msg,
+        )?;
         let device_id = conn_visitor.get_device().as_ref().unwrap().get_id();
         let user_id = conn_visitor.get_user().as_ref().unwrap().user_id;
         Ok((conn_visitor, device_id.to_string(), user_id, protocol))
@@ -178,6 +183,7 @@ impl TcpGatewayProxyServerVisitor {
     fn process_connection_authorization(
         &self,
         _tls_conn: &TlsServerConnection,
+        _client_msg: Option<message::SessionMessage>,
     ) -> Result<(ClientConnVisitor, String, i64, alpn::Protocol), AppError> {
         let mut conn_visitor = ClientConnVisitor::new(&self.app_config, &self.service_mgr);
         let device = Device {
@@ -212,10 +218,10 @@ impl server_std::ServerVisitor for TcpGatewayProxyServerVisitor {
     fn create_client_conn(
         &mut self,
         tls_conn: TlsServerConnection,
-        _client_msg: Option<tls::message::SessionMessage>,
+        client_msg: Option<tls::message::SessionMessage>,
     ) -> Result<conn_std::Connection, AppError> {
         let (conn_visitor, device_id, _user_id, alpn_protocol) =
-            self.process_connection_authorization(&tls_conn)?;
+            self.process_connection_authorization(&tls_conn, client_msg)?;
         let conn_addrs = tls::message::Trust0Connection::create_connection_addrs(&tls_conn.sock);
         self.devices_by_proxy_addrs
             .insert(conn_addrs.clone(), device_id);

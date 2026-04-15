@@ -19,8 +19,8 @@ pub const CERT_OID_LOCALITY: &str = "2.5.4.7";
 pub const CERT_OID_STATE: &str = "2.5.4.8";
 pub const CERT_OID_COUNTRY: &str = "2.5.4.6";
 
-const DEVICE_ID_PREFIX_GATEWAY: &str = "G";
-const DEVICE_ID_PREFIX_CLIENT: &str = "C";
+pub const DEVICE_ID_PREFIX_GATEWAY: &str = "G";
+pub const DEVICE_ID_PREFIX_CLIENT: &str = "C";
 
 /// Represents client device
 #[derive(Clone, Debug)]
@@ -212,6 +212,17 @@ impl Device {
     ///
     pub fn get_cert_validity(&self) -> &Validity {
         &self.cert_validity
+    }
+
+    /// Returns whether device is a gateway ([`EntityType::Gateway`]) and not proxying a user
+    ///
+    /// # Returns
+    ///
+    /// Boolean if device is non-proxying gateway
+    ///
+    pub fn is_non_proxying_gateway(&self) -> bool {
+        (self.cert_access_context.entity_type == EntityType::Gateway)
+            && (self.cert_access_context.user_id == 0)
     }
 
     /// Retrieve the end-entity (aka device) certificate, must be the first one.
@@ -521,6 +532,34 @@ mod tests {
                 &hex::encode(vec![3u8, 231u8]),
             )
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_is_non_proxying_gateway() -> Result<(), AppError> {
+        let certs_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
+
+        let device = Device::new(certs.clone(), None)?;
+
+        assert!(device.is_non_proxying_gateway());
+
+        let proxied_access = CertAccessContext {
+            entity_type: EntityType::Client,
+            platform: "plat1".to_string(),
+            user_id: 110,
+        };
+        let device = Device::new(certs, Some(proxied_access))?;
+
+        assert!(!device.is_non_proxying_gateway());
+
+        let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
+
+        let device = Device::new(certs.clone(), None)?;
+
+        assert!(!device.is_non_proxying_gateway());
 
         Ok(())
     }

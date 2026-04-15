@@ -280,7 +280,7 @@ impl server_std::ServerVisitor for ControlPlaneServerVisitor {
     fn create_client_conn(
         &mut self,
         tls_conn: TlsServerConnection,
-        _client_msg: Option<tls::message::SessionMessage>,
+        client_msg: Option<tls::message::SessionMessage>,
     ) -> Result<conn_std::Connection, AppError> {
         let mut conn_visitor = ClientConnVisitor::new(&self.app_config, &self.service_mgr);
 
@@ -289,7 +289,7 @@ impl server_std::ServerVisitor for ControlPlaneServerVisitor {
             format!("{:?}", &tls_conn.sock.local_addr()),
         );
 
-        let alpn_protocol = conn_visitor.process_authorization(&tls_conn, None)?;
+        let alpn_protocol = conn_visitor.process_authorization(&tls_conn, None, client_msg)?;
 
         let connection = conn_std::Connection::new(
             Box::new(conn_visitor),
