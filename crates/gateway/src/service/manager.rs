@@ -6,6 +6,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
+use trust0_common::client::service::ProxyAddrs;
 use trust0_common::error::AppError;
 use trust0_common::logging::info;
 use trust0_common::model::service::{Service, Transport};
@@ -15,8 +16,9 @@ use trust0_common::target;
 
 use super::proxy::proxy_base::GatewayServiceProxy;
 use super::proxy::tcp_proxy::TcpGatewayProxy;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, GatewayType};
 use crate::control::client::controller::MessageProcessor;
+use crate::control::gateway::client::ControllerClient;
 use crate::service::proxy::proxy_base::GatewayServiceProxyVisitor;
 use crate::service::proxy::tcp_proxy::TcpGatewayProxyServerVisitor;
 use crate::service::proxy::udp_proxy::{UdpGatewayProxy, UdpGatewayProxyServerVisitor};
@@ -58,6 +60,7 @@ pub trait ServiceMgr: Send {
         &mut self,
         service_mgr: Arc<Mutex<dyn ServiceMgr>>,
         service: &Service,
+        service_gateway_proxy_addrs: &Option<ProxyAddrs>,
     ) -> Result<(Option<String>, u16), AppError>;
 
     /// Returns whether there is an active service proxy for given device and service
@@ -91,6 +94,9 @@ pub struct GatewayServiceMgr {
     proxy_events_sender: Sender<ProxyEvent>,
     proxy_tasks_sender: Sender<ProxyExecutorEvent>,
     control_planes: HashMap<String, Arc<Mutex<dyn MessageProcessor>>>,
+    service_gateway_client_handle: Option<thread::JoinHandle<Result<(), AppError>>>,
+    service_gateway_msg_sender: Option<Sender<Vec<u8>>>,
+    service_gateway_msg_receiver: Option<Arc<Mutex<Receiver<Vec<u8>>>>>,
 }
 
 impl GatewayServiceMgr {
@@ -127,6 +133,9 @@ impl GatewayServiceMgr {
             proxy_events_sender: proxy_events_sender.clone(),
             proxy_tasks_sender: proxy_tasks_sender.clone(),
             control_planes: HashMap::new(),
+            service_gateway_client_handle: None,
+            service_gateway_msg_sender: None,
+            service_gateway_msg_receiver: None,
         }
     }
 
@@ -152,6 +161,70 @@ impl GatewayServiceMgr {
                 }
             }
         }
+    }
+
+    /// Startup service on service-gateway (if applic)
+    ///
+    /// # Arguments
+    ///
+    /// * `service_mgr` - Service manager
+    /// * `service` - Service to startup
+    /// * `service_gateway_proxy_addrs` - Service proxy addrs result from service startup on service-gateway
+    /// * `service_local_port` - Local port to listen for new connections for respective service
+    ///
+    /// # Returns
+    ///
+    /// if `None`, then startup not needed (either not client-gateway or already requested startup),
+    /// else startup request sent to service-gateway
+    ///
+    fn startup_on_service_gateway(
+        &mut self,
+        service_mgr: &Arc<Mutex<dyn ServiceMgr>>,
+        service: &Service,
+        service_gateway_proxy_addrs: &Option<ProxyAddrs>,
+        service_local_port: u16,
+    ) -> Option<Result<(), AppError>> {
+        // Startup needed if a client-gateway and initial request from controller
+        if (self.app_config.gateway_type != GatewayType::Client)
+            || service_gateway_proxy_addrs.is_some()
+        {
+            return None;
+        }
+
+        // Connect control channel (if needed)
+        #[cfg(test)]
+        let _service_gateway_client_holder: Option<ControllerClient>;
+
+        if self.service_gateway_client_handle.is_none() {
+            #[allow(unused_mut)]
+            let mut service_gateway_client = ControllerClient::new(
+                &self.app_config,
+                service_mgr.clone(),
+                &self.app_config.device,
+            );
+            self.service_gateway_msg_sender =
+                Some(service_gateway_client.get_shell_msg_sender().clone());
+            self.service_gateway_msg_receiver =
+                Some(service_gateway_client.get_shell_msg_receiver().clone());
+            #[cfg(not(test))]
+            {
+                self.service_gateway_client_handle = Some(thread::spawn(move || {
+                    service_gateway_client.connect()?;
+                    service_gateway_client.poll_connection()
+                }));
+            }
+            #[cfg(test)]
+            {
+                _service_gateway_client_holder = Some(service_gateway_client);
+            }
+        }
+
+        // Request service startup on service-gateway
+        Some(ControllerClient::request_start_service(
+            self.service_gateway_msg_sender.as_ref().unwrap(),
+            service.name.as_str(),
+            service_local_port,
+        ))
     }
 }
 
@@ -211,6 +284,7 @@ impl ServiceMgr for GatewayServiceMgr {
         &mut self,
         service_mgr: Arc<Mutex<dyn ServiceMgr>>,
         service: &Service,
+        service_gateway_proxy_addrs: &Option<ProxyAddrs>,
     ) -> Result<(Option<String>, u16), AppError> {
         // Check if already started
         // - - - - - - - - - - - -
@@ -218,21 +292,38 @@ impl ServiceMgr for GatewayServiceMgr {
             return Ok((self.app_config.gateway_service_host.clone(), *service_port));
         }
 
-        // Startup new proxy for service
-        // - - - - - - - - - - - - - - -
-        let service_port = match self.shared_service_port {
-            Some(port) => port,
-            None => {
-                if self.next_service_port > self.last_service_port {
-                    return Err(AppError::General(
-                        "Service ports exhausted, please extend range".to_string(),
-                    ));
+        // Determine server connection address
+        // - - - - - - - - - - - - - - - - - -
+        let service_host = self.app_config.gateway_service_host.clone();
+        let service_port = match service_gateway_proxy_addrs {
+            None => match self.shared_service_port {
+                Some(port) => port,
+                None => {
+                    if self.next_service_port > self.last_service_port {
+                        return Err(AppError::General(
+                            "Service ports exhausted, please extend range".to_string(),
+                        ));
+                    }
+                    self.next_service_port += 1;
+                    self.next_service_port - 1
                 }
-                self.next_service_port += 1;
-                self.next_service_port - 1
-            }
+            },
+            Some(addrs) => addrs.0,
         };
 
+        // Startup service on service-gateway (if applic)
+        // - - - - - - - - - - - - - - - - - - - - - - -
+        if let Some(startup_result) = self.startup_on_service_gateway(
+            &service_mgr,
+            service,
+            service_gateway_proxy_addrs,
+            service_port,
+        ) {
+            return startup_result.map(|_| (service_host, service_port));
+        }
+
+        // Startup new proxy for service
+        // - - - - - - - - - - - - - - -
         let service_proxy: Arc<Mutex<dyn GatewayServiceProxy>>;
         let service_proxy_visitor: Arc<Mutex<dyn GatewayServiceProxyVisitor>>;
         let mut service_proxy_thread: Option<JoinHandle<Result<(), AppError>>> = None;
@@ -245,7 +336,7 @@ impl ServiceMgr for GatewayServiceMgr {
                     &self.app_config,
                     &service_mgr,
                     service,
-                    &self.app_config.gateway_service_host,
+                    &service_host,
                     service_port,
                     &self.proxy_tasks_sender,
                     &self.proxy_events_sender,
@@ -276,7 +367,7 @@ impl ServiceMgr for GatewayServiceMgr {
                     &self.app_config,
                     &service_mgr,
                     service,
-                    &self.app_config.gateway_service_host,
+                    &service_host,
                     service_port,
                     &self.proxy_tasks_sender,
                     &self.proxy_events_sender,
@@ -312,7 +403,7 @@ impl ServiceMgr for GatewayServiceMgr {
                 .insert(service.service_id, thread);
         }
 
-        Ok((self.app_config.gateway_service_host.clone(), service_port))
+        Ok((service_host, service_port))
     }
 
     fn has_proxy_for_device_and_service(&mut self, device_id: &str, service_id: i64) -> bool {
@@ -432,7 +523,7 @@ pub mod tests {
             fn has_control_plane_for_device(&self, device_id: &str, assert_authenticated: bool) -> bool;
             fn add_control_plane(&mut self, device_id: &str, control_plane: &Arc<Mutex<dyn MessageProcessor>>) -> Result<(), AppError>;
             fn clone_proxy_tasks_sender(&self) -> Sender<ProxyExecutorEvent>;
-            fn startup(&mut self, service_mgr: Arc<Mutex<dyn ServiceMgr>>, service: &Service) -> Result<(Option<String>, u16), AppError>;
+            fn startup(&mut self, service_mgr: Arc<Mutex<dyn ServiceMgr>>, service: &Service, service_gateway_proxy_addrs: &Option<ProxyAddrs>) -> Result<(Option<String>, u16), AppError>;
             fn has_proxy_for_device_and_service(&mut self, device_id: &str, service_id: i64) -> bool;
             fn shutdown_connections(&mut self, device_id: Option<String>, service_id: Option<i64>) -> Result<(), AppError>;
             fn shutdown_connection(&mut self, service_id: i64, proxy_key: &str) -> Result<(), AppError>;
@@ -447,9 +538,12 @@ pub mod tests {
     const GATEWAY_DISTINCT_PORT_START: u16 = 4100;
     const GATEWAY_DISTINCT_PORT_END: u16 = 4102;
 
-    fn create_gw_service_mgr(use_shared_port: bool) -> GatewayServiceMgr {
+    fn create_gw_service_mgr(
+        gwtype: config::GatewayType,
+        use_shared_port: bool,
+    ) -> GatewayServiceMgr {
         let mut app_config = config::tests::create_app_config_with_repos(
-            config::GatewayType::Service,
+            gwtype,
             Arc::new(Mutex::new(MockUserRepo::new())),
             Arc::new(Mutex::new(MockServiceRepo::new())),
             Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -474,8 +568,152 @@ pub mod tests {
     }
 
     #[test]
+    fn gwsvcmgr_startup_on_service_gateway_when_servicegw_and_noproxyaddrs() {
+        let service = Service {
+            service_id: 200,
+            name: "Service200".to_string(),
+            transport: Transport::TCP,
+            host: "localhost".to_string(),
+            port: 8200,
+        };
+
+        let service_mgr = Arc::new(Mutex::new(create_gw_service_mgr(
+            config::GatewayType::Service,
+            true,
+        )));
+        let service_mgr_copy: Arc<Mutex<dyn ServiceMgr>> = service_mgr.clone();
+
+        let result = service_mgr.lock().unwrap().startup_on_service_gateway(
+            &service_mgr_copy,
+            &service,
+            &None,
+            2000,
+        );
+
+        assert!(result.is_none());
+        assert!(service_mgr
+            .lock()
+            .unwrap()
+            .service_gateway_msg_sender
+            .is_none());
+        assert!(service_mgr
+            .lock()
+            .unwrap()
+            .service_gateway_msg_receiver
+            .is_none());
+    }
+
+    #[test]
+    fn gwsvcmgr_startup_on_service_gateway_when_fullgw_and_noproxyaddrs() {
+        let service = Service {
+            service_id: 200,
+            name: "Service200".to_string(),
+            transport: Transport::TCP,
+            host: "localhost".to_string(),
+            port: 8200,
+        };
+
+        let service_mgr = Arc::new(Mutex::new(create_gw_service_mgr(
+            config::GatewayType::Full,
+            true,
+        )));
+        let service_mgr_copy: Arc<Mutex<dyn ServiceMgr>> = service_mgr.clone();
+
+        let result = service_mgr.lock().unwrap().startup_on_service_gateway(
+            &service_mgr_copy,
+            &service,
+            &None,
+            2000,
+        );
+
+        assert!(result.is_none());
+        assert!(service_mgr
+            .lock()
+            .unwrap()
+            .service_gateway_msg_sender
+            .is_none());
+        assert!(service_mgr
+            .lock()
+            .unwrap()
+            .service_gateway_msg_receiver
+            .is_none());
+    }
+
+    #[test]
+    fn gwsvcmgr_startup_on_service_gateway_when_clientgw_and_proxyaddrs() {
+        let service = Service {
+            service_id: 200,
+            name: "Service200".to_string(),
+            transport: Transport::TCP,
+            host: "localhost".to_string(),
+            port: 8200,
+        };
+
+        let service_mgr = Arc::new(Mutex::new(create_gw_service_mgr(
+            config::GatewayType::Client,
+            true,
+        )));
+        let service_mgr_copy: Arc<Mutex<dyn ServiceMgr>> = service_mgr.clone();
+
+        let result = service_mgr.lock().unwrap().startup_on_service_gateway(
+            &service_mgr_copy,
+            &service,
+            &Some(ProxyAddrs(2000, "host1".to_string(), 8888)),
+            2000,
+        );
+
+        assert!(result.is_none());
+        assert!(service_mgr
+            .lock()
+            .unwrap()
+            .service_gateway_msg_sender
+            .is_none());
+        assert!(service_mgr
+            .lock()
+            .unwrap()
+            .service_gateway_msg_receiver
+            .is_none());
+    }
+
+    fn gwsvcmgr_startup_on_service_gateway_when_clientgw_and_noproxyaddrs() {
+        let service = Service {
+            service_id: 200,
+            name: "Service200".to_string(),
+            transport: Transport::TCP,
+            host: "localhost".to_string(),
+            port: 8200,
+        };
+
+        let service_mgr = Arc::new(Mutex::new(create_gw_service_mgr(
+            config::GatewayType::Client,
+            true,
+        )));
+        let service_mgr_copy: Arc<Mutex<dyn ServiceMgr>> = service_mgr.clone();
+
+        let result = service_mgr.lock().unwrap().startup_on_service_gateway(
+            &service_mgr_copy,
+            &service,
+            &None,
+            2000,
+        );
+
+        assert!(result.is_some());
+        assert!(result.unwrap().is_ok());
+        assert!(service_mgr
+            .lock()
+            .unwrap()
+            .service_gateway_msg_sender
+            .is_some());
+        assert!(service_mgr
+            .lock()
+            .unwrap()
+            .service_gateway_msg_receiver
+            .is_some());
+    }
+
+    #[test]
     fn gwsvcmgr_get_service_id_by_proxy_key_when_avail() {
-        let service_mgr = create_gw_service_mgr(true);
+        let service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         service_mgr
             .services_by_proxy_key
             .lock()
@@ -487,7 +725,7 @@ pub mod tests {
 
     #[test]
     fn gwsvcmgr_get_service_id_by_proxy_key_when_unavail() {
-        let service_mgr = create_gw_service_mgr(true);
+        let service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         service_mgr
             .services_by_proxy_key
             .lock()
@@ -499,7 +737,7 @@ pub mod tests {
     #[test]
     fn gwsvcmgr_get_service_proxies() {
         let proxy_visitor = MockGwSvcProxyVisitor::new();
-        let mut service_mgr = create_gw_service_mgr(true);
+        let mut service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         assert!(service_mgr.service_proxy_visitors.is_empty());
         service_mgr
             .service_proxy_visitors
@@ -510,7 +748,7 @@ pub mod tests {
 
     #[test]
     fn gwsvcmgr_has_control_plane_for_device_when_avail_and_assert_auth_and_unauthed() {
-        let mut service_mgr = create_gw_service_mgr(true);
+        let mut service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         let mut req_processor = MockMsgProcessor::new();
         let device_id = "C:03e8:100";
         req_processor
@@ -526,7 +764,7 @@ pub mod tests {
 
     #[test]
     fn gwsvcmgr_has_control_plane_for_device_when_avail_and_no_assert_auth_and_unauthed() {
-        let mut service_mgr = create_gw_service_mgr(true);
+        let mut service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         let mut req_processor = MockMsgProcessor::new();
         let device_id = "C:03e8:100";
         req_processor.expect_is_authenticated().never();
@@ -539,7 +777,7 @@ pub mod tests {
 
     #[test]
     fn gwsvcmgr_has_control_plane_for_device_when_avail_and_assert_auth_and_authed() {
-        let mut service_mgr = create_gw_service_mgr(true);
+        let mut service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         let mut req_processor = MockMsgProcessor::new();
         let device_id = "C:03e8:100";
         req_processor
@@ -555,7 +793,7 @@ pub mod tests {
 
     #[test]
     fn gwsvcmgr_has_control_plane_for_device() {
-        let mut service_mgr = create_gw_service_mgr(true);
+        let mut service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         let mut req_processor = MockMsgProcessor::new();
         let device_id = "C:03e8:100";
         req_processor.expect_is_authenticated().never();
@@ -568,7 +806,7 @@ pub mod tests {
 
     #[test]
     fn gwsvcmgr_has_control_plane_for_devicce_when_unavail() {
-        let service_mgr = create_gw_service_mgr(true);
+        let service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         let device_id = "C:03e8:100";
         assert!(service_mgr.control_planes.is_empty());
         assert!(!service_mgr.has_control_plane_for_device(device_id, false));
@@ -576,7 +814,7 @@ pub mod tests {
 
     #[test]
     fn gwsvcmgr_add_control_plane() {
-        let mut service_mgr = create_gw_service_mgr(true);
+        let mut service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         assert!(service_mgr.control_planes.is_empty());
 
         let control_plane: Arc<Mutex<dyn MessageProcessor>> =
@@ -593,7 +831,7 @@ pub mod tests {
 
     #[test]
     fn gwsvcmgr_clone_proxy_tasks_sender() {
-        let service_mgr = create_gw_service_mgr(true);
+        let service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         let _ = service_mgr.clone_proxy_tasks_sender();
     }
 
@@ -606,7 +844,7 @@ pub mod tests {
             host: "localhost".to_string(),
             port: 8200,
         };
-        let mut service_mgr = create_gw_service_mgr(true);
+        let mut service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         service_mgr
             .service_ports
             .insert(service.service_id, GATEWAY_SHARED_PORT);
@@ -618,7 +856,7 @@ pub mod tests {
         match service_mgr
             .lock()
             .unwrap()
-            .startup(service_mgr.clone(), &service)
+            .startup(service_mgr.clone(), &service, &None)
         {
             Ok((host, port)) => {
                 assert!(host.is_some());
@@ -653,7 +891,7 @@ pub mod tests {
             host: "localhost".to_string(),
             port: 8200,
         };
-        let mut service_mgr = create_gw_service_mgr(false);
+        let mut service_mgr = create_gw_service_mgr(config::GatewayType::Full, false);
         service_mgr.next_service_port = GATEWAY_DISTINCT_PORT_END + 1;
         let orig_svc_ports_len = service_mgr.service_ports.len();
         let orig_svc_proxies_len = service_mgr.service_proxies.len();
@@ -663,7 +901,7 @@ pub mod tests {
         match service_mgr
             .lock()
             .unwrap()
-            .startup(service_mgr.clone(), &service)
+            .startup(service_mgr.clone(), &service, &None)
         {
             Ok((host, port)) => {
                 panic!("Unexpected startup result: host={:?}, port={}", host, port);
@@ -690,7 +928,7 @@ pub mod tests {
     }
 
     #[test]
-    fn gwsvcmgr_startup_when_tcp_service() {
+    fn gwsvcmgr_startup_when_clientgw_and_not_yet_started_on_servicegw() {
         let service = Service {
             service_id: 200,
             name: "Service200".to_string(),
@@ -698,7 +936,7 @@ pub mod tests {
             host: "localhost".to_string(),
             port: 8200,
         };
-        let service_mgr = create_gw_service_mgr(true);
+        let service_mgr = create_gw_service_mgr(config::GatewayType::Client, true);
         let orig_svc_ports_len = service_mgr.service_ports.len();
         let orig_svc_proxies_len = service_mgr.service_proxies.len();
         let orig_svc_proxy_visitors_len = service_mgr.service_proxy_visitors.len();
@@ -708,7 +946,52 @@ pub mod tests {
             .clone()
             .lock()
             .unwrap()
-            .startup(service_mgr.clone(), &service)
+            .startup(service_mgr.clone(), &service, &None)
+        {
+            Ok((host, port)) => {
+                assert!(host.is_some());
+                assert_eq!(host.unwrap(), GATEWAY_HOST.to_string());
+                assert_eq!(port, GATEWAY_SHARED_PORT);
+            }
+            Err(err) => {
+                panic!("Unexpected startup result: err={:?}", &err);
+            }
+        }
+
+        assert_eq!(
+            service_mgr.lock().unwrap().service_ports.len(),
+            orig_svc_ports_len
+        );
+        assert_eq!(
+            service_mgr.lock().unwrap().service_proxies.len(),
+            orig_svc_proxies_len
+        );
+        assert_eq!(
+            service_mgr.lock().unwrap().service_proxy_visitors.len(),
+            orig_svc_proxy_visitors_len
+        );
+    }
+
+    #[test]
+    fn gwsvcmgr_startup_when_tcp_service() {
+        let service = Service {
+            service_id: 200,
+            name: "Service200".to_string(),
+            transport: Transport::TCP,
+            host: "localhost".to_string(),
+            port: 8200,
+        };
+        let service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
+        let orig_svc_ports_len = service_mgr.service_ports.len();
+        let orig_svc_proxies_len = service_mgr.service_proxies.len();
+        let orig_svc_proxy_visitors_len = service_mgr.service_proxy_visitors.len();
+        let service_mgr = Arc::new(Mutex::new(service_mgr));
+
+        match service_mgr
+            .clone()
+            .lock()
+            .unwrap()
+            .startup(service_mgr.clone(), &service, &None)
         {
             Ok((host, port)) => {
                 assert!(host.is_some());
@@ -743,7 +1026,7 @@ pub mod tests {
             host: "localhost".to_string(),
             port: 8200,
         };
-        let service_mgr = create_gw_service_mgr(true);
+        let service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         let orig_svc_ports_len = service_mgr.service_ports.len();
         let orig_svc_proxies_len = service_mgr.service_proxies.len();
         let orig_svc_proxy_visitors_len = service_mgr.service_proxy_visitors.len();
@@ -753,7 +1036,7 @@ pub mod tests {
             .clone()
             .lock()
             .unwrap()
-            .startup(service_mgr.clone(), &service)
+            .startup(service_mgr.clone(), &service, &None)
         {
             Ok((host, port)) => {
                 assert!(host.is_some());
@@ -793,7 +1076,7 @@ pub mod tests {
                     ("addr1".to_string(), "addr2".to_string()),
                 )]
             });
-        let mut service_mgr = create_gw_service_mgr(true);
+        let mut service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         service_mgr
             .service_proxy_visitors
             .insert(200, Arc::new(Mutex::new(proxy_visitor)));
@@ -810,7 +1093,7 @@ pub mod tests {
             .with(predicate::eq(device_id))
             .times(1)
             .return_once(move |_| vec![]);
-        let mut service_mgr = create_gw_service_mgr(true);
+        let mut service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         service_mgr
             .service_proxy_visitors
             .insert(200, Arc::new(Mutex::new(proxy_visitor)));
@@ -826,7 +1109,7 @@ pub mod tests {
             .expect_get_proxy_keys_for_device()
             .with(predicate::always())
             .never();
-        let mut service_mgr = create_gw_service_mgr(true);
+        let mut service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         service_mgr
             .service_proxy_visitors
             .insert(200, Arc::new(Mutex::new(proxy_visitor)));
@@ -850,7 +1133,7 @@ pub mod tests {
             .with(predicate::always(), predicate::eq(None))
             .times(1)
             .return_once(move |_, _| Ok(()));
-        let mut service_mgr = create_gw_service_mgr(true);
+        let mut service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         service_mgr
             .service_proxy_visitors
             .insert(200, Arc::new(Mutex::new(proxy200_visitor)));
@@ -899,7 +1182,7 @@ pub mod tests {
             )
             .times(1)
             .return_once(move |_, _| Ok(()));
-        let mut service_mgr = create_gw_service_mgr(true);
+        let mut service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         service_mgr
             .service_proxy_visitors
             .insert(200, Arc::new(Mutex::new(proxy200_visitor)));
@@ -937,7 +1220,7 @@ pub mod tests {
             .return_once(move |_, _| Ok(()));
         let mut proxy201_visitor = MockGwSvcProxyVisitor::new();
         proxy201_visitor.expect_shutdown_connections().never();
-        let mut service_mgr = create_gw_service_mgr(true);
+        let mut service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         service_mgr
             .service_proxy_visitors
             .insert(200, Arc::new(Mutex::new(proxy200_visitor)));
@@ -970,7 +1253,7 @@ pub mod tests {
             .return_once(move |_, _| Ok(()));
         let mut proxy201_visitor = MockGwSvcProxyVisitor::new();
         proxy201_visitor.expect_shutdown_connection().never();
-        let mut service_mgr = create_gw_service_mgr(true);
+        let mut service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         service_mgr
             .service_proxy_visitors
             .insert(200, Arc::new(Mutex::new(proxy200_visitor)));
@@ -995,7 +1278,7 @@ pub mod tests {
             .return_once(move |_, _| Err(AppError::General("shutdown failed".to_string())));
         let mut proxy201_visitor = MockGwSvcProxyVisitor::new();
         proxy201_visitor.expect_shutdown_connection().never();
-        let mut service_mgr = create_gw_service_mgr(true);
+        let mut service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         service_mgr
             .service_proxy_visitors
             .insert(200, Arc::new(Mutex::new(proxy200_visitor)));
@@ -1018,7 +1301,7 @@ pub mod tests {
             .with(predicate::eq("key200"))
             .times(1)
             .return_once(move |_| true);
-        let mut service_mgr = create_gw_service_mgr(true);
+        let mut service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         service_mgr
             .services_by_proxy_key
             .lock()

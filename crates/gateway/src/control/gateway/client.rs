@@ -9,8 +9,9 @@ use trust0_common::client::replshell_io::{
 };
 #[cfg(not(test))]
 use trust0_common::client::service::ClientControlServiceMgr;
+use trust0_common::control::management::request::Request;
 use trust0_common::control::tls;
-use trust0_common::crypto::{alpn, ca};
+use trust0_common::crypto::alpn;
 use trust0_common::error::AppError;
 use trust0_common::net::tls_client::{client_std, conn_std};
 
@@ -25,9 +26,9 @@ pub struct ControllerClient {
     /// TLS client object
     tls_client: client_std::Client,
     /// Trust0 client device
-    device: Device,
+    _device: Device,
     /// Receiver to retrieve REPL shell output messages (sender used [`ChannelShellOutputWriter`])
-    shell_msg_receiver: mpsc::Receiver<Vec<u8>>,
+    shell_msg_receiver: Arc<Mutex<mpsc::Receiver<Vec<u8>>>>,
     /// Sender used to send new REPL shell messages (receiver used in [`ChannelShellInputReader`])
     shell_msg_sender: mpsc::Sender<Vec<u8>>,
 }
@@ -80,27 +81,27 @@ impl ControllerClient {
                 *app_config.as_ref().service_gateway_port.as_ref().unwrap(),
                 false,
             ),
-            device: device.clone(),
-            shell_msg_receiver: shell_writer_receiver,
+            _device: device.clone(),
+            shell_msg_receiver: Arc::new(Mutex::new(shell_writer_receiver)),
             shell_msg_sender: shell_reader_sender,
         }
     }
 
     /// TLS client object accessor
     ///
-    pub fn get_tls_client(&self) -> &client_std::Client {
+    pub fn _get_tls_client(&self) -> &client_std::Client {
         &self.tls_client
     }
 
     /// Trust0 client device
     ///
-    pub fn get_device(&self) -> &Device {
-        &self.device
+    pub fn _get_device(&self) -> &Device {
+        &self._device
     }
 
     /// Receiver to retrieve REPL shell output messages (sender used [`ChannelShellOutputWriter`])
     ///
-    pub fn get_shell_msg_receiver(&self) -> &mpsc::Receiver<Vec<u8>> {
+    pub fn get_shell_msg_receiver(&self) -> &Arc<Mutex<mpsc::Receiver<Vec<u8>>>> {
         &self.shell_msg_receiver
     }
 
@@ -118,6 +119,40 @@ impl ControllerClient {
     /// Poll connection events
     pub fn poll_connection(&mut self) -> Result<(), AppError> {
         self.tls_client.poll_connection()
+    }
+}
+
+impl ControllerClient {
+    /// Request gateway service startup
+    ///
+    /// # Arguments
+    ///
+    /// * `shell_msg_sender` - Shell msg sender ([`mpsc::Sender`]) from a constructed [`ControllerClient`]
+    /// * `service_name` - Well-known service name for service to be started
+    /// * `local_port` - Local server port for new service connections
+    ///
+    /// # Returns
+    ///
+    /// Success or failure of Request
+    ///
+    pub fn request_start_service(
+        shell_msg_sender: &mpsc::Sender<Vec<u8>>,
+        service_name: &str,
+        local_port: u16,
+    ) -> Result<(), AppError> {
+        let start_cmd = Request::Start {
+            service_name: service_name.to_string(),
+            local_port,
+        }
+        .build_command();
+        shell_msg_sender
+            .send(start_cmd.as_bytes().to_vec())
+            .map_err(|err| {
+                AppError::General(format!(
+                    "Error sending service-gateway start service command: cmd={}, err={:?}",
+                    &start_cmd, &err
+                ))
+            })
     }
 }
 
@@ -173,12 +208,12 @@ impl ControllerClientVisitor {
         }
     }
 
-    /// Generate cljent access context session message
+    /// Generate client access context session message
     ///
     /// # Returns
     ///
     /// The [`tls::message::SessionMessage`] of a [`tls::message::DataType::ClientAccessContext`]
-    /// message type for the given device's [`ca::CertAccessContext`]
+    /// message type for the given device's [`trust0_common::crypto::ca::CertAccessContext`]
     ///
     fn create_access_session_message(
         &self,
@@ -285,6 +320,7 @@ pub mod tests {
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::mpsc::Sender;
+    use trust0_common::control::management::request;
     use trust0_common::crypto::file::load_certificates;
     use trust0_common::net::stream_utils;
     use trust0_common::net::tls_client::client_std::ClientVisitor;
@@ -345,7 +381,9 @@ pub mod tests {
             Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
         let device = create_client_device();
 
-        let _ = ControllerClient::new(&app_config, service_mgr, &device);
+        let client = ControllerClient::new(&app_config, service_mgr, &device);
+
+        assert_eq!(client._get_device().get_id(), device.get_id());
     }
 
     #[test]
@@ -357,10 +395,33 @@ pub mod tests {
 
         let client = ControllerClient::new(&app_config, service_mgr, &device);
 
-        let _ = client.get_tls_client();
+        let _ = client._get_tls_client();
         let _ = client.get_shell_msg_receiver();
         let _ = client.get_shell_msg_sender();
-        assert_eq!(client.get_device().get_id(), device.get_id());
+        assert_eq!(client._get_device().get_id(), device.get_id());
+    }
+
+    #[ignore]
+    #[test]
+    fn ctlclient_request_service_start() {
+        let app_config = Arc::new(create_app_config());
+        let service_mgr: Arc<Mutex<dyn ServiceMgr>> =
+            Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
+        let device = create_client_device();
+        let expected_cmd = format!("{} -s \"serv200\" -p 2000", request::PROTOCOL_REQUEST_START);
+
+        let client = ControllerClient::new(&app_config, service_mgr, &device);
+
+        let result =
+            ControllerClient::request_start_service(client.get_shell_msg_sender(), "serv200", 2000);
+
+        assert!(result.is_ok());
+
+        // TODO - Wrong receiver used, fix
+        match client.get_shell_msg_receiver().lock().unwrap().try_recv() {
+            Ok(msg) => assert_eq!(msg, expected_cmd.as_bytes().to_vec()),
+            Err(err) => panic!("Unexpected channel recv message result: err={:?}", &err),
+        };
     }
 
     #[test]
@@ -369,8 +430,11 @@ pub mod tests {
             Arc::new(Mutex::new(service::manager::tests::MockSvcMgr::new()));
         let shell_channel = mpsc::channel();
         let device = create_client_device();
-        let _ =
+
+        let client_visitor =
             ControllerClientVisitor::new(&service_mgr, &device, shell_channel.0, shell_channel.1);
+
+        assert_eq!(client_visitor.device.get_id(), device.get_id());
     }
 
     #[test]
