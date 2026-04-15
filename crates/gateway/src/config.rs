@@ -21,6 +21,7 @@ use trust0_common::crypto::{alpn, ca, tls};
 use trust0_common::error::AppError;
 use trust0_common::file::ReloadableFile;
 
+use crate::control::client::device::Device;
 use crate::repository::access_repo::AccessRepository;
 use crate::repository::in_memory_db::access_repo::InMemAccessRepo;
 use crate::repository::in_memory_db::role_repo::InMemRoleRepo;
@@ -565,13 +566,14 @@ pub struct AppConfig {
     pub ca_validity_period_days: Option<u16>,
     pub ca_reissuance_threshold_days: Option<u16>,
     pub dns_client: Resolver,
+    pub device: Device,
 }
 
 impl fmt::Display for AppConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         write!(
             formatter,
-            "AppConfig(type={},host={},port={},mfa={},verb={},svcgw-host={:?},svcgw-port={:?},svc-host={:?},svc-port={:?},svc-reply={:?},mask-addr={},ca={},ca-crt={},ca-key={:?},ca-keyalg={:?},ca-valid={:?},ca-reiss={:?})",
+            "AppConfig(type={},host={},port={},mfa={},verb={},svcgw-host={:?},svcgw-port={:?},svc-host={:?},svc-port={:?},svc-reply={:?},mask-addr={},ca={},ca-crt={},ca-key={:?},ca-keyalg={:?},ca-valid={:?},ca-reiss={:?},devid={})",
             &self.gateway_type,
             &self.server_host,
             &self.server_port,
@@ -588,7 +590,8 @@ impl fmt::Display for AppConfig {
             &self.ca_root_key_file,
             &self.ca_key_algorithm,
             &self.ca_validity_period_days,
-            &self.ca_reissuance_threshold_days
+            &self.ca_reissuance_threshold_days,
+            &self.device.get_id(),
         )
     }
 }
@@ -631,6 +634,7 @@ impl AppConfig {
         let auth_certs = load_certificates(&config_args.ca_root_cert_file).unwrap();
         let certs = load_certificates(&config_args.cert_file).unwrap();
         let certs_copy = certs.clone();
+        let certs_copy2 = certs.clone();
         let key = load_private_key(&config_args.key_file).unwrap();
 
         let crl_reloader_loading = Arc::new(Mutex::new(false));
@@ -670,6 +674,8 @@ impl AppConfig {
             crl_list,
             alpn_protocols,
         };
+
+        let device = Device::new(certs_copy2, None)?;
 
         // Gateway type-specific config
         let mfa_scheme;
@@ -781,6 +787,7 @@ impl AppConfig {
             ca_validity_period_days,
             ca_reissuance_threshold_days,
             dns_client,
+            device,
         })
     }
 
@@ -923,6 +930,7 @@ impl AppConfig {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::control::client::device;
     use crate::repository::access_repo::tests::MockAccessRepo;
     use crate::repository::access_repo::AccessRepository;
     use crate::repository::role_repo::tests::MockRoleRepo;
@@ -967,6 +975,7 @@ pub mod tests {
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_cert = load_certificates(gateway_cert_file.to_str().as_ref().unwrap())?;
         let gateway_cert_copy = gateway_cert.clone();
+        let gateway_cert_copy2 = gateway_cert.clone();
         let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_key = load_private_key(gateway_key_file.to_str().as_ref().unwrap())?;
         let auth_root_certs = rustls::RootCertStore::empty();
@@ -997,6 +1006,7 @@ pub mod tests {
         let ca_validity_period_days;
         let ca_reissuance_threshold_days;
         let mut tls_client_config = None;
+        let device = Device::new(gateway_cert_copy2, None)?;
 
         match &gateway_type {
             GatewayType::Full => {
@@ -1075,6 +1085,7 @@ pub mod tests {
             ca_validity_period_days,
             ca_reissuance_threshold_days,
             dns_client,
+            device,
         })
     }
 
@@ -1265,6 +1276,14 @@ pub mod tests {
         assert!(config.ca_reissuance_threshold_days.is_some());
         assert_eq!(config.ca_reissuance_threshold_days.unwrap(), 30);
         assert!(config.verbose_logging);
+        assert_eq!(
+            config.device.get_id(),
+            format!(
+                "{}:{}",
+                device::DEVICE_ID_PREFIX_GATEWAY,
+                &hex::encode(vec![3u8, 231u8]),
+            )
+        );
     }
 
     #[test]
@@ -1314,6 +1333,14 @@ pub mod tests {
         assert!(config.ca_reissuance_threshold_days.is_some());
         assert_eq!(config.ca_reissuance_threshold_days.unwrap(), 30);
         assert!(config.verbose_logging);
+        assert_eq!(
+            config.device.get_id(),
+            format!(
+                "{}:{}",
+                device::DEVICE_ID_PREFIX_GATEWAY,
+                &hex::encode(vec![3u8, 231u8]),
+            )
+        );
     }
 
     #[test]
@@ -1358,6 +1385,14 @@ pub mod tests {
         assert!(config.ca_validity_period_days.is_none());
         assert!(config.ca_reissuance_threshold_days.is_none());
         assert!(config.verbose_logging);
+        assert_eq!(
+            config.device.get_id(),
+            format!(
+                "{}:{}",
+                device::DEVICE_ID_PREFIX_GATEWAY,
+                &hex::encode(vec![3u8, 231u8]),
+            )
+        );
     }
 
     #[test]
@@ -1443,6 +1478,14 @@ pub mod tests {
             DEFAULT_CA_CERTIFICATE_REISSUANCE_THRESHOLD_DAYS
         );
         assert!(config.verbose_logging);
+        assert_eq!(
+            config.device.get_id(),
+            format!(
+                "{}:{}",
+                device::DEVICE_ID_PREFIX_GATEWAY,
+                &hex::encode(vec![3u8, 231u8]),
+            )
+        );
     }
 
     #[test]
