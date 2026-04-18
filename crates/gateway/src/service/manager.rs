@@ -390,6 +390,11 @@ impl ServiceMgr for GatewayServiceMgr {
                     }));
                 }
             }
+
+            // Starts up TLS service proxy
+            Transport::TLS => {
+                unimplemented!();
+            }
         }
 
         self.service_ports.insert(service.service_id, service_port);

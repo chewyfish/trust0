@@ -357,6 +357,11 @@ impl ServiceMgr for ClientServiceMgr {
                         .insert(service.service_id, service_proxy_thread);
                 }
             }
+
+            // Starts up TLS service proxy
+            Transport::TLS => {
+                unimplemented!();
+            }
         }
 
         self.service_addrs

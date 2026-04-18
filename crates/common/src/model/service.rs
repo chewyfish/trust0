@@ -8,6 +8,8 @@ pub enum Transport {
     TCP,
     /// UDP transport
     UDP,
+    /// TLS transport (TLS services not supported yet, only used for gw-to-gw proxying)
+    TLS,
 }
 
 /// Service model struct
@@ -60,11 +62,31 @@ pub mod tests {
     use super::*;
 
     #[test]
-    fn service_new() {
+    fn service_new_tcp() {
         let service = Service::new(200, "svc200", &Transport::TCP, "host1", 3000);
         assert_eq!(service.service_id, 200);
         assert_eq!(service.name, "svc200");
         assert_eq!(service.transport, Transport::TCP);
+        assert_eq!(service.host, "host1");
+        assert_eq!(service.port, 3000);
+    }
+
+    #[test]
+    fn service_new_udp() {
+        let service = Service::new(200, "svc200", &Transport::UDP, "host1", 3000);
+        assert_eq!(service.service_id, 200);
+        assert_eq!(service.name, "svc200");
+        assert_eq!(service.transport, Transport::UDP);
+        assert_eq!(service.host, "host1");
+        assert_eq!(service.port, 3000);
+    }
+
+    #[test]
+    fn service_new_tls() {
+        let service = Service::new(200, "svc200", &Transport::TLS, "host1", 3000);
+        assert_eq!(service.service_id, 200);
+        assert_eq!(service.name, "svc200");
+        assert_eq!(service.transport, Transport::TLS);
         assert_eq!(service.host, "host1");
         assert_eq!(service.port, 3000);
     }

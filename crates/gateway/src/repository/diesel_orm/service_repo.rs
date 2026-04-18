@@ -45,6 +45,7 @@ impl From<model::service::Service> for Service {
             transport: match service.transport {
                 model::service::Transport::TCP => "TCP".to_string(),
                 model::service::Transport::UDP => "UDP".to_string(),
+                model::service::Transport::TLS => "TLS".to_string(),
             },
             host: service.host,
             port: service.port as i32,
@@ -68,6 +69,7 @@ impl From<&Service> for model::service::Service {
             transport: match service.transport.as_str() {
                 "TCP" => model::service::Transport::TCP,
                 "UDP" => model::service::Transport::UDP,
+                "TLS" => model::service::Transport::TLS,
                 val => panic!("Invalid service transport: val={}", val),
             },
             host: service.host.clone(),
@@ -289,6 +291,13 @@ mod tests {
             host: "host201.com".to_string(),
             port: 8201,
         };
+        let model_tls_service = model::service::Service {
+            service_id: 201,
+            name: "Service201".to_string(),
+            transport: model::service::Transport::TLS,
+            host: "host201.com".to_string(),
+            port: 8201,
+        };
         let expected_tcp_service = Service {
             id: 200,
             name: "Service200".to_string(),
@@ -307,8 +316,18 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
+        let expected_tls_service = Service {
+            id: 201,
+            name: "Service201".to_string(),
+            transport: "TLS".to_string(),
+            host: "host201.com".to_string(),
+            port: 8201,
+            created_at: None,
+            updated_at: None,
+        };
         assert_eq!(Service::from(model_tcp_service), expected_tcp_service);
         assert_eq!(Service::from(model_udp_service), expected_udp_service);
+        assert_eq!(Service::from(model_tls_service), expected_tls_service);
     }
 
     #[test]
@@ -331,6 +350,15 @@ mod tests {
             created_at: None,
             updated_at: None,
         };
+        let tls_service = Service {
+            id: 201,
+            name: "Service201".to_string(),
+            transport: "TLS".to_string(),
+            host: "host201.com".to_string(),
+            port: 8201,
+            created_at: None,
+            updated_at: None,
+        };
         let expected_model_tcp_service = model::service::Service {
             service_id: 200,
             name: "Service200".to_string(),
@@ -345,6 +373,13 @@ mod tests {
             host: "host201.com".to_string(),
             port: 8201,
         };
+        let expected_model_tls_service = model::service::Service {
+            service_id: 201,
+            name: "Service201".to_string(),
+            transport: model::service::Transport::TLS,
+            host: "host201.com".to_string(),
+            port: 8201,
+        };
         assert_eq!(
             model::service::Service::from(tcp_service),
             expected_model_tcp_service
@@ -352,6 +387,10 @@ mod tests {
         assert_eq!(
             model::service::Service::from(udp_service),
             expected_model_udp_service
+        );
+        assert_eq!(
+            model::service::Service::from(tls_service),
+            expected_model_tls_service
         );
     }
 
