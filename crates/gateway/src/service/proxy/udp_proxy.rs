@@ -623,9 +623,10 @@ pub mod tests {
         if let Err(err) = server_visitor.create_client_conn(
             StreamOwned::new(
                 rustls::ServerConnection::new(Arc::new(
-                    proxy_base::tests::create_tls_server_config(vec![
-                        alpn::Protocol::create_service_protocol(200).into_bytes(),
-                    ])
+                    proxy_base::tests::create_tls_server_config(
+                        true,
+                        vec![alpn::Protocol::create_service_protocol(200).into_bytes()],
+                    )
                     .unwrap(),
                 ))
                 .unwrap(),
@@ -694,9 +695,10 @@ pub mod tests {
 
         let server_msg_result = server_visitor.on_server_msg_provider(
             &rustls::ServerConnection::new(Arc::new(
-                proxy_base::tests::create_tls_server_config(vec![
-                    alpn::Protocol::create_service_protocol(200).into_bytes(),
-                ])
+                proxy_base::tests::create_tls_server_config(
+                    true,
+                    vec![alpn::Protocol::create_service_protocol(200).into_bytes()],
+                )
                 .unwrap(),
             ))
             .unwrap(),
@@ -765,9 +767,10 @@ pub mod tests {
             .create_client_conn(
                 StreamOwned::new(
                     rustls::ServerConnection::new(Arc::new(
-                        proxy_base::tests::create_tls_server_config(vec![
-                            alpn::Protocol::create_service_protocol(200).into_bytes(),
-                        ])
+                        proxy_base::tests::create_tls_server_config(
+                            true,
+                            vec![alpn::Protocol::create_service_protocol(200).into_bytes()],
+                        )
                         .unwrap(),
                     ))
                     .unwrap(),
@@ -847,9 +850,10 @@ pub mod tests {
             .create_client_conn(
                 StreamOwned::new(
                     rustls::ServerConnection::new(Arc::new(
-                        proxy_base::tests::create_tls_server_config(vec![
-                            alpn::Protocol::create_service_protocol(200).into_bytes(),
-                        ])
+                        proxy_base::tests::create_tls_server_config(
+                            true,
+                            vec![alpn::Protocol::create_service_protocol(200).into_bytes()],
+                        )
                         .unwrap(),
                     ))
                     .unwrap(),

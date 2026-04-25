@@ -14,7 +14,9 @@ use crate::client::service::{ClientControlServiceMgr, ProxyAddrs};
 use crate::control::pdu::{ControlChannel, MessageFrame};
 use crate::control::{self, management};
 use crate::error::AppError;
+use crate::logging::debug;
 use crate::net::tls_client::conn_std;
+use crate::target;
 
 const AUTHN_LABEL_USERNAME: &str = "Username: ";
 const AUTHN_LABEL_PASSWORD: &str = "Password: ";
@@ -619,6 +621,14 @@ impl ChannelProcessor for ManagementController {
             &None,
             &None,
             &Some(Value::String(line)),
+        );
+
+        debug(
+            &target!(),
+            &format!(
+                "Client management controller: send message: msg={:?}",
+                &msg_frame
+            ),
         );
 
         self.message_outbox

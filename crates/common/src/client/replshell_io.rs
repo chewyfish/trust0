@@ -803,6 +803,44 @@ pub mod tests {
     }
 
     #[test]
+    fn replshellinp_default_spawn_line_reader_when_2_lines_for_channel_reader() {
+        let (reader_send, reader_recv) = mpsc::channel();
+        reader_send.send("line1".as_bytes().to_vec()).unwrap();
+        reader_send.send("line2".as_bytes().to_vec()).unwrap();
+
+        let prompted_toggle = Arc::new(AtomicBool::new(true));
+        let mut input_reader = ChannelShellInputReader::new(reader_recv, &[], &prompted_toggle);
+        input_reader.test_input_lines = 2;
+        input_reader.spawn_line_reader();
+
+        thread::sleep(Duration::from_millis(40));
+
+        let mut actual_lines = vec![];
+        loop {
+            let recvd_result = input_reader.channel_recv.try_recv();
+            match recvd_result {
+                Ok(line_result) => match line_result {
+                    Ok(line) => actual_lines.push(line),
+                    Err(err) => panic!(
+                        "Unexpected line result: recvd={:?}, err={:?}",
+                        &actual_lines, &err
+                    ),
+                },
+                Err(err) => match err {
+                    TryRecvError::Disconnected => panic!(
+                        "Unexpected disconnected line recvd result: recvd={:?}",
+                        &actual_lines
+                    ),
+                    TryRecvError::Empty => break,
+                },
+            }
+        }
+
+        assert_eq!(actual_lines.len(), 2);
+        assert_eq!(actual_lines, vec!["line1", "line2"]);
+    }
+
+    #[test]
     fn replshellinp_default_next_line_when_no_lines() {
         let reader: Arc<Mutex<Box<dyn BufRead + Send>>> =
             Arc::new(Mutex::new(Box::new(Cursor::new(vec![]))));
@@ -1094,7 +1132,7 @@ pub mod tests {
             .unwrap()
             .read_line(&mut read_line);
         assert!(read_result.is_ok());
-        assert_eq!(read_line, "hi".to_string());
+        assert_eq!(read_line, "hi\n".to_string());
 
         let channel_recv = input_reader.channel_receiver();
         let channel_send = input_reader.clone_channel_sender();

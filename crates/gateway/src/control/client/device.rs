@@ -154,6 +154,54 @@ impl Device {
         }
     }
 
+    /// Parse device ID into its respective constituent parts
+    ///
+    /// # Returns
+    ///
+    /// (potentially optional) tuple of [`EntityType`], serial number, user ID
+    ///
+    pub fn parse_id(id: &str) -> Result<(EntityType, String, Option<i64>), AppError> {
+        let id_parts: Vec<&str> = id.split(':').collect();
+        match id_parts.len() {
+            2 => match *id_parts.first().unwrap() {
+                DEVICE_ID_PREFIX_GATEWAY => Ok((
+                    EntityType::Gateway,
+                    (*id_parts.get(1).unwrap()).to_string(),
+                    None,
+                )),
+                _ => Err(AppError::General(format!(
+                    "Invalid 2-part device ID entity: id={}",
+                    id
+                ))),
+            },
+            3 => {
+                let user_id: i64 = (*id_parts.get(2).unwrap()).parse().map_err(|_| {
+                    AppError::General(format!("Device ID has invalid user ID: id={}", id))
+                })?;
+                match *id_parts.first().unwrap() {
+                    DEVICE_ID_PREFIX_GATEWAY => Ok((
+                        EntityType::Gateway,
+                        (*id_parts.get(1).unwrap()).to_string(),
+                        Some(user_id),
+                    )),
+                    DEVICE_ID_PREFIX_CLIENT => Ok((
+                        EntityType::Client,
+                        (*id_parts.get(1).unwrap()).to_string(),
+                        Some(user_id),
+                    )),
+                    _ => Err(AppError::General(format!(
+                        "Invalid 3-part device ID entity: id={}",
+                        id
+                    ))),
+                }
+            }
+            _ => Err(AppError::General(format!(
+                "Device ID must have 2 or 3 parts: id={}",
+                id
+            ))),
+        }
+    }
+
     /// Certificate subject attributes
     ///
     /// # Returns
@@ -532,6 +580,88 @@ mod tests {
                 &hex::encode(vec![3u8, 231u8]),
             )
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_parse_id_when_invalid_num_parts() -> Result<(), AppError> {
+        match Device::parse_id("G:ser1:100:X") {
+            Ok(_) => panic!("Unexpected successful result"),
+            Err(err) => assert_eq!(
+                err.to_string(),
+                "Device ID must have 2 or 3 parts: id=G:ser1:100:X"
+            ),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_parse_id_when_invalid_2part_entity() -> Result<(), AppError> {
+        match Device::parse_id("C:ser1") {
+            Ok(_) => panic!("Unexpected successful result"),
+            Err(err) => assert_eq!(
+                err.to_string(),
+                "Invalid 2-part device ID entity: id=C:ser1"
+            ),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_parse_id_when_invalid_3part_entity() -> Result<(), AppError> {
+        match Device::parse_id("X:ser1:100") {
+            Ok(_) => panic!("Unexpected successful result"),
+            Err(err) => assert_eq!(
+                err.to_string(),
+                "Invalid 3-part device ID entity: id=X:ser1:100"
+            ),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_parse_id_when_invalid_user_id() -> Result<(), AppError> {
+        match Device::parse_id("C:ser1:X") {
+            Ok(_) => panic!("Unexpected successful result"),
+            Err(err) => assert_eq!(
+                err.to_string(),
+                "Device ID has invalid user ID: id=C:ser1:X"
+            ),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_parse_id_when_valid_2part_gateway() -> Result<(), AppError> {
+        match Device::parse_id("G:ser1") {
+            Ok(parsed) => assert_eq!(parsed, (EntityType::Gateway, "ser1".to_string(), None)),
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_parse_id_when_valid_3part_gateway() -> Result<(), AppError> {
+        match Device::parse_id("G:ser1:100") {
+            Ok(parsed) => assert_eq!(parsed, (EntityType::Gateway, "ser1".to_string(), Some(100))),
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_parse_id_when_valid_client() -> Result<(), AppError> {
+        match Device::parse_id("C:ser1:100") {
+            Ok(parsed) => assert_eq!(parsed, (EntityType::Client, "ser1".to_string(), Some(100))),
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
 
         Ok(())
     }

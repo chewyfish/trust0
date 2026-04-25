@@ -2,10 +2,11 @@ use anyhow::Result;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::ops::DerefMut;
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
+use std::time::Duration;
 use trust0_common::client::service::ProxyAddrs;
 use trust0_common::error::AppError;
 use trust0_common::logging::info;
@@ -14,13 +15,12 @@ use trust0_common::proxy::event::ProxyEvent;
 use trust0_common::proxy::executor::ProxyExecutorEvent;
 use trust0_common::target;
 
-use super::proxy::proxy_base::GatewayServiceProxy;
-use super::proxy::tcp_proxy::TcpGatewayProxy;
 use crate::config::{AppConfig, GatewayType};
 use crate::control::client::controller::MessageProcessor;
 use crate::control::gateway::client::ControllerClient;
-use crate::service::proxy::proxy_base::GatewayServiceProxyVisitor;
-use crate::service::proxy::tcp_proxy::TcpGatewayProxyServerVisitor;
+use crate::service::proxy::proxy_base::{GatewayServiceProxy, GatewayServiceProxyVisitor};
+use crate::service::proxy::svcgw_proxy::{ServiceGatewayProxy, ServiceGatewayProxyServerVisitor};
+use crate::service::proxy::tcp_proxy::{TcpGatewayProxy, TcpGatewayProxyServerVisitor};
 use crate::service::proxy::udp_proxy::{UdpGatewayProxy, UdpGatewayProxyServerVisitor};
 
 const DEFAULT_SERVICE_PORT_START: u16 = 8200;
@@ -208,10 +208,19 @@ impl GatewayServiceMgr {
                 Some(service_gateway_client.get_shell_msg_receiver().clone());
             #[cfg(not(test))]
             {
+                let (svcgw_started_send, svcgw_started_recv) = mpsc::channel();
                 self.service_gateway_client_handle = Some(thread::spawn(move || {
                     service_gateway_client.connect()?;
+                    svcgw_started_send.send(true).map_err(|err|
+                        AppError::General(format!("Error during service gateway controller client connection, send started: err={:?}", &err)))?;
                     service_gateway_client.poll_connection()
                 }));
+
+                if let Err(err) = svcgw_started_recv.recv_timeout(Duration::from_millis(10_000)) {
+                    return Some(Err(AppError::General(format!("Error during service gateway controller client connection, recv started: err={:?}", &err))));
+                }
+
+                thread::sleep(Duration::from_millis(1_500));
             }
             #[cfg(test)]
             {
@@ -295,20 +304,17 @@ impl ServiceMgr for GatewayServiceMgr {
         // Determine server connection address
         // - - - - - - - - - - - - - - - - - -
         let service_host = self.app_config.gateway_service_host.clone();
-        let service_port = match service_gateway_proxy_addrs {
-            None => match self.shared_service_port {
-                Some(port) => port,
-                None => {
-                    if self.next_service_port > self.last_service_port {
-                        return Err(AppError::General(
-                            "Service ports exhausted, please extend range".to_string(),
-                        ));
-                    }
-                    self.next_service_port += 1;
-                    self.next_service_port - 1
+        let service_port = match self.shared_service_port {
+            Some(port) => port,
+            None => {
+                if self.next_service_port > self.last_service_port {
+                    return Err(AppError::General(
+                        "Service ports exhausted, please extend range".to_string(),
+                    ));
                 }
-            },
-            Some(addrs) => addrs.0,
+                self.next_service_port += 1;
+                self.next_service_port - 1
+            }
         };
 
         // Startup service on service-gateway (if applic)
@@ -328,28 +334,92 @@ impl ServiceMgr for GatewayServiceMgr {
         let service_proxy_visitor: Arc<Mutex<dyn GatewayServiceProxyVisitor>>;
         let mut service_proxy_thread: Option<JoinHandle<Result<(), AppError>>> = None;
 
-        match service.transport {
-            // Starts up TCP service proxy
-            Transport::TCP => {
-                // Setup service proxy objects
-                let tcp_proxy_visitor = Arc::new(Mutex::new(TcpGatewayProxyServerVisitor::new(
-                    &self.app_config,
-                    &service_mgr,
-                    service,
-                    &service_host,
-                    service_port,
-                    &self.proxy_tasks_sender,
-                    &self.proxy_events_sender,
-                    &self.services_by_proxy_key,
-                )?));
+        match service_gateway_proxy_addrs {
+            // Service gateway proxy
+            Some(svcgw_proxy_addrs) => {
+                info(&target!(), &format!("Starting service-gateway service proxy: svc_id={}, svc_name={:?}, svc_transport={:?}, svcgw_host={:?}, svcgw_port={}", service.service_id, &service.name, &service.transport, &service_host, service_port));
 
-                service_proxy = Arc::new(Mutex::new(TcpGatewayProxy::new(
+                // Setup service-gateway proxy objects
+                let svcgw_proxy_visitor =
+                    Arc::new(Mutex::new(ServiceGatewayProxyServerVisitor::new(
+                        &self.app_config,
+                        &service_mgr,
+                        service,
+                        &service_host,
+                        service_port,
+                        &self.proxy_tasks_sender,
+                        &self.proxy_events_sender,
+                        &self.services_by_proxy_key,
+                        svcgw_proxy_addrs,
+                    )?));
+
+                service_proxy = Arc::new(Mutex::new(ServiceGatewayProxy::new(
                     &self.app_config,
-                    tcp_proxy_visitor.clone(),
+                    svcgw_proxy_visitor.clone(),
                     service_port,
                 )));
 
-                service_proxy_visitor = tcp_proxy_visitor;
+                service_proxy_visitor = svcgw_proxy_visitor;
+            }
+
+            // Service proxy
+            None => {
+                info(&target!(), &format!("Starting service proxy: svc_id={}, svc_name={:?}, svc_transport={:?}, svc_host={:?}, svc_port={}", service.service_id, &service.name, &service.transport, &service_host, service_port));
+
+                match service.transport {
+                    // Starts up TCP service proxy
+                    Transport::TCP => {
+                        // Setup service proxy objects
+                        let tcp_proxy_visitor =
+                            Arc::new(Mutex::new(TcpGatewayProxyServerVisitor::new(
+                                &self.app_config,
+                                &service_mgr,
+                                service,
+                                &service_host,
+                                service_port,
+                                &self.proxy_tasks_sender,
+                                &self.proxy_events_sender,
+                                &self.services_by_proxy_key,
+                            )?));
+
+                        service_proxy = Arc::new(Mutex::new(TcpGatewayProxy::new(
+                            &self.app_config,
+                            tcp_proxy_visitor.clone(),
+                            service_port,
+                        )));
+
+                        service_proxy_visitor = tcp_proxy_visitor;
+                    }
+
+                    // Starts up UDP service proxy
+                    Transport::UDP => {
+                        // Setup service proxy objects
+                        let udp_proxy_visitor =
+                            Arc::new(Mutex::new(UdpGatewayProxyServerVisitor::new(
+                                &self.app_config,
+                                &service_mgr,
+                                service,
+                                &service_host,
+                                service_port,
+                                &self.proxy_tasks_sender,
+                                &self.proxy_events_sender,
+                                &self.services_by_proxy_key,
+                            )?));
+
+                        service_proxy = Arc::new(Mutex::new(UdpGatewayProxy::new(
+                            &self.app_config,
+                            udp_proxy_visitor.clone(),
+                            service_port,
+                        )));
+
+                        service_proxy_visitor = udp_proxy_visitor;
+                    }
+
+                    // Starts up TLS service proxy
+                    Transport::TLS => {
+                        unimplemented!();
+                    }
+                }
 
                 // Startup service proxy listener (only if not using shared listener port)
                 if self.shared_service_port.is_none() {
@@ -358,42 +428,6 @@ impl ServiceMgr for GatewayServiceMgr {
                         service_proxy_closure.lock().unwrap().startup()
                     }));
                 }
-            }
-
-            // Starts up UDP service proxy
-            Transport::UDP => {
-                // Setup service proxy objects
-                let udp_proxy_visitor = Arc::new(Mutex::new(UdpGatewayProxyServerVisitor::new(
-                    &self.app_config,
-                    &service_mgr,
-                    service,
-                    &service_host,
-                    service_port,
-                    &self.proxy_tasks_sender,
-                    &self.proxy_events_sender,
-                    &self.services_by_proxy_key,
-                )?));
-
-                service_proxy = Arc::new(Mutex::new(UdpGatewayProxy::new(
-                    &self.app_config,
-                    udp_proxy_visitor.clone(),
-                    service_port,
-                )));
-
-                service_proxy_visitor = udp_proxy_visitor;
-
-                // Startup service proxy listener (only if not using shared listener port)
-                if self.shared_service_port.is_none() {
-                    let service_proxy_closure = service_proxy.clone();
-                    service_proxy_thread = Some(thread::spawn(move || {
-                        service_proxy_closure.lock().unwrap().startup()
-                    }));
-                }
-            }
-
-            // Starts up TLS service proxy
-            Transport::TLS => {
-                unimplemented!();
             }
         }
 
@@ -680,6 +714,7 @@ pub mod tests {
             .is_none());
     }
 
+    #[test]
     fn gwsvcmgr_startup_on_service_gateway_when_clientgw_and_noproxyaddrs() {
         let service = Service {
             service_id: 200,
@@ -810,7 +845,7 @@ pub mod tests {
     }
 
     #[test]
-    fn gwsvcmgr_has_control_plane_for_devicce_when_unavail() {
+    fn gwsvcmgr_has_control_plane_for_device_when_unavail() {
         let service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
         let device_id = "C:03e8:100";
         assert!(service_mgr.control_planes.is_empty());
@@ -974,6 +1009,50 @@ pub mod tests {
         assert_eq!(
             service_mgr.lock().unwrap().service_proxy_visitors.len(),
             orig_svc_proxy_visitors_len
+        );
+    }
+
+    #[test]
+    fn gwsvcmgr_startup_when_svcgw_proxy_service() {
+        let service = Service {
+            service_id: 200,
+            name: "Service200".to_string(),
+            transport: Transport::TCP,
+            host: "localhost".to_string(),
+            port: 8200,
+        };
+        let service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
+        let orig_svc_ports_len = service_mgr.service_ports.len();
+        let orig_svc_proxies_len = service_mgr.service_proxies.len();
+        let orig_svc_proxy_visitors_len = service_mgr.service_proxy_visitors.len();
+        let service_mgr = Arc::new(Mutex::new(service_mgr));
+
+        match service_mgr.clone().lock().unwrap().startup(
+            service_mgr.clone(),
+            &service,
+            &Some(ProxyAddrs(2000, "host1".to_string(), 8888)),
+        ) {
+            Ok((host, port)) => {
+                assert!(host.is_some());
+                assert_eq!(host.unwrap(), GATEWAY_HOST.to_string());
+                assert_eq!(port, GATEWAY_SHARED_PORT);
+            }
+            Err(err) => {
+                panic!("Unexpected startup result: err={:?}", &err);
+            }
+        }
+
+        assert_eq!(
+            service_mgr.lock().unwrap().service_ports.len(),
+            orig_svc_ports_len + 1
+        );
+        assert_eq!(
+            service_mgr.lock().unwrap().service_proxies.len(),
+            orig_svc_proxies_len + 1
+        );
+        assert_eq!(
+            service_mgr.lock().unwrap().service_proxy_visitors.len(),
+            orig_svc_proxy_visitors_len + 1
         );
     }
 

@@ -20,6 +20,8 @@ const SESSIONMSG_READ_BLOCK_SIZE: usize = 1024;
 const SESSIONMSG_READ_LOOP_READ_DELAY_MSECS: u64 = 10;
 const SESSIONMSG_READ_LOOP_MAX_READS: u16 = 10;
 
+const NEWLINE: &[u8] = "\n".as_bytes();
+
 /// Represents a stream, which implements [`io::Read`] and [`io::Write`]
 pub trait StreamReaderWriter: io::Read + io::Write + Send {}
 
@@ -613,6 +615,8 @@ impl io::BufRead for ChannelReader {
                 }
             };
             self.pending_buffer.append(&mut VecDeque::from(msg));
+            self.pending_buffer
+                .append(&mut VecDeque::from(NEWLINE.to_vec()));
         }
 
         // return buffer
@@ -1367,6 +1371,27 @@ pub mod tests {
     }
 
     #[test]
+    fn chanreader_read_line() {
+        use std::io::BufRead;
+
+        let (sender, receiver) = mpsc::channel();
+        let msg_text = "hello".as_bytes();
+
+        let mut channel_reader = ChannelReader::new(receiver);
+
+        sender.send(msg_text.to_vec()).unwrap();
+
+        let mut line = String::new();
+        match channel_reader.read_line(&mut line) {
+            Ok(read_len) => {
+                assert_eq!(read_len, 6);
+                assert_eq!(line, "hello\n".to_string());
+            }
+            Err(err) => panic!("Unexpected read result: err={:?}", &err),
+        }
+    }
+
+    #[test]
     fn chanreader_read_msg() {
         use std::io::Read;
 
@@ -1381,8 +1406,8 @@ pub mod tests {
         let buf_slice = buf.as_mut_slice();
         match channel_reader.read(buf_slice) {
             Ok(read_len) => {
-                assert_eq!(read_len, 5);
-                assert_eq!(buf_slice, [b'h', b'e', b'l', b'l', b'o', 0u8, 0u8]);
+                assert_eq!(read_len, 6);
+                assert_eq!(buf_slice, [b'h', b'e', b'l', b'l', b'o', b'\n', 0u8]);
             }
             Err(err) => panic!("Unexpected read result: err={:?}", &err),
         }
@@ -1391,8 +1416,8 @@ pub mod tests {
         let buf_slice = buf.as_mut_slice();
         match channel_reader.read(buf_slice) {
             Ok(read_len) => {
-                assert_eq!(read_len, 0);
-                assert_eq!(buf_slice, [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]);
+                assert_eq!(read_len, 1);
+                assert_eq!(buf_slice, [b'\n', 0u8, 0u8, 0u8, 0u8, 0u8, 0u8]);
             }
             Err(err) => panic!("Unexpected read result: err={:?}", &err),
         }
@@ -1423,8 +1448,8 @@ pub mod tests {
         let buf_slice = buf.as_mut_slice();
         match channel_reader.read(buf_slice) {
             Ok(read_len) => {
-                assert_eq!(read_len, 2);
-                assert_eq!(buf_slice, [b'l', b'o', 0u8]);
+                assert_eq!(read_len, 3);
+                assert_eq!(buf_slice, [b'l', b'o', b'\n']);
             }
             Err(err) => panic!("Unexpected read result #2: err={:?}", &err),
         }
@@ -1433,8 +1458,8 @@ pub mod tests {
         let buf_slice = buf.as_mut_slice();
         match channel_reader.read(buf_slice) {
             Ok(read_len) => {
-                assert_eq!(read_len, 0);
-                assert_eq!(buf_slice, [0u8, 0u8, 0u8]);
+                assert_eq!(read_len, 1);
+                assert_eq!(buf_slice, [b'\n', 0u8, 0u8]);
             }
             Err(err) => panic!("Unexpected read result: err={:?}", &err),
         }

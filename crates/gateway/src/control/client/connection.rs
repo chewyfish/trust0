@@ -114,7 +114,7 @@ impl ClientConnVisitor {
             .map(|c| crypto::x509::create_der_certificate(c.as_bytes()))
             .collect();
 
-        let device = Device::new(peer_certificates, proxied_access_context)?;
+        let device = Device::new(peer_certificates.clone(), proxied_access_context)?;
         let device_id = device.get_id();
         let serial_num = hex::encode(device.get_cert_serial_num());
 
@@ -175,17 +175,26 @@ impl ClientConnVisitor {
         // Validate service connection
         if let Some(service_id) = service_id {
             // Ensure active control plane for device
+            let service_device = Device::new(
+                peer_certificates,
+                Some(crypto::ca::CertAccessContext {
+                    entity_type: crypto::ca::EntityType::Gateway,
+                    platform: "".to_string(),
+                    user_id: 0,
+                }),
+            )?;
+
             if !self
                 .service_mgr
                 .lock()
                 .unwrap()
-                .has_control_plane_for_device(device_id.as_str(), true)
+                .has_control_plane_for_device(service_device.get_id().as_str(), true)
             {
                 return Err(AppError::GenWithCodeAndMsg(
                     config::RESPCODE_0427_CONTROL_PLANE_NOT_AUTHENTICATED,
                     format!(
-                        "Service proxy connections require an authenticated control plane: user_id={}, dev_id={}, ser={}",
-                        user_id, device_id.as_str(), &serial_num
+                        "Service proxy connections require an authenticated control plane: user_id={}, dev_id={}, svc_dev_id={}, ser={}",
+                        user_id, device_id.as_str(), service_device.get_id().as_str(), &serial_num
                     ),
                 ));
             }
@@ -1685,7 +1694,7 @@ mod tests {
         cli_conn_visitor.send_error_response(&AppError::GenWithCodeAndMsgAndErr(
             config::RESPCODE_0423_INVALID_REQUEST,
             "msg1".to_string(),
-            Box::new(fmt::Error::default()),
+            Box::new(fmt::Error),
         ));
 
         let msg_event = event_channel.1.try_recv();
@@ -1724,7 +1733,7 @@ mod tests {
 
         cli_conn_visitor.send_error_response(&AppError::GenWithCodeAndErr(
             config::RESPCODE_0423_INVALID_REQUEST,
-            Box::new(fmt::Error::default()),
+            Box::new(fmt::Error),
         ));
 
         let msg_event = event_channel.1.try_recv();

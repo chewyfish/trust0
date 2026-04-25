@@ -347,15 +347,9 @@ pub enum GatewayTypeCommand {
     #[command(name = "full-gateway")]
     Full(FullGatewayCommandArgs),
     /// Client gateway type
-    #[cfg(not(test))]
-    Client(ClientGatewayCommandArgs),
-    #[cfg(test)]
     #[command(name = "client-gateway")]
     Client(ClientGatewayCommandArgs),
     /// Service gateway type
-    #[cfg(not(test))]
-    Service(ServiceGatewayCommandArgs),
-    #[cfg(test)]
     #[command(name = "service-gateway")]
     Service(ServiceGatewayCommandArgs),
 }
@@ -954,6 +948,8 @@ pub mod tests {
         "testdata",
         "client-uid100.crt.pem",
     ];
+    const CERTFILE_ROOT_CA_PATHPARTS: [&str; 3] =
+        [env!("CARGO_MANIFEST_DIR"), "testdata", "root-ca.crt.pem"];
     const CERTFILE_GATEWAY_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "gateway.crt.pem"];
     const KEYFILE_GATEWAY_PATHPARTS: [&str; 3] =
@@ -972,18 +968,26 @@ pub mod tests {
         role_repo: Arc<Mutex<dyn RoleRepository>>,
         access_repo: Arc<Mutex<dyn AccessRepository>>,
     ) -> Result<AppConfig, AppError> {
+        let rootca_cert_file: PathBuf = CERTFILE_ROOT_CA_PATHPARTS.iter().collect();
+        let rootca_cert = load_certificates(rootca_cert_file.to_str().as_ref().unwrap())?;
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_cert = load_certificates(gateway_cert_file.to_str().as_ref().unwrap())?;
         let gateway_cert_copy = gateway_cert.clone();
         let gateway_cert_copy2 = gateway_cert.clone();
         let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_key = load_private_key(gateway_key_file.to_str().as_ref().unwrap())?;
-        let auth_root_certs = rustls::RootCertStore::empty();
-        let auth_root_certs_copy = auth_root_certs.clone();
         let cipher_suites: Vec<rustls::SupportedCipherSuite> =
             rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
         let cipher_suites_copy = cipher_suites.clone();
         let alpn_protocols = vec![alpn::Protocol::ControlPlane.to_string().into_bytes()];
+
+        let mut auth_root_certs = rustls::RootCertStore::empty();
+        for ca_root_cert in rootca_cert {
+            auth_root_certs.add(ca_root_cert).map_err(|err| {
+                AppError::General(format!("Error adding CA root cert: err={:?}", &err))
+            })?;
+        }
+        let auth_root_certs_copy = auth_root_certs.clone();
 
         let tls_server_config_builder = TlsServerConfigBuilder {
             certs: gateway_cert,

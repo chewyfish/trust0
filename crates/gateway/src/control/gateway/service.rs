@@ -52,12 +52,11 @@ impl ClientControlServiceMgr for ControllerServiceMgr {
         service: &Service,
         proxy_addrs: &ProxyAddrs,
     ) -> Result<ProxyAddrs, AppError> {
-        let service_mgr_copy = self.service_mgr.clone();
-        let (service_host, service_port) = self
-            .service_mgr
-            .lock()
-            .unwrap()
-            .startup(service_mgr_copy, service)?;
+        let (service_host, service_port) = self.service_mgr.lock().unwrap().startup(
+            self.service_mgr.clone(),
+            service,
+            &Some(proxy_addrs.clone()),
+        )?;
         Ok(ProxyAddrs(
             proxy_addrs.0,
             service_host.unwrap_or(proxy_addrs.1.clone()),
@@ -90,6 +89,23 @@ mod tests {
 
     // tests
     // =====
+
+    #[test]
+    fn ctlsvcproxyvis_construction() {
+        let service = Service::new(200, "svc200", &Transport::TCP, "host1", 3000);
+        let proxy_keys = vec![(
+            "key1".to_string(),
+            ("cliaddr1".to_string(), "svraddr1".to_string()),
+        )];
+
+        let visitor = ControlServiceProxyVisitor {
+            service: service.clone(),
+            proxy_keys: proxy_keys.clone(),
+        };
+
+        assert_eq!(visitor.service, service);
+        assert_eq!(visitor.proxy_keys, proxy_keys);
+    }
 
     #[test]
     #[should_panic]
@@ -127,17 +143,23 @@ mod tests {
             host: "localhost".to_string(),
             port: 8200,
         };
+        let service_copy = service.clone();
+        let proxy_keys = vec![(
+            "key1".to_string(),
+            ("cliaddr1".to_string(), "svraddr1".to_string()),
+        )];
+        let proxy_keys_copy = proxy_keys.clone();
 
         let mut gwsvc_proxy_visitor = MockGwSvcProxyVisitor::new();
         gwsvc_proxy_visitor
             .expect_get_service()
             .times(1)
-            .return_once(move || service);
+            .return_once(move || service_copy);
         gwsvc_proxy_visitor
             .expect_get_proxy_keys_for_device()
             .with(predicate::eq(device_id.clone()))
             .times(1)
-            .return_once(|_| Vec::new());
+            .return_once(|_| proxy_keys_copy);
 
         let mut service_mgr = MockSvcMgr::new();
         service_mgr
@@ -162,8 +184,13 @@ mod tests {
             device_id,
         };
 
-        let result = ctl_service_mgr.get_service_proxies();
-        assert!(!result.is_empty());
+        let result_proxies = ctl_service_mgr.get_service_proxies();
+
+        assert_eq!(result_proxies.len(), 1);
+
+        let result_proxy = result_proxies[0].lock().unwrap();
+        assert_eq!(result_proxy.get_service(), service);
+        assert_eq!(result_proxy.get_proxy_keys(), proxy_keys);
     }
 
     #[test]
@@ -184,9 +211,13 @@ mod tests {
         let mut service_mgr = MockSvcMgr::new();
         service_mgr
             .expect_startup()
-            .with(predicate::always(), predicate::eq(service.clone()))
+            .with(
+                predicate::always(),
+                predicate::eq(service.clone()),
+                predicate::eq(Some(proxy_addrs.clone())),
+            )
             .times(1)
-            .return_once(move |_, _| Ok((Some(gw_service_host_copy), gw_service_port)));
+            .return_once(move |_, _, _| Ok((Some(gw_service_host_copy), gw_service_port)));
         service_mgr.expect_get_service_id_by_proxy_key().never();
         service_mgr.expect_get_service_proxies().never();
         service_mgr.expect_get_service_proxy().never();

@@ -9,8 +9,10 @@ use std::sync::{mpsc, Arc, Mutex};
 use trust0_common::control::pdu::{ControlChannel, MessageFrame};
 use trust0_common::control::tls;
 use trust0_common::error::AppError;
+use trust0_common::logging::debug;
 use trust0_common::net::tls_server::conn_std::TlsServerConnection;
 use trust0_common::net::tls_server::{conn_std, server_std};
+use trust0_common::target;
 use trust0_common::{model, sync};
 
 use crate::config::AppConfig;
@@ -190,6 +192,14 @@ impl MessageProcessor for ControlPlane {
                 Some(msg_frame) => msg_frame,
                 None => return Ok(()),
             };
+
+            debug(
+                &target!(),
+                &format!(
+                    "Control plane processor: recvd client message: msg={:?}",
+                    &client_message
+                ),
+            );
 
             // Process message by channel type
             self.channel_processors

@@ -13,7 +13,9 @@ use trust0_common::control::management::request::Request;
 use trust0_common::control::tls;
 use trust0_common::crypto::alpn;
 use trust0_common::error::AppError;
+use trust0_common::logging::info;
 use trust0_common::net::tls_client::{client_std, conn_std};
+use trust0_common::target;
 
 use crate::config::AppConfig;
 use crate::control::client::device::Device;
@@ -26,7 +28,7 @@ pub struct ControllerClient {
     /// TLS client object
     tls_client: client_std::Client,
     /// Trust0 client device
-    _device: Device,
+    device: Device,
     /// Receiver to retrieve REPL shell output messages (sender used [`ChannelShellOutputWriter`])
     shell_msg_receiver: Arc<Mutex<mpsc::Receiver<Vec<u8>>>>,
     /// Sender used to send new REPL shell messages (receiver used in [`ChannelShellInputReader`])
@@ -81,7 +83,7 @@ impl ControllerClient {
                 *app_config.as_ref().service_gateway_port.as_ref().unwrap(),
                 false,
             ),
-            _device: device.clone(),
+            device: device.clone(),
             shell_msg_receiver: Arc::new(Mutex::new(shell_writer_receiver)),
             shell_msg_sender: shell_reader_sender,
         }
@@ -96,7 +98,7 @@ impl ControllerClient {
     /// Trust0 client device
     ///
     pub fn _get_device(&self) -> &Device {
-        &self._device
+        &self.device
     }
 
     /// Receiver to retrieve REPL shell output messages (sender used [`ChannelShellOutputWriter`])
@@ -113,6 +115,13 @@ impl ControllerClient {
 
     /// Connect to gateway
     pub fn connect(&mut self) -> Result<(), AppError> {
+        info(
+            &target!(),
+            &format!(
+                "Connecting service-gateway client controller: dev_id={}",
+                &self.device.get_id(),
+            ),
+        );
         self.tls_client.connect()
     }
 
@@ -145,6 +154,15 @@ impl ControllerClient {
             local_port,
         }
         .build_command();
+
+        info(
+            &target!(),
+            &format!(
+                "Requesting service-gateway service startup: svc_name={}, local_port={}",
+                service_name, local_port
+            ),
+        );
+
         shell_msg_sender
             .send(start_cmd.as_bytes().to_vec())
             .map_err(|err| {
@@ -200,6 +218,8 @@ impl ControllerClientVisitor {
                 &[],
                 repl_shell_output.prompted_toggle(),
             ));
+        Self::spawn_line_reader(&*repl_shell_input);
+
         Self {
             service_mgr: service_mgr.clone(),
             device: device.clone(),
@@ -228,6 +248,18 @@ impl ControllerClientVisitor {
             ),
         )))
     }
+
+    /// Startup thread to read input (management) lines
+    ///
+    /// # Arguments
+    /// * `reader` - [`ReplShellInputReader`] used in manager client controller
+    ///
+    #[cfg(not(test))]
+    fn spawn_line_reader(reader: &dyn ReplShellInputReader) {
+        reader.spawn_line_reader();
+    }
+    #[cfg(test)]
+    fn spawn_line_reader(_reader: &dyn ReplShellInputReader) {}
 }
 
 /// Creates a server connection visitor object for given client visitor
