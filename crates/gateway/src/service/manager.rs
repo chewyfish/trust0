@@ -295,6 +295,40 @@ impl ServiceMgr for GatewayServiceMgr {
         service: &Service,
         service_gateway_proxy_addrs: &Option<ProxyAddrs>,
     ) -> Result<(Option<String>, u16), AppError> {
+        // Reset service(s) if service-gateway disconnected (if applic)
+        if self.service_gateway_client_handle.is_some()
+            && self
+                .service_gateway_client_handle
+                .as_ref()
+                .unwrap()
+                .is_finished()
+        {
+            info(
+                &target!(),
+                "Service-gateway disconnected, reset service proxies",
+            );
+
+            // Join previous svcgw connection poller
+            let _ = self
+                .service_gateway_client_handle
+                .take()
+                .unwrap()
+                .join()
+                .map_err(|err| {
+                    AppError::General(format!(
+                        "Error joining service-gateway thread: err={:?}",
+                        &err
+                    ))
+                })?;
+            self.service_gateway_client_handle = None;
+
+            // Shutdown service proxies
+            self.shutdown_connections(None, None)?;
+            self.service_ports.clear();
+            self.next_service_port = DEFAULT_SERVICE_PORT_START;
+            self.last_service_port = DEFAULT_SERVICE_PORT_END;
+        }
+
         // Check if already started
         // - - - - - - - - - - - -
         if let Some(service_port) = self.service_ports.get(&service.service_id) {
