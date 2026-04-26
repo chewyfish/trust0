@@ -70,9 +70,17 @@ if [ "${PREREQ_MISSING}" == "1" ]; then
 fi
 
 # Check if configuration is needed
+#
 
 RECONFIGURE=n
-if [ -f "${EXAMPLE_CONFIG_FILE}" ]; then
+if [ -f "${EXAMPLE_CONFIG_FILE}" ] && \
+     grep -q RUST_TOOLCHAIN "${EXAMPLE_CONFIG_FILE}" > /dev/null && \
+     grep -q TRUST0_GATEWAY__PORT "${EXAMPLE_CONFIG_FILE}" > /dev/null && \
+     grep -q TRUST0_GATEWAY2__PORT "${EXAMPLE_CONFIG_FILE}" > /dev/null && \
+     grep -q CHAT_SERVICE__PORT "${EXAMPLE_CONFIG_FILE}" > /dev/null && \
+     grep -q CHAT_PROXY__PORT "${EXAMPLE_CONFIG_FILE}" > /dev/null && \
+     grep -q ECHO_SERVICE__PORT "${EXAMPLE_CONFIG_FILE}" > /dev/null && \
+     grep -q ECHO_PROXY__PORT "${EXAMPLE_CONFIG_FILE}" > /dev/null; then
   read -p "Example config file already exists, enter 'y' to reconfigure this file: " reconf_config
   if [ "$reconf_config" == 'y' ]; then
     RECONFIGURE=y
@@ -89,7 +97,8 @@ if [ "$RECONFIGURE" == 'y' ]; then
   mkdir -p "${EXAMPLE_BUILD_DIR}"
   rm -f "${EXAMPLE_CONFIG_FILE}" "${DATASOURCE_INMEMDB_ACCESS_FILE}" "${DATASOURCE_INMEMDB_SERVICE_FILE}" "${DATASOURCE_INMEMDB_ROLE_FILE}" "${DATASOURCE_INMEMDB_USER_FILE}"
   read -rp "Enter Rust toolchain (default used if not entered): " rust_toolchain && echo RUST_TOOLCHAIN=${rust_toolchain} >> ${EXAMPLE_CONFIG_FILE}
-  read -rp "Enter an available port for the trust0 gateway: " gateway_port && echo TRUST0_GATEWAY__PORT=${gateway_port} >> ${EXAMPLE_CONFIG_FILE}
+  read -rp "Enter an available port for the trust0 gateway (#1): " gateway_port && echo TRUST0_GATEWAY__PORT=${gateway_port} >> ${EXAMPLE_CONFIG_FILE}
+  read -rp "Enter an available port for the trust0 gateway (#2): " gateway2_port && echo TRUST0_GATEWAY2__PORT=${gateway2_port} >> ${EXAMPLE_CONFIG_FILE}
   read -rp "Enter an available port for the chat service: " chat_service_port && echo CHAT_SERVICE__PORT=${chat_service_port} >> ${EXAMPLE_CONFIG_FILE}
   read -rp "Enter an available port for the chat proxy: " chat_proxy_port && echo CHAT_PROXY__PORT=${chat_proxy_port} >> ${EXAMPLE_CONFIG_FILE}
   read -rp "Enter an available port for the echo service: " echo_service_port && echo ECHO_SERVICE__PORT=${echo_service_port} >> ${EXAMPLE_CONFIG_FILE}
