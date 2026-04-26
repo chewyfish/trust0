@@ -38,9 +38,22 @@ Both connection types require mTLS, which allows both parties to authenticate ea
 
 There is no authentication enforced for network connections made to the T0C. Likewise, this client is not secure to run on a multi-user machine and should be only be used on a single-user/personal computer (or some other scenario that can restrict access).
 
+There are 2 different topologies which may be used in deploying the gateways: `Single-Gateway`, `Dual-Gateways`. Single-Gateway has a single gateway which handles all T0C clients as well as proxying connections to services. Dual-Gateway has a `Client-Gateway` and a `Service-Gateway`. They divide the responsibilities between T0C and service connections respectively. Traffic is proxied between these 2 gateways (effectively adding an additional hop from the Single-Gateway setup). Both of these topologies allow you to configure a DMZ setup, which helps you determine what resources should be protected.
+
+For more details on gateway topologies:
+
+* Refer to [Trust0 Gateway Invocation](./Invocation.md#trust0-gateway) for information on how to configure the gateway
+* Refer to [Examples](./Examples.md) for examples showing both deployments
+
 ### Network Diagram
 
+#### Single Gateway Setup
+
 ![](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/network-diagram.png)
+
+#### Dual Gateway Setup for DMZ
+
+![](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/network-diagram-dmz.png)
 
 ### User Connections
 
@@ -51,7 +64,7 @@ All user connections use the same gateway port. The gateway knows the kind of co
 | T0CP          | Control Plane                                                            |
 | T0SRV<SVC_ID> | Service Proxy (for service denoted by service ID (u64 value) `<SVC_ID>`) |
 
-Note - A future Trust0 may accommodate gateway-to-gateway service proxy routing. In this case, gateway's will also use TLS client authentication in the same manner as clients (albeit they will have a different SAN field JSON structure to denote themselves as gateways).
+In this Dual-Gateway (DMZ) deployment, the Client-Gateway's will also use TLS client authentication in the same manner as clients (albeit they will have a different SAN field JSON structure to denote themselves as gateways).
 
 ### Control Plane
 
@@ -164,9 +177,9 @@ Subsequently, it will check the respective [User Table](#user-table) record for 
 
 "entityType" refers to the respective Trust0 entities: `rootca`, `gateway` and `client`.
 
-A future release will allow Trust0 gateways to proxy service connections to other gateways on behalf of an authorized client user. Likewise this access context structure utilizing the `gateway` entity type will be leveraged for the purposes of this kind of service authorization.
+Trust0 can be deployed in the Dual-Gateway (DMZ) configuration, which will proxy service connections to other gateways on behalf of an authorized client user. Likewise this access context structure utilizing the `gateway` entity type will be leveraged for the purposes of this kind of service authorization.
 
-Since the `gateway` certificate does not have this user access context information in its SAN field, it utilizes a TLS handshaking session message (upon connection) to pass along the corresponding user access context to the service gateway for each specific proxied user service connection.
+(For this Dual-Gateway deployment) Since the `gateway` certificate does not have this user access context information in its SAN field, it utilizes a TLS handshaking session message (upon connection) to pass along the corresponding user access context to the Service-Gateway for each specific proxied user service connection.
 
 #### Secondary Authentication
 
