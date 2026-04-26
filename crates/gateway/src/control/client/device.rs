@@ -1,0 +1,696 @@
+use ::time::OffsetDateTime;
+use anyhow::Result;
+use iter_group::IntoGroup;
+use pki_types::CertificateDer;
+use std::collections::HashMap;
+use trust0_common::crypto::asn;
+use trust0_common::crypto::ca::{CertAccessContext, EntityType};
+use trust0_common::error::AppError;
+use x509_parser::nom::AsBytes;
+use x509_parser::prelude::*;
+
+pub const CERT_OID_COMMON_NAME: &str = "2.5.4.3";
+pub const CERT_OID_ORGANIZATION: &str = "2.5.4.10";
+#[allow(dead_code)]
+pub const CERT_OID_DEPARTMENT: &str = "2.5.4.11";
+#[allow(dead_code)]
+pub const CERT_OID_LOCALITY: &str = "2.5.4.7";
+#[allow(dead_code)]
+pub const CERT_OID_STATE: &str = "2.5.4.8";
+pub const CERT_OID_COUNTRY: &str = "2.5.4.6";
+
+pub const DEVICE_ID_PREFIX_GATEWAY: &str = "G";
+pub const DEVICE_ID_PREFIX_CLIENT: &str = "C";
+
+/// Represents client device
+#[derive(Clone, Debug)]
+pub struct Device {
+    /// Certificate subject attributes
+    pub cert_subj: HashMap<String, Vec<String>>,
+
+    /// Certificate alternate subject name attributes
+    pub cert_alt_subj: HashMap<String, Vec<String>>,
+
+    /// Device access context (from certificate)
+    pub cert_access_context: CertAccessContext,
+
+    /// Device access context (proxied by client-gateway)
+    pub proxied_access_context: Option<CertAccessContext>,
+
+    /// Certificate serial number
+    pub cert_serial_num: Vec<u8>,
+
+    /// Certificate validity period
+    pub cert_validity: Validity,
+}
+
+impl Device {
+    /// Device constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `device_cert_chain` - [`CertificateDer`] chain
+    /// * `proxied_access_context` - Device access context for user (proxied by client-gateway)
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing a newly constructed [`Device`] object.
+    ///
+    pub fn new(
+        device_cert_chain: Vec<CertificateDer<'static>>,
+        proxied_access_context: Option<CertAccessContext>,
+    ) -> Result<Self, AppError> {
+        // Parse access from certificate
+        let x509_cert = Device::device_cert(&device_cert_chain)?;
+
+        let cert_subj = x509_cert
+            .subject
+            .iter()
+            .flat_map(|dn| dn.iter())
+            .map(|attr| match asn::stringify_asn_value(attr.attr_value()) {
+                Ok(attr_value) => Ok((attr.attr_type().to_string(), attr_value)),
+                Err(err) => Err(err),
+            })
+            .group::<Result<HashMap<_, Vec<_>>, AppError>>()?;
+
+        let mut cert_alt_subj = HashMap::new();
+        let mut cert_access_context = CertAccessContext::default();
+
+        if let Some(cert_alt_subj_ext) = x509_cert.subject_alternative_name().map_err(|err| {
+            AppError::General(format!(
+                "Failed to parse subject alternative name: err={:?}",
+                &err
+            ))
+        })? {
+            cert_alt_subj = cert_alt_subj_ext
+                .value
+                .general_names
+                .iter()
+                .filter_map(|gn| match gn {
+                    GeneralName::URI(val) => Some(("URI".to_string(), val.to_string())),
+                    _ => None,
+                })
+                .group::<HashMap<_, Vec<_>>>();
+
+            if let Some(uri_value) = cert_alt_subj.get("URI") {
+                cert_access_context = serde_json::from_str(uri_value.first().unwrap().as_str())
+                    .map_err(|err| {
+                        AppError::General(format!(
+                            "Invalid Certificate Context JSON: err={:?}",
+                            &err
+                        ))
+                    })?;
+            }
+        }
+
+        // Accept proxied access context
+        let proxied_access_context = match proxied_access_context {
+            Some(access) => match cert_access_context.entity_type {
+                EntityType::Gateway => Some(access),
+                _ => None,
+            },
+            None => None,
+        };
+
+        if let Some(access) = proxied_access_context.as_ref() {
+            cert_access_context.platform = access.platform.clone();
+            cert_access_context.user_id = access.user_id;
+        }
+
+        Ok(Self {
+            cert_subj,
+            cert_alt_subj,
+            cert_access_context,
+            proxied_access_context,
+            cert_serial_num: x509_cert.raw_serial().to_vec(),
+            cert_validity: x509_cert.validity.clone(),
+        })
+    }
+
+    /// ID for given device entity:
+    /// * Root CA - Use serial number
+    /// * Gateway - Use serial number + proxied user ID (if supplied)
+    /// * Client - Use serial number + user ID
+    ///
+    /// # Returns
+    ///
+    /// device ID [`String`]
+    ///
+    pub fn get_id(&self) -> String {
+        let serial_num_enc = hex::encode(&self.cert_serial_num);
+        match &self.cert_access_context.entity_type {
+            EntityType::Client => format!(
+                "{}:{}:{}",
+                DEVICE_ID_PREFIX_CLIENT, &serial_num_enc, &self.cert_access_context.user_id
+            ),
+            EntityType::Gateway => match &self.proxied_access_context {
+                Some(access) => format!(
+                    "{}:{}:{}",
+                    DEVICE_ID_PREFIX_GATEWAY, &serial_num_enc, access.user_id
+                ),
+                None => format!("{}:{}", DEVICE_ID_PREFIX_GATEWAY, &serial_num_enc),
+            },
+            EntityType::RootCa => format!("{}:{}", DEVICE_ID_PREFIX_GATEWAY, &serial_num_enc),
+        }
+    }
+
+    /// Parse device ID into its respective constituent parts
+    ///
+    /// # Returns
+    ///
+    /// (potentially optional) tuple of [`EntityType`], serial number, user ID
+    ///
+    pub fn parse_id(id: &str) -> Result<(EntityType, String, Option<i64>), AppError> {
+        let id_parts: Vec<&str> = id.split(':').collect();
+        match id_parts.len() {
+            2 => match *id_parts.first().unwrap() {
+                DEVICE_ID_PREFIX_GATEWAY => Ok((
+                    EntityType::Gateway,
+                    (*id_parts.get(1).unwrap()).to_string(),
+                    None,
+                )),
+                _ => Err(AppError::General(format!(
+                    "Invalid 2-part device ID entity: id={}",
+                    id
+                ))),
+            },
+            3 => {
+                let user_id: i64 = (*id_parts.get(2).unwrap()).parse().map_err(|_| {
+                    AppError::General(format!("Device ID has invalid user ID: id={}", id))
+                })?;
+                match *id_parts.first().unwrap() {
+                    DEVICE_ID_PREFIX_GATEWAY => Ok((
+                        EntityType::Gateway,
+                        (*id_parts.get(1).unwrap()).to_string(),
+                        Some(user_id),
+                    )),
+                    DEVICE_ID_PREFIX_CLIENT => Ok((
+                        EntityType::Client,
+                        (*id_parts.get(1).unwrap()).to_string(),
+                        Some(user_id),
+                    )),
+                    _ => Err(AppError::General(format!(
+                        "Invalid 3-part device ID entity: id={}",
+                        id
+                    ))),
+                }
+            }
+            _ => Err(AppError::General(format!(
+                "Device ID must have 2 or 3 parts: id={}",
+                id
+            ))),
+        }
+    }
+
+    /// Certificate subject attributes
+    ///
+    /// # Returns
+    ///
+    /// Reference to the map containing the certificate subject entries.
+    ///
+    pub fn get_cert_subj(&self) -> &HashMap<String, Vec<String>> {
+        &self.cert_subj
+    }
+
+    /// Certificate alternate subject name attributes
+    ///
+    /// # Returns
+    ///
+    /// Reference to the map containing the subject alternative name entries.
+    ///
+    pub fn get_cert_alt_subj(&self) -> &HashMap<String, Vec<String>> {
+        &self.cert_alt_subj
+    }
+
+    /// Certificate access context accessor
+    ///
+    /// # Returns
+    ///
+    /// The [`CertAccessContext`] for the certificate.
+    ///
+    pub fn get_cert_access_context(&self) -> CertAccessContext {
+        self.cert_access_context.clone()
+    }
+
+    /// Device proxied access context (supplied by client-gateway for respective proxied device)
+    ///
+    /// # Returns
+    ///
+    /// The [`CertAccessContext`] for the certificate.
+    ///
+    pub fn get_proxied_access_context(&self) -> Option<CertAccessContext> {
+        self.proxied_access_context.clone()
+    }
+
+    /// Certificate serial number
+    ///
+    /// # Returns
+    ///
+    /// Reference to the certificate serial number
+    ///
+    pub fn get_cert_serial_num(&self) -> &Vec<u8> {
+        &self.cert_serial_num
+    }
+
+    /// Certificate validity period accessor
+    ///
+    /// # Returns
+    ///
+    /// Reference to the certificate validity period.
+    ///
+    pub fn get_cert_validity(&self) -> &Validity {
+        &self.cert_validity
+    }
+
+    /// Returns whether device is a gateway ([`EntityType::Gateway`]) and not proxying a user
+    ///
+    /// # Returns
+    ///
+    /// Boolean if device is non-proxying gateway
+    ///
+    pub fn is_non_proxying_gateway(&self) -> bool {
+        (self.cert_access_context.entity_type == EntityType::Gateway)
+            && (self.cert_access_context.user_id == 0)
+    }
+
+    /// Retrieve the end-entity (aka device) certificate, must be the first one.
+    ///
+    /// # Returns
+    ///
+    /// The first certificate in the [`CertificateDer`] chain.
+    ///
+    fn device_cert<'a>(
+        cert_chain: &'a [CertificateDer<'a>],
+    ) -> Result<X509Certificate<'a>, AppError> {
+        match cert_chain.first() {
+            Some(cert) => Ok(parse_x509_certificate(cert.as_bytes())
+                .map_err(|err| {
+                    AppError::General(format!(
+                        "Failed to parse client certificate: err={:?}",
+                        &err
+                    ))
+                })?
+                .1),
+            None => Err(AppError::General(
+                "Empty client certificate chain (1)".to_string(),
+            )),
+        }
+    }
+}
+
+impl Default for Device {
+    fn default() -> Self {
+        Self {
+            cert_subj: HashMap::new(),
+            cert_alt_subj: HashMap::new(),
+            cert_access_context: CertAccessContext::default(),
+            proxied_access_context: None,
+            cert_serial_num: Vec::new(),
+            cert_validity: Validity {
+                not_before: ASN1Time::from(OffsetDateTime::UNIX_EPOCH),
+                not_after: ASN1Time::from(OffsetDateTime::UNIX_EPOCH),
+            },
+        }
+    }
+}
+
+/// Unit tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ::time::macros::datetime;
+    use std::path::PathBuf;
+    use trust0_common::crypto::ca::EntityType;
+    use trust0_common::crypto::file::load_certificates;
+
+    const CERTFILE_CLIENT_UID100_PATHPARTS: [&str; 3] = [
+        env!("CARGO_MANIFEST_DIR"),
+        "testdata",
+        "client-uid100.crt.pem",
+    ];
+    const CERTFILE_NON_CLIENT_PATHPARTS: [&str; 3] =
+        [env!("CARGO_MANIFEST_DIR"), "testdata", "non-client.crt.pem"];
+    const CERTFILE_GATEWAY_PATHPARTS: [&str; 3] =
+        [env!("CARGO_MANIFEST_DIR"), "testdata", "gateway.crt.pem"];
+
+    #[test]
+    fn device_new_fn_when_valid_client_cert() -> Result<(), AppError> {
+        let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
+
+        let device_result = Device::new(certs, None);
+
+        if let Ok(device) = &device_result {
+            assert_eq!(device.cert_serial_num, vec![3u8, 232u8]);
+            assert_eq!(device.cert_access_context.entity_type, EntityType::Client);
+            assert_eq!(device.cert_access_context.user_id, 100);
+            assert_eq!(device.cert_access_context.platform, "Linux");
+            assert!(device.proxied_access_context.is_none());
+            return Ok(());
+        }
+
+        panic!("Unexpected result: val={:?}", &device_result);
+    }
+
+    #[test]
+    fn device_new_fn_when_valid_gateway_cert() -> Result<(), AppError> {
+        let certs_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
+        let proxied_access = CertAccessContext {
+            entity_type: EntityType::Client,
+            platform: "plat1".to_string(),
+            user_id: 110,
+        };
+
+        let device_result = Device::new(certs, Some(proxied_access.clone()));
+
+        if let Ok(device) = &device_result {
+            assert_eq!(device.cert_serial_num, vec![3u8, 231u8]);
+            assert_eq!(device.cert_access_context.entity_type, EntityType::Gateway);
+            assert_eq!(device.cert_access_context.user_id, 110);
+            assert_eq!(device.cert_access_context.platform, "plat1");
+            assert!(device.proxied_access_context.is_some());
+            assert_eq!(
+                device.proxied_access_context.as_ref().unwrap().entity_type,
+                EntityType::Client
+            );
+            assert_eq!(device.proxied_access_context.as_ref().unwrap().user_id, 110);
+            assert_eq!(
+                device.proxied_access_context.as_ref().unwrap().platform,
+                "plat1"
+            );
+            return Ok(());
+        }
+
+        panic!("Unexpected result: val={:?}", &device_result);
+    }
+
+    #[test]
+    fn device_new_fn_when_invalid_client_cert() -> Result<(), AppError> {
+        let certs_file: PathBuf = CERTFILE_NON_CLIENT_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
+
+        let device_result = Device::new(certs, None);
+
+        if let Ok(device) = &device_result {
+            let default_device = Device::default();
+            assert_eq!(
+                device.cert_serial_num,
+                vec![
+                    94u8, 51u8, 9u8, 59u8, 79u8, 225u8, 97u8, 148u8, 183u8, 195u8, 188u8, 141u8,
+                    4u8, 157u8, 253u8, 51u8, 209u8, 33u8, 97u8, 146u8
+                ]
+            );
+            assert_eq!(
+                device.cert_access_context.user_id,
+                default_device.cert_access_context.user_id
+            );
+            assert_eq!(
+                device.cert_access_context.platform,
+                default_device.cert_access_context.platform
+            );
+            return Ok(());
+        }
+
+        panic!("Unexpected result: val={:?}", &device_result);
+    }
+
+    #[test]
+    fn device_new_fn_when_no_certificates() -> Result<(), AppError> {
+        let device_result = Device::new(vec![], None);
+
+        if device_result.is_err() {
+            return Ok(());
+        }
+
+        panic!("Unexpected result: val={:?}", &device_result);
+    }
+
+    #[test]
+    fn device_accessors() -> Result<(), AppError> {
+        let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
+
+        let device = Device::new(certs, None)?;
+
+        assert_eq!(
+            device.get_cert_subj(),
+            &HashMap::from([
+                (
+                    CERT_OID_COMMON_NAME.to_string(),
+                    vec!["example-client.local".to_string()]
+                ),
+                (
+                    CERT_OID_ORGANIZATION.to_string(),
+                    vec!["Example1".to_string()]
+                ),
+                (CERT_OID_COUNTRY.to_string(), vec!["US".to_string()]),
+            ])
+        );
+        assert_eq!(
+            device.get_cert_alt_subj(),
+            &HashMap::from([(
+                "URI".to_string(),
+                vec![r#"{"entityType":"client","platform":"Linux","userId":100}"#.to_string()]
+            ),])
+        );
+        assert_eq!(
+            device.get_cert_access_context(),
+            CertAccessContext {
+                entity_type: EntityType::Client,
+                user_id: 100,
+                platform: "Linux".to_string()
+            }
+        );
+        assert!(device.get_proxied_access_context().is_none());
+        assert_eq!(device.cert_serial_num, vec![3u8, 232u8]);
+        assert_eq!(
+            device.get_cert_validity(),
+            &Validity {
+                not_before: ASN1Time::from(datetime!(2025-12-21 19:04:45.0 +00:00:00)),
+                not_after: ASN1Time::from(datetime!(2100-01-01 0:00:00.0 +00:00:00)),
+            }
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_ignore_proxied_access_for_client_entity() -> Result<(), AppError> {
+        let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
+        let proxied_access = CertAccessContext {
+            entity_type: EntityType::Client,
+            platform: "plat1".to_string(),
+            user_id: 110,
+        };
+
+        let device = Device::new(certs, Some(proxied_access.clone()))?;
+
+        assert_eq!(device.cert_access_context.user_id, 100);
+        assert_eq!(device.cert_access_context.platform, "Linux");
+        assert!(device.get_proxied_access_context().is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_get_id_client_cert() -> Result<(), AppError> {
+        let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
+
+        let device = Device::new(certs, None)?;
+
+        assert_eq!(
+            device.get_id(),
+            format!(
+                "{}:{}:{}",
+                DEVICE_ID_PREFIX_CLIENT,
+                &hex::encode(vec![0x03u8, 0xe8u8]),
+                &100
+            )
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_get_id_gateway_cert_with_proxied_access() -> Result<(), AppError> {
+        let certs_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
+        let proxied_access = CertAccessContext {
+            entity_type: EntityType::Client,
+            platform: "plat1".to_string(),
+            user_id: 110,
+        };
+
+        let device = Device::new(certs, Some(proxied_access.clone()))?;
+
+        assert_eq!(
+            device.get_id(),
+            format!(
+                "{}:{}:{}",
+                DEVICE_ID_PREFIX_GATEWAY,
+                &hex::encode(vec![3u8, 231u8]),
+                110,
+            )
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_get_id_gateway_cert_without_proxied_access() -> Result<(), AppError> {
+        let certs_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
+
+        let device = Device::new(certs, None)?;
+
+        assert_eq!(
+            device.get_id(),
+            format!(
+                "{}:{}",
+                DEVICE_ID_PREFIX_GATEWAY,
+                &hex::encode(vec![3u8, 231u8]),
+            )
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_get_id_root_cert() -> Result<(), AppError> {
+        let certs_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
+        let proxied_access = CertAccessContext {
+            entity_type: EntityType::Client,
+            platform: "plat1".to_string(),
+            user_id: 110,
+        };
+
+        let mut device = Device::new(certs, Some(proxied_access))?;
+
+        device.cert_access_context.entity_type = EntityType::RootCa;
+
+        assert_eq!(
+            device.get_id(),
+            format!(
+                "{}:{}",
+                DEVICE_ID_PREFIX_GATEWAY,
+                &hex::encode(vec![3u8, 231u8]),
+            )
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_parse_id_when_invalid_num_parts() -> Result<(), AppError> {
+        match Device::parse_id("G:ser1:100:X") {
+            Ok(_) => panic!("Unexpected successful result"),
+            Err(err) => assert_eq!(
+                err.to_string(),
+                "Device ID must have 2 or 3 parts: id=G:ser1:100:X"
+            ),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_parse_id_when_invalid_2part_entity() -> Result<(), AppError> {
+        match Device::parse_id("C:ser1") {
+            Ok(_) => panic!("Unexpected successful result"),
+            Err(err) => assert_eq!(
+                err.to_string(),
+                "Invalid 2-part device ID entity: id=C:ser1"
+            ),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_parse_id_when_invalid_3part_entity() -> Result<(), AppError> {
+        match Device::parse_id("X:ser1:100") {
+            Ok(_) => panic!("Unexpected successful result"),
+            Err(err) => assert_eq!(
+                err.to_string(),
+                "Invalid 3-part device ID entity: id=X:ser1:100"
+            ),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_parse_id_when_invalid_user_id() -> Result<(), AppError> {
+        match Device::parse_id("C:ser1:X") {
+            Ok(_) => panic!("Unexpected successful result"),
+            Err(err) => assert_eq!(
+                err.to_string(),
+                "Device ID has invalid user ID: id=C:ser1:X"
+            ),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_parse_id_when_valid_2part_gateway() -> Result<(), AppError> {
+        match Device::parse_id("G:ser1") {
+            Ok(parsed) => assert_eq!(parsed, (EntityType::Gateway, "ser1".to_string(), None)),
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_parse_id_when_valid_3part_gateway() -> Result<(), AppError> {
+        match Device::parse_id("G:ser1:100") {
+            Ok(parsed) => assert_eq!(parsed, (EntityType::Gateway, "ser1".to_string(), Some(100))),
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_parse_id_when_valid_client() -> Result<(), AppError> {
+        match Device::parse_id("C:ser1:100") {
+            Ok(parsed) => assert_eq!(parsed, (EntityType::Client, "ser1".to_string(), Some(100))),
+            Err(err) => panic!("Unexpected result: err={:?}", &err),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn device_is_non_proxying_gateway() -> Result<(), AppError> {
+        let certs_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
+
+        let device = Device::new(certs.clone(), None)?;
+
+        assert!(device.is_non_proxying_gateway());
+
+        let proxied_access = CertAccessContext {
+            entity_type: EntityType::Client,
+            platform: "plat1".to_string(),
+            user_id: 110,
+        };
+        let device = Device::new(certs, Some(proxied_access))?;
+
+        assert!(!device.is_non_proxying_gateway());
+
+        let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
+        let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
+
+        let device = Device::new(certs.clone(), None)?;
+
+        assert!(!device.is_non_proxying_gateway());
+
+        Ok(())
+    }
+}

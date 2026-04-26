@@ -1,25 +1,15 @@
-use std::collections::HashMap;
-use std::net::{SocketAddr, TcpStream, UdpSocket};
-use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
-
 #[cfg(test)]
 use ::time::macros::datetime;
 use anyhow::Result;
 use rustls::server::Accepted;
 use rustls::ServerConfig;
+use std::collections::HashMap;
+use std::net::{SocketAddr, TcpStream, UdpSocket};
+use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
 use trust0_common::control::tls;
-use trust0_common::control::tls::message::ConnectionAddrs;
+use trust0_common::control::tls::message::{self, ConnectionAddrs};
 use trust0_common::crypto::alpn;
-#[cfg(test)]
-use x509_parser::prelude::{ASN1Time, Validity};
-
-use crate::client::connection::ClientConnVisitor;
-#[cfg(test)]
-use crate::client::device::Device;
-use crate::config::AppConfig;
-use crate::service::manager::ServiceMgr;
-use crate::service::proxy::proxy_base::{GatewayServiceProxy, GatewayServiceProxyVisitor};
 #[cfg(test)]
 use trust0_common::crypto::ca::{CertAccessContext, EntityType};
 use trust0_common::error::AppError;
@@ -33,6 +23,15 @@ use trust0_common::proxy::event::ProxyEvent;
 use trust0_common::proxy::executor::ProxyExecutorEvent;
 use trust0_common::proxy::proxy_base::ProxyType;
 use trust0_common::sync;
+#[cfg(test)]
+use x509_parser::prelude::{ASN1Time, Validity};
+
+use crate::config::AppConfig;
+use crate::control::client::connection::ClientConnVisitor;
+#[cfg(test)]
+use crate::control::client::device::Device;
+use crate::service::manager::ServiceMgr;
+use crate::service::proxy::proxy_base::{GatewayServiceProxy, GatewayServiceProxyVisitor};
 
 /// Gateway service proxy (TCP trust0 gateway <-> UDP service)
 pub struct UdpGatewayProxy {
@@ -158,6 +157,7 @@ impl UdpGatewayProxyServerVisitor {
     /// # Arguments
     ///
     /// * `tls_conn` - TLS server connection object
+    /// * `client_msg`: Optional initial message from client
     ///
     /// # Returns
     ///
@@ -167,10 +167,14 @@ impl UdpGatewayProxyServerVisitor {
     fn process_connection_authorization(
         &self,
         tls_conn: &TlsServerConnection,
+        client_msg: Option<message::SessionMessage>,
     ) -> Result<(ClientConnVisitor, String, i64, alpn::Protocol), AppError> {
         let mut conn_visitor = ClientConnVisitor::new(&self.app_config, &self.service_mgr);
-        let protocol =
-            conn_visitor.process_authorization(tls_conn, Some(self.service.service_id))?;
+        let protocol = conn_visitor.process_authorization(
+            tls_conn,
+            Some(self.service.service_id),
+            client_msg,
+        )?;
         let device_id = conn_visitor.get_device().as_ref().unwrap().get_id();
         let user_id = conn_visitor.get_user().as_ref().unwrap().user_id;
         Ok((conn_visitor, device_id.to_string(), user_id, protocol))
@@ -179,6 +183,7 @@ impl UdpGatewayProxyServerVisitor {
     fn process_connection_authorization(
         &self,
         _tls_conn: &TlsServerConnection,
+        _client_msg: Option<message::SessionMessage>,
     ) -> Result<(ClientConnVisitor, String, i64, alpn::Protocol), AppError> {
         let mut conn_visitor = ClientConnVisitor::new(&self.app_config, &self.service_mgr);
         let device = Device {
@@ -189,6 +194,7 @@ impl UdpGatewayProxyServerVisitor {
                 platform: "plat1".to_string(),
                 user_id: 100,
             },
+            proxied_access_context: None,
             cert_serial_num: vec![0x03u8, 0xe8u8],
             cert_validity: Validity {
                 not_before: ASN1Time::from(datetime!(2025-12-21 19:04:45.0 +00:00:00)),
@@ -215,7 +221,7 @@ impl server_std::ServerVisitor for UdpGatewayProxyServerVisitor {
         _client_msg: Option<tls::message::SessionMessage>,
     ) -> Result<conn_std::Connection, AppError> {
         let (conn_visitor, device_id, _user_id, alpn_protocol) =
-            self.process_connection_authorization(&tls_conn)?;
+            self.process_connection_authorization(&tls_conn, None)?;
         let conn_addrs = tls::message::Trust0Connection::create_connection_addrs(&tls_conn.sock);
         self.devices_by_proxy_addrs
             .insert(conn_addrs.clone(), device_id);
@@ -617,9 +623,10 @@ pub mod tests {
         if let Err(err) = server_visitor.create_client_conn(
             StreamOwned::new(
                 rustls::ServerConnection::new(Arc::new(
-                    proxy_base::tests::create_tls_server_config(vec![
-                        alpn::Protocol::create_service_protocol(200).into_bytes(),
-                    ])
+                    proxy_base::tests::create_tls_server_config(
+                        true,
+                        vec![alpn::Protocol::create_service_protocol(200).into_bytes()],
+                    )
                     .unwrap(),
                 ))
                 .unwrap(),
@@ -688,9 +695,10 @@ pub mod tests {
 
         let server_msg_result = server_visitor.on_server_msg_provider(
             &rustls::ServerConnection::new(Arc::new(
-                proxy_base::tests::create_tls_server_config(vec![
-                    alpn::Protocol::create_service_protocol(200).into_bytes(),
-                ])
+                proxy_base::tests::create_tls_server_config(
+                    true,
+                    vec![alpn::Protocol::create_service_protocol(200).into_bytes()],
+                )
                 .unwrap(),
             ))
             .unwrap(),
@@ -759,9 +767,10 @@ pub mod tests {
             .create_client_conn(
                 StreamOwned::new(
                     rustls::ServerConnection::new(Arc::new(
-                        proxy_base::tests::create_tls_server_config(vec![
-                            alpn::Protocol::create_service_protocol(200).into_bytes(),
-                        ])
+                        proxy_base::tests::create_tls_server_config(
+                            true,
+                            vec![alpn::Protocol::create_service_protocol(200).into_bytes()],
+                        )
                         .unwrap(),
                     ))
                     .unwrap(),
@@ -841,9 +850,10 @@ pub mod tests {
             .create_client_conn(
                 StreamOwned::new(
                     rustls::ServerConnection::new(Arc::new(
-                        proxy_base::tests::create_tls_server_config(vec![
-                            alpn::Protocol::create_service_protocol(200).into_bytes(),
-                        ])
+                        proxy_base::tests::create_tls_server_config(
+                            true,
+                            vec![alpn::Protocol::create_service_protocol(200).into_bytes()],
+                        )
                         .unwrap(),
                     ))
                     .unwrap(),

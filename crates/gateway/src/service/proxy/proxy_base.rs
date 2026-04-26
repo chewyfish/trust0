@@ -1,8 +1,6 @@
-use std::sync::mpsc::Sender;
-
 use anyhow::Result;
+use std::sync::mpsc::Sender;
 use trust0_common::control::tls::message::ConnectionAddrs;
-
 use trust0_common::error::AppError;
 use trust0_common::model::service::Service;
 use trust0_common::net::tls_server::server_std;
@@ -120,11 +118,15 @@ pub mod tests {
     use mockall::mock;
     use pki_types::{PrivateKeyDer, PrivatePkcs1KeyDer, PrivatePkcs8KeyDer, PrivateSec1KeyDer};
     use rustls::crypto::CryptoProvider;
-    use rustls::server::{Accepted, WebPkiClientVerifier};
+    use rustls::server::{Accepted, Acceptor, WebPkiClientVerifier};
     use rustls::ServerConfig;
+    use std::io::Write;
     use std::net::TcpStream;
     use std::path::PathBuf;
     use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
+    use trust0_common::control::pdu::MessageFrame;
     use trust0_common::control::tls;
     use trust0_common::crypto;
     use trust0_common::crypto::file::{load_certificates, load_private_key};
@@ -136,6 +138,16 @@ pub mod tests {
         [env!("CARGO_MANIFEST_DIR"), "testdata", "gateway.crt.pem"];
     const KEYFILE_GATEWAY_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "gateway.key.pem"];
+    const CERTFILE_CLIENT100_PATHPARTS: [&str; 3] = [
+        env!("CARGO_MANIFEST_DIR"),
+        "testdata",
+        "client-uid100.crt.pem",
+    ];
+    const KEYFILE_CLIENT100_PATHPARTS: [&str; 3] = [
+        env!("CARGO_MANIFEST_DIR"),
+        "testdata",
+        "client-uid100.key.pem",
+    ];
 
     // mocks
     // =====
@@ -167,16 +179,32 @@ pub mod tests {
     // =====
 
     pub fn create_tls_server_config(
+        use_certkey_gateway_else_client: bool,
         alpn_protocols: Vec<Vec<u8>>,
     ) -> Result<ServerConfig, anyhow::Error> {
         crypto::setup_crypto_provider();
 
         let rootca_cert_file: PathBuf = CERTFILE_ROOTCA_PATHPARTS.iter().collect();
         let rootca_cert = load_certificates(rootca_cert_file.to_str().as_ref().unwrap())?;
-        let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
-        let gateway_cert = load_certificates(gateway_cert_file.to_str().as_ref().unwrap())?;
-        let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
-        let gateway_key = load_private_key(gateway_key_file.to_str().as_ref().unwrap())?;
+        let (cert, key) = match use_certkey_gateway_else_client {
+            false => {
+                let client100_cert_file: PathBuf = CERTFILE_CLIENT100_PATHPARTS.iter().collect();
+                let client100_cert =
+                    load_certificates(client100_cert_file.to_str().as_ref().unwrap())?;
+                let client100_key_file: PathBuf = KEYFILE_CLIENT100_PATHPARTS.iter().collect();
+                let client100_key =
+                    load_private_key(client100_key_file.to_str().as_ref().unwrap())?;
+                (client100_cert, client100_key)
+            }
+            true => {
+                let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
+                let gateway_cert = load_certificates(gateway_cert_file.to_str().as_ref().unwrap())?;
+                let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
+                let gateway_key = load_private_key(gateway_key_file.to_str().as_ref().unwrap())?;
+                (gateway_cert, gateway_key)
+            }
+        };
+
         let cipher_suites: Vec<rustls::SupportedCipherSuite> =
             rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
         let protocol_versions: Vec<&'static rustls::SupportedProtocolVersion> =
@@ -203,8 +231,8 @@ pub mod tests {
                 .unwrap(),
         )
         .with_single_cert(
-            gateway_cert.clone(),
-            match &gateway_key {
+            cert.clone(),
+            match &key {
                 PrivateKeyDer::Pkcs1(key_der) => {
                     Ok(PrivatePkcs1KeyDer::from(key_der.secret_pkcs1_der().to_vec()).into())
                 }
@@ -216,7 +244,7 @@ pub mod tests {
                 }
                 _ => Err(AppError::General(format!(
                     "Unsupported key type: key={:?}",
-                    &gateway_key
+                    &key
                 ))),
             }?,
         )
@@ -225,5 +253,57 @@ pub mod tests {
         tls_server_config.alpn_protocols = alpn_protocols;
 
         Ok(tls_server_config)
+    }
+
+    pub fn spawn_tls_server_listener(
+        tcp_listener: std::net::TcpListener,
+        tls_server_config: Arc<ServerConfig>,
+        num_connections: usize,
+    ) -> Result<(), anyhow::Error> {
+        thread::spawn(move || {
+            let mut conn_idx = 0;
+            for tcp_stream in tcp_listener.incoming() {
+                let mut tcp_stream = tcp_stream.unwrap();
+
+                let mut acceptor = Acceptor::default();
+                let accepted = loop {
+                    acceptor.read_tls(&mut tcp_stream).unwrap();
+                    if let Some(accepted) = acceptor.accept().unwrap() {
+                        break accepted;
+                    }
+                };
+
+                let mut server_conn = accepted.into_connection(tls_server_config.clone()).unwrap();
+
+                let _ = server_conn.complete_io(&mut tcp_stream);
+
+                let mut tls_conn = rustls::StreamOwned::new(server_conn, tcp_stream);
+
+                let pdu_message_frame: MessageFrame = tls::message::SessionMessage::new(
+                    &tls::message::DataType::Trust0Connection,
+                    &Some(
+                        serde_json::to_value(tls::message::Trust0Connection::new(&(
+                            "addr1".to_string(),
+                            "addr2".to_string(),
+                        )))
+                        .unwrap(),
+                    ),
+                )
+                .try_into()
+                .unwrap();
+                tls_conn
+                    .write_all(&pdu_message_frame.build_pdu().unwrap())
+                    .unwrap();
+
+                thread::sleep(Duration::from_millis(100));
+
+                conn_idx += 1;
+                if conn_idx == num_connections {
+                    break;
+                }
+            }
+        });
+
+        Ok(())
     }
 }

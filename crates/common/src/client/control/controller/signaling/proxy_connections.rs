@@ -274,7 +274,9 @@ impl SignalingEventHandler for ProxyConnectionsProcessor {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::client::service::tests::{MockClientControlSvcMgr, MockClientSvcProxyVisitor};
+    use crate::client::service::tests::{
+        MockClientControlSvcMgr, MockClientControlSvcProxyVisitor,
+    };
     use crate::control::pdu;
     use crate::control::pdu::ControlChannel;
     use crate::model;
@@ -313,7 +315,7 @@ pub mod tests {
     #[test]
     fn proxyconnproc_current_proxy_keys() {
         let mut service_mgr = MockClientControlSvcMgr::new();
-        let mut service_proxy = MockClientSvcProxyVisitor::new();
+        let mut service_proxy = MockClientControlSvcProxyVisitor::new();
         service_proxy
             .expect_get_service()
             .times(1)
@@ -361,7 +363,7 @@ pub mod tests {
     #[test]
     fn proxyconnproc_on_loop_cycle_when_1_found_and_1_missing_and_1_dead() {
         let mut service_mgr = MockClientControlSvcMgr::new();
-        let mut service_proxy = MockClientSvcProxyVisitor::new();
+        let mut service_proxy = MockClientControlSvcProxyVisitor::new();
         service_proxy
             .expect_get_service()
             .times(1)
@@ -483,7 +485,7 @@ pub mod tests {
     #[test]
     fn proxyconnproc_on_loop_cycle_when_client_dead() {
         let mut service_mgr = MockClientControlSvcMgr::new();
-        let mut service_proxy = MockClientSvcProxyVisitor::new();
+        let mut service_proxy = MockClientControlSvcProxyVisitor::new();
         service_proxy
             .expect_get_service()
             .times(1)

@@ -1,27 +1,26 @@
 mod certificate_reissue;
 mod proxy_connections;
 
+use anyhow::Result;
 use std::collections::{HashMap, VecDeque};
 use std::ops::DerefMut;
 use std::rc::Rc;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-
-use anyhow::Result;
-
-use crate::client::controller::signaling::certificate_reissue::CertReissuanceProcessor;
-use crate::client::controller::signaling::proxy_connections::ProxyConnectionsProcessor;
-use crate::client::controller::{ChannelProcessor, ControlPlane};
-use crate::client::device::Device;
-use crate::config::AppConfig;
-use crate::service::manager::ServiceMgr;
 use trust0_common::control::pdu::{ControlChannel, MessageFrame};
 use trust0_common::control::signaling::event::{EventType, SignalEvent};
 use trust0_common::error::AppError;
 use trust0_common::logging::error;
 use trust0_common::net::tls_server::conn_std;
 use trust0_common::{sync, target};
+
+use crate::config::AppConfig;
+use crate::control::client::controller::signaling::certificate_reissue::CertReissuanceProcessor;
+use crate::control::client::controller::signaling::proxy_connections::ProxyConnectionsProcessor;
+use crate::control::client::controller::{ChannelProcessor, ControlPlane};
+use crate::control::client::device::Device;
+use crate::service::manager::ServiceMgr;
 
 pub const EVENT_LOOP_CYCLE_DELAY_MSECS: u64 = 6_000;
 
@@ -216,8 +215,8 @@ pub trait SignalingEventHandler {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::client::controller::tests::{create_device, MockChannelProc};
     use crate::config;
+    use crate::control::client::controller::tests::{create_device, MockChannelProc};
     use crate::repository::access_repo::tests::MockAccessRepo;
     use crate::repository::role_repo::tests::MockRoleRepo;
     use crate::repository::service_repo::tests::MockServiceRepo;
@@ -702,7 +701,7 @@ pub mod tests {
                 .unwrap()
                 .get(&EventType::ProxyConnections)
                 .unwrap()
-                .get(0)
+                .front()
                 .unwrap(),
             SignalEvent::new(
                 control::pdu::CODE_OK,

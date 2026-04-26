@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::fs;
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
-
-use crate::repository::service_repo::ServiceRepository;
 use trust0_common::error::AppError;
 use trust0_common::file::{ReloadableFile, ReloadableTextFile};
 use trust0_common::logging::error;
 use trust0_common::model::service::Service;
 use trust0_common::target;
+
+use crate::repository::service_repo::ServiceRepository;
 
 pub struct InMemServiceRepo {
     services: RwLock<HashMap<i64, Service>>,
@@ -447,7 +447,7 @@ mod tests {
         let returned_service = result.unwrap();
 
         let stored_map = service_repo.services.read().unwrap();
-        let stored_entry = stored_map.iter().map(|e| e.1).cloned().next();
+        let stored_entry = stored_map.iter().map(|e| e.1).next().cloned();
 
         service.service_id = 1;
 

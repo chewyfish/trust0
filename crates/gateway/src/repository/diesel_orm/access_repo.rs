@@ -6,11 +6,11 @@ use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 #[cfg(feature = "postgres_db")]
 use std::time::SystemTime;
+use trust0_common::error::AppError;
+use trust0_common::model;
 
 use crate::repository::access_repo::AccessRepository;
 use crate::repository::diesel_orm::db_schema::service_accesses::dsl;
-use trust0_common::error::AppError;
-use trust0_common::model;
 
 /// Service access ORM model struct
 #[derive(Clone, Debug, AsChangeset, Insertable, Queryable, Selectable, PartialEq)]
@@ -666,7 +666,7 @@ mod tests {
                 Some("pass10"),
                 "name10",
                 &model::user::Status::Active,
-                &vec![],
+                &[],
             ));
 
             if let Err(err) = &result {
@@ -721,7 +721,7 @@ mod tests {
                 Some("pass1"),
                 "name1",
                 &model::user::Status::Active,
-                &vec![50],
+                &[50],
             ));
 
             if let Err(err) = &result {
@@ -813,7 +813,7 @@ mod tests {
                     Some("pass10"),
                     "name10",
                     &model::user::Status::Active,
-                    &vec![5],
+                    &[5],
                 ),
             );
 
@@ -871,7 +871,7 @@ mod tests {
                     Some("pass10"),
                     "name10",
                     &model::user::Status::Active,
-                    &vec![5],
+                    &[5],
                 ),
             );
 
@@ -938,7 +938,7 @@ mod tests {
                     Some("pass10"),
                     "name10",
                     &model::user::Status::Active,
-                    &vec![50],
+                    &[50],
                 ),
             );
 

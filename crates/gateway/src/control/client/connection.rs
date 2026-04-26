@@ -2,7 +2,8 @@ use anyhow::Result;
 use pki_types::CertificateDer;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
-use trust0_common::crypto::alpn;
+use trust0_common::control::tls::message;
+use trust0_common::crypto::{alpn, ca};
 use trust0_common::error::AppError;
 use trust0_common::logging::{error, info};
 use trust0_common::model::user::{Status, User};
@@ -10,9 +11,9 @@ use trust0_common::net::tls_server::conn_std::{self, TlsConnection};
 use trust0_common::{crypto, sync, target};
 use x509_parser::nom::AsBytes;
 
-use crate::client::controller::{ControlPlane, MessageProcessor};
-use crate::client::device::Device;
 use crate::config::{self, AppConfig};
+use crate::control::client::controller::{ControlPlane, MessageProcessor};
+use crate::control::client::device::Device;
 use crate::repository::access_repo::AccessRepository;
 use crate::repository::service_repo::ServiceRepository;
 use crate::repository::user_repo::UserRepository;
@@ -88,6 +89,7 @@ impl ClientConnVisitor {
     ///
     /// * `tls_conn` - TLS connection object
     /// * `service_id` - Service corresponding to connection
+    /// * `client_msg`: Optional initial message from client
     ///
     /// # Returns
     ///
@@ -97,7 +99,10 @@ impl ClientConnVisitor {
         &mut self,
         tls_conn: &dyn TlsConnection,
         service_id: Option<i64>,
+        client_msg: Option<message::SessionMessage>,
     ) -> Result<alpn::Protocol, AppError> {
+        let proxied_access_context = Self::extract_client_access_context(client_msg)?;
+
         // Parse certificate context details
         let peer_certificates: Vec<CertificateDer<'static>> = tls_conn
             .peer_certificates()
@@ -109,50 +114,59 @@ impl ClientConnVisitor {
             .map(|c| crypto::x509::create_der_certificate(c.as_bytes()))
             .collect();
 
-        let device = Device::new(peer_certificates)?;
+        let device = Device::new(peer_certificates.clone(), proxied_access_context)?;
         let device_id = device.get_id();
         let serial_num = hex::encode(device.get_cert_serial_num());
 
         // Validate user
-        let user_id = device.get_cert_access_context().user_id;
+        let cert_access_context = device.get_cert_access_context();
+        let user_id = cert_access_context.user_id;
+        let user;
 
-        if user_id == 0 {
-            return Err(AppError::GenWithCodeAndMsg(
-                config::RESPCODE_0420_INVALID_CLIENT_CERTIFICATE,
-                format!("Invalid certificate user identity: ser={}", &serial_num),
-            ));
-        }
-
-        let user = self
-            .user_repo
-            .lock()
-            .unwrap()
-            .get(user_id)
-            .map_err(|err| {
-                AppError::GenWithCodeAndMsg(
-                    config::RESPCODE_0500_SYSTEM_ERROR,
+        if device.is_non_proxying_gateway() {
+            user = User::new(0, None, None, "", &Status::Active, &[]);
+        } else {
+            if user_id == 0 {
+                return Err(AppError::GenWithCodeAndMsg(
+                    config::RESPCODE_0420_INVALID_CLIENT_CERTIFICATE,
                     format!(
-                        "Error retrieving user from user repo: user_id={}, ser={}, err={:?}",
-                        user_id, &serial_num, err
+                        "Invalid certificate user identity: access={:?}, ser={}",
+                        &cert_access_context, &serial_num
                     ),
-                )
-            })?
-            .ok_or(AppError::GenWithCodeAndMsg(
-                config::RESPCODE_0421_UNKNOWN_USER,
-                format!(
-                    "User is not found in user repo: user_id={}, ser={}",
-                    user_id, &serial_num
-                ),
-            ))?;
+                ));
+            }
 
-        if user.status != Status::Active {
-            return Err(AppError::GenWithCodeAndMsg(
-                config::RESPCODE_0422_INACTIVE_USER,
-                format!(
-                    "User is not active: user_id={}, ser={}, status={:?}",
-                    user_id, &serial_num, user.status
-                ),
-            ));
+            user = self
+                .user_repo
+                .lock()
+                .unwrap()
+                .get(user_id)
+                .map_err(|err| {
+                    AppError::GenWithCodeAndMsg(
+                        config::RESPCODE_0500_SYSTEM_ERROR,
+                        format!(
+                            "Error retrieving user from user repo: user_id={}, ser={}, err={:?}",
+                            user_id, &serial_num, err
+                        ),
+                    )
+                })?
+                .ok_or(AppError::GenWithCodeAndMsg(
+                    config::RESPCODE_0421_UNKNOWN_USER,
+                    format!(
+                        "User is not found in user repo: user_id={}, ser={}",
+                        user_id, &serial_num
+                    ),
+                ))?;
+
+            if user.status != Status::Active {
+                return Err(AppError::GenWithCodeAndMsg(
+                    config::RESPCODE_0422_INACTIVE_USER,
+                    format!(
+                        "User is not active: user_id={}, ser={}, status={:?}",
+                        user_id, &serial_num, user.status
+                    ),
+                ));
+            }
         }
 
         // Determine (ALPN) connection protocol
@@ -161,17 +175,26 @@ impl ClientConnVisitor {
         // Validate service connection
         if let Some(service_id) = service_id {
             // Ensure active control plane for device
+            let service_device = Device::new(
+                peer_certificates,
+                Some(crypto::ca::CertAccessContext {
+                    entity_type: crypto::ca::EntityType::Gateway,
+                    platform: "".to_string(),
+                    user_id: 0,
+                }),
+            )?;
+
             if !self
                 .service_mgr
                 .lock()
                 .unwrap()
-                .has_control_plane_for_device(device_id.as_str(), true)
+                .has_control_plane_for_device(service_device.get_id().as_str(), true)
             {
                 return Err(AppError::GenWithCodeAndMsg(
                     config::RESPCODE_0427_CONTROL_PLANE_NOT_AUTHENTICATED,
                     format!(
-                        "Service proxy connections require an authenticated control plane: user_id={}, dev_id={}, ser={}",
-                        user_id, device_id.as_str(), &serial_num
+                        "Service proxy connections require an authenticated control plane: user_id={}, dev_id={}, svc_dev_id={}, ser={}",
+                        user_id, device_id.as_str(), service_device.get_id().as_str(), &serial_num
                     ),
                 ));
             }
@@ -193,12 +216,13 @@ impl ClientConnVisitor {
             }
 
             // Validate service accessibility for user
-            if self
-                .access_repo
-                .lock()
-                .unwrap()
-                .get_for_user(service_id, &user)?
-                .is_none()
+            if (user_id != 0)
+                && self
+                    .access_repo
+                    .lock()
+                    .unwrap()
+                    .get_for_user(service_id, &user)?
+                    .is_none()
             {
                 return Err(AppError::GenWithCodeAndMsg(
                     config::RESPCODE_0403_FORBIDDEN,
@@ -332,6 +356,33 @@ impl ClientConnVisitor {
             }
         }
     }
+
+    /// Helper function to extract proxied user access context from client session message
+    ///
+    /// # Arguments
+    ///
+    /// * `client_msg`: Optional initial message from client
+    ///
+    /// # Returns
+    ///
+    /// An optional [`ca::CertAccessContext`] if contained within given session message
+    ///
+    fn extract_client_access_context(
+        client_msg: Option<message::SessionMessage>,
+    ) -> Result<Option<ca::CertAccessContext>, AppError> {
+        Ok(match client_msg {
+            Some(client_msg) => match client_msg.data_type {
+                message::DataType::ClientAccessContext => match client_msg.data {
+                    Some(value) => {
+                        Some(message::ClientAccessContext::from_serde_value(&value)?.access)
+                    }
+                    None => None,
+                },
+                _ => None,
+            },
+            None => None,
+        })
+    }
 }
 
 impl conn_std::ConnectionVisitor for ClientConnVisitor {
@@ -457,7 +508,8 @@ unsafe impl Send for ClientConnVisitor {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::client::controller::tests::MockMsgProcessor;
+    use crate::control::client::controller::tests::MockMsgProcessor;
+    use crate::control::client::device;
     use crate::repository::access_repo::tests::MockAccessRepo;
     use crate::repository::role_repo::tests::MockRoleRepo;
     use crate::repository::role_repo::RoleRepository;
@@ -466,6 +518,7 @@ mod tests {
     use crate::service::manager::GatewayServiceMgr;
     use crate::testutils::MockTlsSvrConn;
     use mockall::predicate;
+    use serde_json::Value;
     use std::fmt;
     use std::path::PathBuf;
     use std::sync::mpsc;
@@ -476,6 +529,8 @@ mod tests {
     use trust0_common::proxy::event::ProxyEvent;
     use trust0_common::proxy::executor::ProxyExecutorEvent;
 
+    const CERTFILE_GATEWAY_PATHPARTS: [&str; 3] =
+        [env!("CARGO_MANIFEST_DIR"), "testdata", "gateway.crt.pem"];
     const CERTFILE_CLIENT_UID100_PATHPARTS: [&str; 3] = [
         env!("CARGO_MANIFEST_DIR"),
         "testdata",
@@ -508,8 +563,7 @@ mod tests {
             &proxy_tasks_sender,
             &proxy_events_sender,
         )));
-        if device_control_plane.is_some() {
-            let device_control_plane = device_control_plane.unwrap();
+        if let Some(device_control_plane) = device_control_plane {
             service_mgr
                 .lock()
                 .unwrap()
@@ -528,12 +582,88 @@ mod tests {
     }
 
     #[test]
+    fn cliconnvis_extract_client_access_context_when_context_supplied() -> Result<(), AppError> {
+        let cert_access_context = ca::CertAccessContext {
+            user_id: 100,
+            entity_type: ca::EntityType::Client,
+            platform: "plat1".to_string(),
+        };
+        let cli_access = message::ClientAccessContext {
+            access: cert_access_context.clone(),
+        };
+        let session_msg = message::SessionMessage::new(
+            &message::DataType::ClientAccessContext,
+            &Some(cli_access.try_into().unwrap()),
+        );
+
+        let result = ClientConnVisitor::extract_client_access_context(Some(session_msg.clone()));
+
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), cert_access_context);
+
+        Ok(())
+    }
+
+    #[test]
+    fn cliconnvis_extract_client_access_context_when_no_sessmsg_supplied() -> Result<(), AppError> {
+        let result = ClientConnVisitor::extract_client_access_context(None);
+
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn cliconnvis_extract_client_access_context_when_wrong_sessmsg_datatype() -> Result<(), AppError>
+    {
+        let session_msg = message::SessionMessage::new(
+            &message::DataType::Trust0Connection,
+            &Some(Value::String("data1".to_string())),
+        );
+
+        let result = ClientConnVisitor::extract_client_access_context(Some(session_msg.clone()));
+
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn cliconnvis_extract_client_access_context_when_missing_context() -> Result<(), AppError> {
+        let session_msg =
+            message::SessionMessage::new(&message::DataType::ClientAccessContext, &None);
+
+        let result = ClientConnVisitor::extract_client_access_context(Some(session_msg.clone()));
+
+        assert!(result.is_ok());
+
+        let result = result.unwrap();
+        assert!(result.is_none());
+
+        Ok(())
+    }
+
+    #[test]
     fn cliconnvis_process_authorization_fn_when_nosvc_and_gooduser_and_goodproto_and_1stcontrol(
     ) -> Result<(), AppError> {
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
         let alpn_proto = alpn::PROTOCOL_CONTROL_PLANE.as_bytes().to_vec();
-        let device_id = "C:03e8:100";
+        let device_id = format!(
+            "{}:{}:{}",
+            device::DEVICE_ID_PREFIX_CLIENT,
+            &hex::encode(vec![0x03u8, 0xe8u8]),
+            &100
+        );
 
         let mut tls_conn = MockTlsSvrConn::new();
         tls_conn
@@ -578,35 +708,123 @@ mod tests {
         assert!(cli_conn_visitor.user.is_none());
         assert!(cli_conn_visitor.protocol.is_none());
 
-        let result = cli_conn_visitor.process_authorization(&tls_conn, None);
-        if let Ok(protocol) = &result {
-            if let alpn::Protocol::ControlPlane = protocol {
-                assert!(cli_conn_visitor.device.is_some());
-                assert!(cli_conn_visitor.user.is_some());
-                assert_eq!(
-                    cli_conn_visitor.device.as_ref().unwrap().get_id().as_str(),
-                    device_id
-                );
-                assert_eq!(cli_conn_visitor.user.as_ref().unwrap().user_id, 100);
-                assert!(cli_conn_visitor.protocol.is_some());
-                assert_eq!(
-                    cli_conn_visitor.protocol.as_ref().unwrap(),
-                    &alpn::Protocol::ControlPlane
-                );
-                return Ok(());
-            }
+        let result = cli_conn_visitor.process_authorization(&tls_conn, None, None);
+        if let Ok(alpn::Protocol::ControlPlane) = &result {
+            assert!(cli_conn_visitor.device.is_some());
+            assert!(cli_conn_visitor.user.is_some());
+            assert_eq!(
+                cli_conn_visitor.device.as_ref().unwrap().get_id().as_str(),
+                device_id
+            );
+            assert_eq!(cli_conn_visitor.user.as_ref().unwrap().user_id, 100);
+            assert!(cli_conn_visitor.protocol.is_some());
+            assert_eq!(
+                cli_conn_visitor.protocol.as_ref().unwrap(),
+                &alpn::Protocol::ControlPlane
+            );
+            return Ok(());
         }
 
         panic!("Unexpected result: val={:?}", &result);
     }
 
     #[test]
-    fn cliconnvis_process_authorization_fn_when_nosvc_and_gooduser_and_goodproto_and_2ndcontrol(
+    fn cliconnvis_process_authorization_fn_when_nosvc_and_nonprxyuser_and_goodproto_and_1stcontrol(
     ) -> Result<(), AppError> {
-        let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
+        let peer_certs_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
         let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
         let alpn_proto = alpn::PROTOCOL_CONTROL_PLANE.as_bytes().to_vec();
-        let device_id = "C:03e8:100";
+        let device_id = format!(
+            "{}:{}:{}",
+            device::DEVICE_ID_PREFIX_GATEWAY,
+            &hex::encode(vec![3u8, 231u8]),
+            &0
+        );
+        let cli_access = message::ClientAccessContext {
+            access: ca::CertAccessContext {
+                user_id: 0,
+                entity_type: ca::EntityType::Gateway,
+                platform: "".to_string(),
+            },
+        };
+        let session_msg = message::SessionMessage::new(
+            &message::DataType::ClientAccessContext,
+            &Some(cli_access.try_into()?),
+        );
+
+        let mut tls_conn = MockTlsSvrConn::new();
+        tls_conn
+            .expect_peer_certificates()
+            .times(1)
+            .return_once(move || Some(peer_certs));
+        tls_conn
+            .expect_alpn_protocol()
+            .times(1)
+            .return_once(move || Some(alpn_proto));
+
+        let mut user_repo = MockUserRepo::new();
+        user_repo.expect_get().never();
+        let mut access_repo = MockAccessRepo::new();
+        access_repo.expect_get().never();
+        let mut service_repo = MockServiceRepo::new();
+        service_repo.expect_get().never();
+        let role_repo = MockRoleRepo::new();
+
+        let mut cli_conn_visitor = create_cliconnvis(
+            Arc::new(Mutex::new(user_repo)),
+            Arc::new(Mutex::new(service_repo)),
+            Arc::new(Mutex::new(role_repo)),
+            Arc::new(Mutex::new(access_repo)),
+            None,
+        )?;
+
+        assert!(cli_conn_visitor.device.is_none());
+        assert!(cli_conn_visitor.user.is_none());
+        assert!(cli_conn_visitor.protocol.is_none());
+
+        let result = cli_conn_visitor.process_authorization(&tls_conn, None, Some(session_msg));
+        if let Ok(alpn::Protocol::ControlPlane) = &result {
+            assert!(cli_conn_visitor.device.is_some());
+            assert!(cli_conn_visitor.user.is_some());
+            assert_eq!(
+                cli_conn_visitor.device.as_ref().unwrap().get_id().as_str(),
+                device_id
+            );
+            assert_eq!(cli_conn_visitor.user.as_ref().unwrap().user_id, 0);
+            assert!(cli_conn_visitor.protocol.is_some());
+            assert_eq!(
+                cli_conn_visitor.protocol.as_ref().unwrap(),
+                &alpn::Protocol::ControlPlane
+            );
+            return Ok(());
+        }
+
+        panic!("Unexpected result: val={:?}", &result);
+    }
+
+    #[test]
+    fn cliconnvis_process_authorization_fn_when_nosvc_and_prxyuser_and_goodproto_and_1stcontrol(
+    ) -> Result<(), AppError> {
+        let peer_certs_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
+        let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
+        let alpn_proto = alpn::PROTOCOL_CONTROL_PLANE.as_bytes().to_vec();
+        let device_id = format!(
+            "{}:{}:{}",
+            device::DEVICE_ID_PREFIX_GATEWAY,
+            &hex::encode(vec![3u8, 231u8]),
+            &100,
+        );
+        let cli_access = message::ClientAccessContext {
+            access: ca::CertAccessContext {
+                user_id: 100,
+                entity_type: ca::EntityType::Client,
+                platform: "plat1".to_string(),
+            },
+        };
+        let session_msg = message::SessionMessage::new(
+            &message::DataType::ClientAccessContext,
+            &Some(cli_access.try_into()?),
+        );
 
         let mut tls_conn = MockTlsSvrConn::new();
         tls_conn
@@ -644,22 +862,99 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((device_id, Arc::new(Mutex::new(MockMsgProcessor::new())))),
+            None,
         )?;
 
         assert!(cli_conn_visitor.device.is_none());
         assert!(cli_conn_visitor.user.is_none());
         assert!(cli_conn_visitor.protocol.is_none());
 
-        let result = cli_conn_visitor.process_authorization(&tls_conn, None);
-        if let Err(err) = &result {
-            if let AppError::GenWithCodeAndMsg(code, _) = err {
-                if *code == config::RESPCODE_0426_CONTROL_PLANE_ALREADY_CONNECTED {
-                    assert!(cli_conn_visitor.device.is_none());
-                    assert!(cli_conn_visitor.user.is_none());
-                    assert!(cli_conn_visitor.protocol.is_none());
-                    return Ok(());
-                }
+        let result = cli_conn_visitor.process_authorization(&tls_conn, None, Some(session_msg));
+        if let Ok(alpn::Protocol::ControlPlane) = &result {
+            assert!(cli_conn_visitor.device.is_some());
+            assert!(cli_conn_visitor.user.is_some());
+            assert_eq!(
+                cli_conn_visitor.device.as_ref().unwrap().get_id().as_str(),
+                device_id
+            );
+            assert_eq!(cli_conn_visitor.user.as_ref().unwrap().user_id, 100);
+            assert!(cli_conn_visitor.protocol.is_some());
+            assert_eq!(
+                cli_conn_visitor.protocol.as_ref().unwrap(),
+                &alpn::Protocol::ControlPlane
+            );
+            return Ok(());
+        }
+
+        panic!("Unexpected result: val={:?}", &result);
+    }
+
+    #[test]
+    fn cliconnvis_process_authorization_fn_when_nosvc_and_gooduser_and_goodproto_and_2ndcontrol(
+    ) -> Result<(), AppError> {
+        let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
+        let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
+        let alpn_proto = alpn::PROTOCOL_CONTROL_PLANE.as_bytes().to_vec();
+        let device_id = format!(
+            "{}:{}:{}",
+            device::DEVICE_ID_PREFIX_CLIENT,
+            &hex::encode(vec![0x03u8, 0xe8u8]),
+            &100
+        );
+
+        let mut tls_conn = MockTlsSvrConn::new();
+        tls_conn
+            .expect_peer_certificates()
+            .times(1)
+            .return_once(move || Some(peer_certs));
+        tls_conn
+            .expect_alpn_protocol()
+            .times(1)
+            .return_once(move || Some(alpn_proto));
+
+        let mut user_repo = MockUserRepo::new();
+        user_repo
+            .expect_get()
+            .with(predicate::eq(100))
+            .times(1)
+            .return_once(move |_| {
+                Ok(Some(User {
+                    user_id: 100,
+                    user_name: Some("user1".to_string()),
+                    password: Some("pass1".to_string()),
+                    name: "".to_string(),
+                    status: Status::Active,
+                    roles: vec![],
+                }))
+            });
+        let mut access_repo = MockAccessRepo::new();
+        access_repo.expect_get().never();
+        let mut service_repo = MockServiceRepo::new();
+        service_repo.expect_get().never();
+        let role_repo = MockRoleRepo::new();
+
+        let mut cli_conn_visitor = create_cliconnvis(
+            Arc::new(Mutex::new(user_repo)),
+            Arc::new(Mutex::new(service_repo)),
+            Arc::new(Mutex::new(role_repo)),
+            Arc::new(Mutex::new(access_repo)),
+            Some((
+                device_id.as_str(),
+                Arc::new(Mutex::new(MockMsgProcessor::new())),
+            )),
+        )?;
+
+        assert!(cli_conn_visitor.device.is_none());
+        assert!(cli_conn_visitor.user.is_none());
+        assert!(cli_conn_visitor.protocol.is_none());
+
+        let result = cli_conn_visitor.process_authorization(&tls_conn, None, None);
+        if let Err(AppError::GenWithCodeAndMsg(code, _)) = &result {
+            if *code == config::RESPCODE_0426_CONTROL_PLANE_ALREADY_CONNECTED {
+                assert!(cli_conn_visitor.device.is_none());
+                assert!(cli_conn_visitor.user.is_none());
+                assert!(cli_conn_visitor.protocol.is_none());
+                return Ok(());
             }
         }
 
@@ -674,7 +969,12 @@ mod tests {
         let alpn_proto = alpn::Protocol::create_service_protocol(200)
             .as_bytes()
             .to_vec();
-        let device_id = "C:03e8:100";
+        let device_id = format!(
+            "{}:{}:{}",
+            device::DEVICE_ID_PREFIX_CLIENT,
+            &hex::encode(vec![0x03u8, 0xe8u8]),
+            &100
+        );
 
         let mut tls_conn = MockTlsSvrConn::new();
         tls_conn
@@ -723,31 +1023,29 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((device_id, create_msg_processor(true))),
+            Some((device_id.as_str(), create_msg_processor(true))),
         )?;
 
         assert!(cli_conn_visitor.device.is_none());
         assert!(cli_conn_visitor.user.is_none());
         assert!(cli_conn_visitor.protocol.is_none());
 
-        let result = cli_conn_visitor.process_authorization(&tls_conn, Some(200));
-        if let Ok(protocol) = &result {
-            if let alpn::Protocol::Service(service_id) = protocol {
-                if *service_id == 200 {
-                    assert!(cli_conn_visitor.device.is_some());
-                    assert!(cli_conn_visitor.user.is_some());
-                    assert_eq!(
-                        cli_conn_visitor.device.as_ref().unwrap().get_id().as_str(),
-                        device_id
-                    );
-                    assert_eq!(cli_conn_visitor.user.as_ref().unwrap().user_id, 100);
-                    assert!(cli_conn_visitor.protocol.is_some());
-                    assert_eq!(
-                        cli_conn_visitor.protocol.as_ref().unwrap(),
-                        &alpn::Protocol::Service(200)
-                    );
-                    return Ok(());
-                }
+        let result = cli_conn_visitor.process_authorization(&tls_conn, Some(200), None);
+        if let Ok(alpn::Protocol::Service(service_id)) = &result {
+            if *service_id == 200 {
+                assert!(cli_conn_visitor.device.is_some());
+                assert!(cli_conn_visitor.user.is_some());
+                assert_eq!(
+                    cli_conn_visitor.device.as_ref().unwrap().get_id().as_str(),
+                    device_id
+                );
+                assert_eq!(cli_conn_visitor.user.as_ref().unwrap().user_id, 100);
+                assert!(cli_conn_visitor.protocol.is_some());
+                assert_eq!(
+                    cli_conn_visitor.protocol.as_ref().unwrap(),
+                    &alpn::Protocol::Service(200)
+                );
+                return Ok(());
             }
         }
 
@@ -807,15 +1105,13 @@ mod tests {
         assert!(cli_conn_visitor.user.is_none());
         assert!(cli_conn_visitor.protocol.is_none());
 
-        let result = cli_conn_visitor.process_authorization(&tls_conn, Some(201));
-        if let Err(err) = &result {
-            if let AppError::GenWithCodeAndMsg(code, _) = err {
-                if *code == config::RESPCODE_0427_CONTROL_PLANE_NOT_AUTHENTICATED {
-                    assert!(cli_conn_visitor.device.is_none());
-                    assert!(cli_conn_visitor.user.is_none());
-                    assert!(cli_conn_visitor.protocol.is_none());
-                    return Ok(());
-                }
+        let result = cli_conn_visitor.process_authorization(&tls_conn, Some(201), None);
+        if let Err(AppError::GenWithCodeAndMsg(code, _)) = &result {
+            if *code == config::RESPCODE_0427_CONTROL_PLANE_NOT_AUTHENTICATED {
+                assert!(cli_conn_visitor.device.is_none());
+                assert!(cli_conn_visitor.user.is_none());
+                assert!(cli_conn_visitor.protocol.is_none());
+                return Ok(());
             }
         }
 
@@ -830,7 +1126,12 @@ mod tests {
         let alpn_proto = alpn::Protocol::create_service_protocol(200)
             .as_bytes()
             .to_vec();
-        let device_id = "C:03e8:100";
+        let device_id = format!(
+            "{}:{}:{}",
+            device::DEVICE_ID_PREFIX_CLIENT,
+            &hex::encode(vec![0x03u8, 0xe8u8]),
+            &100
+        );
 
         let mut tls_conn = MockTlsSvrConn::new();
         tls_conn
@@ -869,22 +1170,20 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((device_id, create_msg_processor(false))),
+            Some((device_id.as_str(), create_msg_processor(false))),
         )?;
 
         assert!(cli_conn_visitor.device.is_none());
         assert!(cli_conn_visitor.user.is_none());
         assert!(cli_conn_visitor.protocol.is_none());
 
-        let result = cli_conn_visitor.process_authorization(&tls_conn, Some(201));
-        if let Err(err) = &result {
-            if let AppError::GenWithCodeAndMsg(code, _) = err {
-                if *code == config::RESPCODE_0427_CONTROL_PLANE_NOT_AUTHENTICATED {
-                    assert!(cli_conn_visitor.device.is_none());
-                    assert!(cli_conn_visitor.user.is_none());
-                    assert!(cli_conn_visitor.protocol.is_none());
-                    return Ok(());
-                }
+        let result = cli_conn_visitor.process_authorization(&tls_conn, Some(201), None);
+        if let Err(AppError::GenWithCodeAndMsg(code, _)) = &result {
+            if *code == config::RESPCODE_0427_CONTROL_PLANE_NOT_AUTHENTICATED {
+                assert!(cli_conn_visitor.device.is_none());
+                assert!(cli_conn_visitor.user.is_none());
+                assert!(cli_conn_visitor.protocol.is_none());
+                return Ok(());
             }
         }
 
@@ -899,7 +1198,12 @@ mod tests {
         let alpn_proto = alpn::Protocol::create_service_protocol(200)
             .as_bytes()
             .to_vec();
-        let device_id = "C:03e8:100";
+        let device_id = format!(
+            "{}:{}:{}",
+            device::DEVICE_ID_PREFIX_CLIENT,
+            &hex::encode(vec![0x03u8, 0xe8u8]),
+            &100
+        );
 
         let mut tls_conn = MockTlsSvrConn::new();
         tls_conn
@@ -941,22 +1245,20 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((device_id, create_msg_processor(true))),
+            Some((device_id.as_str(), create_msg_processor(true))),
         )?;
 
         assert!(cli_conn_visitor.device.is_none());
         assert!(cli_conn_visitor.user.is_none());
         assert!(cli_conn_visitor.protocol.is_none());
 
-        let result = cli_conn_visitor.process_authorization(&tls_conn, Some(201));
-        if let Err(err) = &result {
-            if let AppError::GenWithCodeAndMsg(code, _) = err {
-                if *code == config::RESPCODE_0424_INVALID_ALPN_PROTOCOL {
-                    assert!(cli_conn_visitor.device.is_none());
-                    assert!(cli_conn_visitor.user.is_none());
-                    assert!(cli_conn_visitor.protocol.is_none());
-                    return Ok(());
-                }
+        let result = cli_conn_visitor.process_authorization(&tls_conn, Some(201), None);
+        if let Err(AppError::GenWithCodeAndMsg(code, _)) = &result {
+            if *code == config::RESPCODE_0424_INVALID_ALPN_PROTOCOL {
+                assert!(cli_conn_visitor.device.is_none());
+                assert!(cli_conn_visitor.user.is_none());
+                assert!(cli_conn_visitor.protocol.is_none());
+                return Ok(());
             }
         }
 
@@ -969,7 +1271,12 @@ mod tests {
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
         let alpn_proto = alpn::PROTOCOL_CONTROL_PLANE.as_bytes().to_vec();
-        let device_id = "C:03e8:100";
+        let device_id = format!(
+            "{}:{}:{}",
+            device::DEVICE_ID_PREFIX_CLIENT,
+            &hex::encode(vec![0x03u8, 0xe8u8]),
+            &100
+        );
 
         let mut tls_conn = MockTlsSvrConn::new();
         tls_conn
@@ -1007,22 +1314,20 @@ mod tests {
             Arc::new(Mutex::new(service_repo)),
             Arc::new(Mutex::new(role_repo)),
             Arc::new(Mutex::new(access_repo)),
-            Some((device_id, create_msg_processor(true))),
+            Some((device_id.as_str(), create_msg_processor(true))),
         )?;
 
         assert!(cli_conn_visitor.device.is_none());
         assert!(cli_conn_visitor.user.is_none());
         assert!(cli_conn_visitor.protocol.is_none());
 
-        let result = cli_conn_visitor.process_authorization(&tls_conn, Some(200));
-        if let Err(err) = &result {
-            if let AppError::GenWithCodeAndMsg(code, _) = err {
-                if *code == config::RESPCODE_0424_INVALID_ALPN_PROTOCOL {
-                    assert!(cli_conn_visitor.device.is_none());
-                    assert!(cli_conn_visitor.user.is_none());
-                    assert!(cli_conn_visitor.protocol.is_none());
-                    return Ok(());
-                }
+        let result = cli_conn_visitor.process_authorization(&tls_conn, Some(200), None);
+        if let Err(AppError::GenWithCodeAndMsg(code, _)) = &result {
+            if *code == config::RESPCODE_0424_INVALID_ALPN_PROTOCOL {
+                assert!(cli_conn_visitor.device.is_none());
+                assert!(cli_conn_visitor.user.is_none());
+                assert!(cli_conn_visitor.protocol.is_none());
+                return Ok(());
             }
         }
 
@@ -1062,15 +1367,13 @@ mod tests {
         assert!(cli_conn_visitor.user.is_none());
         assert!(cli_conn_visitor.protocol.is_none());
 
-        let result = cli_conn_visitor.process_authorization(&tls_conn, Some(200));
-        if let Err(err) = &result {
-            if let AppError::GenWithCodeAndMsg(code, _) = err {
-                if *code == config::RESPCODE_0420_INVALID_CLIENT_CERTIFICATE {
-                    assert!(cli_conn_visitor.device.is_none());
-                    assert!(cli_conn_visitor.user.is_none());
-                    assert!(cli_conn_visitor.protocol.is_none());
-                    return Ok(());
-                }
+        let result = cli_conn_visitor.process_authorization(&tls_conn, Some(200), None);
+        if let Err(AppError::GenWithCodeAndMsg(code, _)) = &result {
+            if *code == config::RESPCODE_0420_INVALID_CLIENT_CERTIFICATE {
+                assert!(cli_conn_visitor.device.is_none());
+                assert!(cli_conn_visitor.user.is_none());
+                assert!(cli_conn_visitor.protocol.is_none());
+                return Ok(());
             }
         }
 
@@ -1114,15 +1417,13 @@ mod tests {
         assert!(cli_conn_visitor.user.is_none());
         assert!(cli_conn_visitor.protocol.is_none());
 
-        let result = cli_conn_visitor.process_authorization(&tls_conn, None);
-        if let Err(err) = &result {
-            if let AppError::GenWithCodeAndMsg(code, _) = err {
-                if *code == config::RESPCODE_0421_UNKNOWN_USER {
-                    assert!(cli_conn_visitor.device.is_none());
-                    assert!(cli_conn_visitor.user.is_none());
-                    assert!(cli_conn_visitor.protocol.is_none());
-                    return Ok(());
-                }
+        let result = cli_conn_visitor.process_authorization(&tls_conn, None, None);
+        if let Err(AppError::GenWithCodeAndMsg(code, _)) = &result {
+            if *code == config::RESPCODE_0421_UNKNOWN_USER {
+                assert!(cli_conn_visitor.device.is_none());
+                assert!(cli_conn_visitor.user.is_none());
+                assert!(cli_conn_visitor.protocol.is_none());
+                return Ok(());
             }
         }
 
@@ -1175,15 +1476,13 @@ mod tests {
         assert!(cli_conn_visitor.user.is_none());
         assert!(cli_conn_visitor.protocol.is_none());
 
-        let result = cli_conn_visitor.process_authorization(&tls_conn, None);
-        if let Err(err) = &result {
-            if let AppError::GenWithCodeAndMsg(code, _) = err {
-                if *code == config::RESPCODE_0422_INACTIVE_USER {
-                    assert!(cli_conn_visitor.device.is_none());
-                    assert!(cli_conn_visitor.user.is_none());
-                    assert!(cli_conn_visitor.protocol.is_none());
-                    return Ok(());
-                }
+        let result = cli_conn_visitor.process_authorization(&tls_conn, None, None);
+        if let Err(AppError::GenWithCodeAndMsg(code, _)) = &result {
+            if *code == config::RESPCODE_0422_INACTIVE_USER {
+                assert!(cli_conn_visitor.device.is_none());
+                assert!(cli_conn_visitor.user.is_none());
+                assert!(cli_conn_visitor.protocol.is_none());
+                return Ok(());
             }
         }
 
@@ -1314,7 +1613,7 @@ mod tests {
         });
         let peer_certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let peer_certs = load_certificates(peer_certs_file.to_str().as_ref().unwrap())?;
-        cli_conn_visitor.device = Some(Device::new(peer_certs)?);
+        cli_conn_visitor.device = Some(Device::new(peer_certs, None)?);
 
         assert!(cli_conn_visitor
             .service_mgr
@@ -1395,7 +1694,7 @@ mod tests {
         cli_conn_visitor.send_error_response(&AppError::GenWithCodeAndMsgAndErr(
             config::RESPCODE_0423_INVALID_REQUEST,
             "msg1".to_string(),
-            Box::new(fmt::Error::default()),
+            Box::new(fmt::Error),
         ));
 
         let msg_event = event_channel.1.try_recv();
@@ -1434,7 +1733,7 @@ mod tests {
 
         cli_conn_visitor.send_error_response(&AppError::GenWithCodeAndErr(
             config::RESPCODE_0423_INVALID_REQUEST,
-            Box::new(fmt::Error::default()),
+            Box::new(fmt::Error),
         ));
 
         let msg_event = event_channel.1.try_recv();
@@ -1547,7 +1846,7 @@ mod tests {
         let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
 
-        let expected_device = Device::new(certs)?;
+        let expected_device = Device::new(certs, None)?;
         let expected_user = User::new(100, None, None, "name100", &Status::Active, &[]);
 
         cli_conn_visitor.device = Some(expected_device.clone());

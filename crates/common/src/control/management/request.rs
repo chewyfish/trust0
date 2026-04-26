@@ -72,6 +72,41 @@ pub enum Request {
     Quit,
 }
 
+impl Request {
+    // Build command ([`String`]) for respective request
+    pub fn build_command(&self) -> String {
+        match self {
+            Request::About => String::from(PROTOCOL_REQUEST_ABOUT),
+            Request::Connections => String::from(PROTOCOL_REQUEST_CONNECTIONS),
+            Request::Login => String::from(PROTOCOL_REQUEST_LOGIN),
+            Request::LoginData { ref message } => format!(
+                "{} -m \"{}\"",
+                PROTOCOL_REQUEST_LOGIN_DATA,
+                message.to_json_str().unwrap().replace("\"", "\\\"")
+            ),
+            Request::Ping => String::from(PROTOCOL_REQUEST_PING),
+            Request::Proxies => String::from(PROTOCOL_REQUEST_PROXIES),
+            Request::Services => String::from(PROTOCOL_REQUEST_SERVICES),
+            Request::Start {
+                ref service_name,
+                ref local_port,
+            } => format!(
+                "{} -s \"{}\" -p {}",
+                PROTOCOL_REQUEST_START,
+                service_name.replace("\"", "\\\""),
+                local_port
+            ),
+            Request::Stop { ref service_name } => format!(
+                "{} -s \"{}\"",
+                PROTOCOL_REQUEST_STOP,
+                service_name.replace("\"", "\\\"")
+            ),
+            Request::Quit => String::from(PROTOCOL_REQUEST_QUIT),
+            _ => String::from(""),
+        }
+    }
+}
+
 /// REPL shell command line processor
 pub struct RequestProcessor {
     /// Clap [`Command`] object used to parse command string
@@ -302,6 +337,99 @@ mod tests {
     use super::*;
 
     #[test]
+    fn req_build_command_about() {
+        assert_eq!(
+            Request::About.build_command(),
+            String::from(PROTOCOL_REQUEST_ABOUT)
+        );
+    }
+
+    #[test]
+    fn req_build_command_connections() {
+        assert_eq!(
+            Request::Connections.build_command(),
+            String::from(PROTOCOL_REQUEST_CONNECTIONS)
+        );
+    }
+
+    #[test]
+    fn req_build_command_login() {
+        assert_eq!(
+            Request::Login.build_command(),
+            String::from(PROTOCOL_REQUEST_LOGIN)
+        );
+    }
+
+    #[test]
+    fn req_build_command_logindata() {
+        let expected_command = format!(
+            "{} -m \"{}\"",
+            PROTOCOL_REQUEST_LOGIN_DATA, r#"{\"payload\":\"text\\"1\\"\"}"#
+        );
+        let request = Request::LoginData {
+            message: AuthnMessage::Payload(String::from("text\"1\"")),
+        };
+        assert_eq!(request.build_command(), expected_command);
+    }
+
+    #[test]
+    fn req_build_command_ping() {
+        assert_eq!(
+            Request::Ping.build_command(),
+            String::from(PROTOCOL_REQUEST_PING)
+        );
+    }
+
+    #[test]
+    fn req_build_command_proxies() {
+        assert_eq!(
+            Request::Proxies.build_command(),
+            String::from(PROTOCOL_REQUEST_PROXIES)
+        );
+    }
+
+    #[test]
+    fn req_build_command_services() {
+        assert_eq!(
+            Request::Services.build_command(),
+            String::from(PROTOCOL_REQUEST_SERVICES)
+        );
+    }
+
+    #[test]
+    fn req_build_command_start() {
+        let expected_command = format!("{} -s \"serv\\\"200\\\"\" -p 8888", PROTOCOL_REQUEST_START);
+        let request = Request::Start {
+            service_name: String::from("serv\"200\""),
+            local_port: 8888,
+        };
+        assert_eq!(request.build_command(), expected_command);
+    }
+
+    #[test]
+    fn req_build_command_stop() {
+        let expected_command = format!("{} -s \"serv\\\"200\\\"\"", PROTOCOL_REQUEST_STOP);
+        let request = Request::Stop {
+            service_name: String::from("serv\"200\""),
+        };
+        assert_eq!(request.build_command(), expected_command);
+    }
+
+    #[test]
+    fn req_build_command_quit() {
+        assert_eq!(
+            Request::Quit.build_command(),
+            String::from(PROTOCOL_REQUEST_QUIT)
+        );
+    }
+
+    #[test]
+    fn req_build_command_for_non_requests() {
+        assert_eq!(Request::None.build_command(), String::from(""));
+        assert_eq!(Request::Ignore.build_command(), String::from(""));
+    }
+
+    #[test]
     fn reqproc_new() {
         let _ = RequestProcessor::default();
     }
@@ -413,9 +541,9 @@ mod tests {
     fn reqproc_parse_when_login_data_request_and_missing_msg_arg() {
         let request_processor = RequestProcessor::new();
 
-        let request = format!(r#"{}"#, PROTOCOL_REQUEST_LOGIN_DATA,);
+        let request = PROTOCOL_REQUEST_LOGIN_DATA;
 
-        let result = request_processor.parse(&request);
+        let result = request_processor.parse(request);
 
         if let Ok(request) = result {
             panic!("Unexpected successful result: req={:?}", request);

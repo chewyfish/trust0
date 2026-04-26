@@ -3,7 +3,6 @@ use diesel::prelude::*;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-
 use trust0_common::error::AppError;
 
 pub static INSTANCE: Lazy<Arc<Mutex<MysqlDbConn>>> = Lazy::new(|| {

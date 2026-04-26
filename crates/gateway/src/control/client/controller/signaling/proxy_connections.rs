@@ -1,12 +1,8 @@
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::{Arc, Mutex};
-
 use anyhow::Result;
 use serde_json::Value;
 use serde_json::Value::Array;
-
-use crate::client::controller::signaling::SignalingEventHandler;
-use crate::service::manager::ServiceMgr;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::{Arc, Mutex};
 use trust0_common::control::signaling::event::{EventType, SignalEvent};
 use trust0_common::control::signaling::heartbeat::ProxyConnectionEvent;
 use trust0_common::control::tls::message::ConnectionAddrs;
@@ -14,6 +10,9 @@ use trust0_common::error::AppError;
 use trust0_common::error::AppError::General;
 use trust0_common::logging::{error, warn};
 use trust0_common::{control, target};
+
+use crate::control::client::controller::signaling::SignalingEventHandler;
+use crate::service::manager::ServiceMgr;
 
 const LIVENESS_MAX_CONSECUTIVE_MISSING_CONNECTION_PROBES: u16 = 5;
 const LIVENESS_MAX_CONSECUTIVE_MISSING_SIGNAL_PROBES: u16 = 5;

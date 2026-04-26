@@ -1,5 +1,5 @@
-pub(crate) mod client;
 pub(crate) mod config;
+pub(crate) mod control;
 pub(crate) mod gateway;
 pub(crate) mod repository;
 pub(crate) mod service;
@@ -8,17 +8,17 @@ pub(crate) mod service;
 pub(crate) mod testutils;
 
 pub mod api {
+    use super::*;
+    use anyhow::Result;
     use std::sync::{self, Arc, Mutex};
     use std::thread;
     use std::time::Duration;
-
-    use anyhow::Result;
-
-    use super::*;
-    use crate::service::manager::ServiceMgr;
-    pub use config::AppConfig;
     use trust0_common::error::AppError;
     use trust0_common::proxy::executor::ProxyExecutor;
+
+    use crate::service::manager::ServiceMgr;
+
+    pub use config::AppConfig;
 
     /// Component lifecycle methods
     pub trait ComponentLifecycle {

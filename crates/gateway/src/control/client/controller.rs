@@ -1,26 +1,27 @@
 mod management;
 mod signaling;
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::{mpsc, Arc, Mutex};
-
 use anyhow::Result;
 use rustls::server::Accepted;
 use rustls::ServerConfig;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{mpsc, Arc, Mutex};
+use trust0_common::control::pdu::{ControlChannel, MessageFrame};
+use trust0_common::control::tls;
+use trust0_common::error::AppError;
+use trust0_common::logging::debug;
+use trust0_common::net::tls_server::conn_std::TlsServerConnection;
+use trust0_common::net::tls_server::{conn_std, server_std};
+use trust0_common::target;
+use trust0_common::{model, sync};
 
-use crate::client::connection::ClientConnVisitor;
-use crate::client::device::Device;
 use crate::config::AppConfig;
+use crate::control::client::connection::ClientConnVisitor;
+use crate::control::client::device::Device;
 use crate::repository::access_repo::AccessRepository;
 use crate::repository::service_repo::ServiceRepository;
 use crate::repository::user_repo::UserRepository;
 use crate::service::manager::ServiceMgr;
-use trust0_common::control::pdu::{ControlChannel, MessageFrame};
-use trust0_common::control::tls;
-use trust0_common::error::AppError;
-use trust0_common::net::tls_server::conn_std::TlsServerConnection;
-use trust0_common::net::tls_server::{conn_std, server_std};
-use trust0_common::{model, sync};
 
 /// Control plane processor. Handles management and signaling channel messages
 pub struct ControlPlane {
@@ -192,6 +193,14 @@ impl MessageProcessor for ControlPlane {
                 None => return Ok(()),
             };
 
+            debug(
+                &target!(),
+                &format!(
+                    "Control plane processor: recvd client message: msg={:?}",
+                    &client_message
+                ),
+            );
+
             // Process message by channel type
             self.channel_processors
                 .get(&client_message.channel)
@@ -281,7 +290,7 @@ impl server_std::ServerVisitor for ControlPlaneServerVisitor {
     fn create_client_conn(
         &mut self,
         tls_conn: TlsServerConnection,
-        _client_msg: Option<tls::message::SessionMessage>,
+        client_msg: Option<tls::message::SessionMessage>,
     ) -> Result<conn_std::Connection, AppError> {
         let mut conn_visitor = ClientConnVisitor::new(&self.app_config, &self.service_mgr);
 
@@ -290,7 +299,7 @@ impl server_std::ServerVisitor for ControlPlaneServerVisitor {
             format!("{:?}", &tls_conn.sock.local_addr()),
         );
 
-        let alpn_protocol = conn_visitor.process_authorization(&tls_conn, None)?;
+        let alpn_protocol = conn_visitor.process_authorization(&tls_conn, None, client_msg)?;
 
         let connection = conn_std::Connection::new(
             Box::new(conn_visitor),
@@ -386,7 +395,7 @@ pub mod tests {
     pub fn create_device() -> Result<Device, AppError> {
         let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap())?;
-        Device::new(certs)
+        Device::new(certs, None)
     }
 
     pub fn create_user() -> model::user::User {
@@ -406,7 +415,7 @@ pub mod tests {
     ) {
         assert!(!pending_pdus.lock().unwrap().is_empty());
 
-        let pdu = pending_pdus.lock().unwrap().get(0).unwrap().clone();
+        let pdu = pending_pdus.lock().unwrap().front().unwrap().clone();
         assert!(pdu.len() >= 3);
         assert!(expected_pdu.len() >= 3);
 
@@ -418,12 +427,12 @@ pub mod tests {
         let expected_pdu_msg_size = u16::from_be_bytes(expected_msg_size.try_into().unwrap());
         let mut expected_pdu_msg = String::from_utf8(expected_msg.to_vec()).unwrap();
 
-        if max_msg_size.is_some() {
-            if pdu_msg.len() > max_msg_size.unwrap() {
-                pdu_msg = pdu_msg[0..max_msg_size.unwrap()].to_string();
+        if let Some(max_msg_size) = max_msg_size {
+            if pdu_msg.len() > max_msg_size {
+                pdu_msg = pdu_msg[0..max_msg_size].to_string();
             }
-            if expected_pdu_msg.len() > max_msg_size.unwrap() {
-                expected_pdu_msg = expected_pdu_msg[0..max_msg_size.unwrap()].to_string();
+            if expected_pdu_msg.len() > max_msg_size {
+                expected_pdu_msg = expected_pdu_msg[0..max_msg_size].to_string();
             }
         }
 
@@ -440,7 +449,7 @@ pub mod tests {
     ) {
         assert!(!pending_pdus.lock().unwrap().is_empty());
 
-        let pdu = pending_pdus.lock().unwrap().get(0).unwrap().clone();
+        let pdu = pending_pdus.lock().unwrap().front().unwrap().clone();
         assert!(pdu.len() >= 3);
 
         let (msg_size, msg) = pdu.split_at(std::mem::size_of::<u16>());

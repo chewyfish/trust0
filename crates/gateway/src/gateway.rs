@@ -1,17 +1,10 @@
+use anyhow::Result;
+use rustls::server::Accepted;
+use rustls::{ServerConfig, ServerConnection};
 #[cfg(test)]
 use std::collections::HashMap;
 use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
-
-use anyhow::Result;
-use rustls::server::Accepted;
-use rustls::{ServerConfig, ServerConnection};
-
-use crate::client::connection::ClientConnVisitor;
-use crate::client::controller::ControlPlaneServerVisitor;
-use crate::config::{self, AppConfig};
-use crate::service::manager::ServiceMgr;
-use crate::service::proxy::proxy_base::GatewayServiceProxyVisitor;
 use trust0_common::control::tls;
 use trust0_common::crypto::alpn::Protocol;
 use trust0_common::error::AppError;
@@ -19,6 +12,12 @@ use trust0_common::error::AppError;
 use trust0_common::net::tls_server::conn_std::TlsConnection;
 use trust0_common::net::tls_server::conn_std::TlsServerConnection;
 use trust0_common::net::tls_server::{conn_std, server_std};
+
+use crate::config::{self, AppConfig, GatewayType};
+use crate::control::client::connection::ClientConnVisitor;
+use crate::control::client::controller::ControlPlaneServerVisitor;
+use crate::service::manager::ServiceMgr;
+use crate::service::proxy::proxy_base::GatewayServiceProxyVisitor;
 
 /// The Trust0 Gateway TLS Server
 pub struct Gateway {
@@ -44,7 +43,7 @@ impl Gateway {
                 visitor,
                 &app_config.server_host,
                 app_config.server_port,
-                false,
+                app_config.gateway_type == GatewayType::Service,
             ),
         }
     }
@@ -343,7 +342,7 @@ pub mod tests {
 
         let server_visitor = super::ServerVisitor::new(&app_config, service_mgr);
 
-        if let Ok(_) = server_visitor.get_service_proxy(100) {
+        if server_visitor.get_service_proxy(100).is_ok() {
             panic!("Unexpected existent result");
         }
     }
@@ -366,10 +365,10 @@ pub mod tests {
         let mut server_visitor = super::ServerVisitor::new(&app_config, service_mgr);
 
         server_visitor.set_shutdown_requested(true);
-        assert_eq!(server_visitor.shutdown_requested, true);
+        assert!(server_visitor.shutdown_requested);
 
         server_visitor.set_shutdown_requested(false);
-        assert_eq!(server_visitor.shutdown_requested, false);
+        assert!(!server_visitor.shutdown_requested);
     }
 
     #[test]
@@ -419,7 +418,7 @@ pub mod tests {
         let client_conn_result = server_visitor.create_client_conn(
             StreamOwned::new(
                 ServerConnection::new(Arc::new(
-                    proxy_base::tests::create_tls_server_config(vec![alpn_protocol]).unwrap(),
+                    proxy_base::tests::create_tls_server_config(true, vec![alpn_protocol]).unwrap(),
                 ))
                 .unwrap(),
                 stream_utils::clone_std_tcp_stream(
@@ -482,7 +481,7 @@ pub mod tests {
         let client_conn_result = server_visitor.create_client_conn(
             StreamOwned::new(
                 ServerConnection::new(Arc::new(
-                    proxy_base::tests::create_tls_server_config(vec![alpn_protocol]).unwrap(),
+                    proxy_base::tests::create_tls_server_config(true, vec![alpn_protocol]).unwrap(),
                 ))
                 .unwrap(),
                 stream_utils::clone_std_tcp_stream(
@@ -521,9 +520,10 @@ pub mod tests {
 
         let server_msg_result = server_visitor.on_server_msg_provider(
             &ServerConnection::new(Arc::new(
-                proxy_base::tests::create_tls_server_config(vec![
-                    Protocol::create_service_protocol(200).into_bytes(),
-                ])
+                proxy_base::tests::create_tls_server_config(
+                    true,
+                    vec![Protocol::create_service_protocol(200).into_bytes()],
+                )
                 .unwrap(),
             ))
             .unwrap(),
@@ -571,7 +571,7 @@ pub mod tests {
         let conn_visitor = MockConnVisit::new();
         let tls_conn = StreamOwned::new(
             ServerConnection::new(Arc::new(
-                proxy_base::tests::create_tls_server_config(vec![
+                proxy_base::tests::create_tls_server_config(true, vec![
                     Protocol::create_service_protocol(200).into_bytes(),
                 ])
                     .unwrap(),

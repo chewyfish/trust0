@@ -1,9 +1,3 @@
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::str::FromStr;
-use std::sync::{Arc, Mutex};
-use std::{env, fmt};
-
 use clap::*;
 use hickory_resolver::Resolver;
 use lazy_static::lazy_static;
@@ -11,7 +5,23 @@ use pki_types::{
     CertificateDer, CertificateRevocationListDer, PrivateKeyDer, PrivatePkcs1KeyDer,
     PrivatePkcs8KeyDer, PrivateSec1KeyDer,
 };
+use regex::Regex;
+use rustls::crypto::CryptoProvider;
+use rustls::server::danger::ClientCertVerifier;
+use rustls::server::WebPkiClientVerifier;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::str::FromStr;
+use std::sync::{Arc, Mutex};
+use std::{env, fmt};
+use trust0_common::authn::authenticator::AuthnType;
+use trust0_common::crypto::crl::CRLFile;
+use trust0_common::crypto::file::{load_certificates, load_private_key};
+use trust0_common::crypto::{alpn, ca, tls};
+use trust0_common::error::AppError;
+use trust0_common::file::ReloadableFile;
 
+use crate::control::client::device::Device;
 use crate::repository::access_repo::AccessRepository;
 use crate::repository::in_memory_db::access_repo::InMemAccessRepo;
 use crate::repository::in_memory_db::role_repo::InMemRoleRepo;
@@ -36,16 +46,6 @@ use crate::repository::postgres_db::user_repo::PostgresUserRepo;
 use crate::repository::role_repo::RoleRepository;
 use crate::repository::service_repo::ServiceRepository;
 use crate::repository::user_repo::UserRepository;
-use regex::Regex;
-use rustls::crypto::CryptoProvider;
-use rustls::server::danger::ClientCertVerifier;
-use rustls::server::WebPkiClientVerifier;
-use trust0_common::authn::authenticator::AuthnType;
-use trust0_common::crypto::crl::CRLFile;
-use trust0_common::crypto::file::{load_certificates, load_private_key};
-use trust0_common::crypto::{alpn, ca};
-use trust0_common::error::AppError;
-use trust0_common::file::ReloadableFile;
 
 #[cfg(test)]
 static mut COMMAND_LINE_ARGS: Vec<String> = vec![];
@@ -347,15 +347,9 @@ pub enum GatewayTypeCommand {
     #[command(name = "full-gateway")]
     Full(FullGatewayCommandArgs),
     /// Client gateway type
-    #[cfg(not(test))]
-    Client(ClientGatewayCommandArgs),
-    #[cfg(test)]
     #[command(name = "client-gateway")]
     Client(ClientGatewayCommandArgs),
     /// Service gateway type
-    #[cfg(not(test))]
-    Service(ServiceGatewayCommandArgs),
-    #[cfg(test)]
     #[command(name = "service-gateway")]
     Service(ServiceGatewayCommandArgs),
 }
@@ -389,6 +383,14 @@ pub struct ClientGatewayCommandArgs {
         default_value_t = 443
     )]
     pub service_gateway_port: u16,
+
+    /// Limit outgoing (client) TLS messages to <MAX_FRAG_SIZE> bytes
+    #[arg(required = false, long = "max-frag-size", env)]
+    pub max_frag_size: Option<usize>,
+
+    /// Disable TLS server certificate verification
+    #[arg(required = false, long = "insecure", env)]
+    pub insecure: bool,
 
     #[command(flatten)]
     pub client_args: ClientGatewayArgs,
@@ -537,6 +539,7 @@ pub struct AppConfig {
     pub server_host: String,
     pub server_port: u16,
     pub tls_server_config_builder: TlsServerConfigBuilder,
+    pub tls_client_config: Option<rustls::ClientConfig>,
     pub crl_reloader_loading: Arc<Mutex<bool>>,
     pub mfa_scheme: AuthnType,
     pub verbose_logging: bool,
@@ -557,13 +560,14 @@ pub struct AppConfig {
     pub ca_validity_period_days: Option<u16>,
     pub ca_reissuance_threshold_days: Option<u16>,
     pub dns_client: Resolver,
+    pub device: Device,
 }
 
 impl fmt::Display for AppConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         write!(
             formatter,
-            "AppConfig(type={},host={},port={},mfa={},verb={},svcgw-host={:?},svcgw-port={:?},svc-host={:?},svc-port={:?},svc-reply={:?},mask-addr={},ca={},ca-crt={},ca-key={:?},ca-keyalg={:?},ca-valid={:?},ca-reiss={:?})",
+            "AppConfig(type={},host={},port={},mfa={},verb={},svcgw-host={:?},svcgw-port={:?},svc-host={:?},svc-port={:?},svc-reply={:?},mask-addr={},ca={},ca-crt={},ca-key={:?},ca-keyalg={:?},ca-valid={:?},ca-reiss={:?},devid={})",
             &self.gateway_type,
             &self.server_host,
             &self.server_port,
@@ -580,7 +584,8 @@ impl fmt::Display for AppConfig {
             &self.ca_root_key_file,
             &self.ca_key_algorithm,
             &self.ca_validity_period_days,
-            &self.ca_reissuance_threshold_days
+            &self.ca_reissuance_threshold_days,
+            &self.device.get_id(),
         )
     }
 }
@@ -622,6 +627,8 @@ impl AppConfig {
         // Create TLS server configuration builder
         let auth_certs = load_certificates(&config_args.ca_root_cert_file).unwrap();
         let certs = load_certificates(&config_args.cert_file).unwrap();
+        let certs_copy = certs.clone();
+        let certs_copy2 = certs.clone();
         let key = load_private_key(&config_args.key_file).unwrap();
 
         let crl_reloader_loading = Arc::new(Mutex::new(false));
@@ -636,13 +643,16 @@ impl AppConfig {
         };
 
         let mut auth_root_certs = rustls::RootCertStore::empty();
+        let mut auth_root_certs_copy = rustls::RootCertStore::empty();
         for auth_root_cert in auth_certs {
-            auth_root_certs.add(auth_root_cert).unwrap();
+            auth_root_certs.add(auth_root_cert.clone()).unwrap();
+            auth_root_certs_copy.add(auth_root_cert).unwrap();
         }
 
         let cipher_suites: Vec<rustls::SupportedCipherSuite> = config_args
             .cipher_suite
             .unwrap_or(rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec());
+        let cipher_suites_copy = cipher_suites.clone();
 
         let mut alpn_protocols = vec![alpn::Protocol::ControlPlane.to_string().into_bytes()];
         for service in repositories.1.as_ref().lock().unwrap().get_all()? {
@@ -659,6 +669,8 @@ impl AppConfig {
             alpn_protocols,
         };
 
+        let device = Device::new(certs_copy2, None)?;
+
         // Gateway type-specific config
         let mfa_scheme;
         let service_gateway_host;
@@ -669,6 +681,7 @@ impl AppConfig {
         let ca_validity_period_days;
         let ca_reissuance_threshold_days;
         let gateway_service_reply_host;
+        let mut tls_client_config = None;
 
         match config_args.gateway_type {
             GatewayTypeCommand::Full(args) => {
@@ -695,6 +708,30 @@ impl AppConfig {
                 ca_validity_period_days = Some(args.client_args.ca_validity_period_days);
                 ca_reissuance_threshold_days = Some(args.client_args.ca_reissuance_threshold_days);
                 gateway_service_reply_host = None;
+                // Create TLS client configuration
+                let key = load_private_key(&config_args.key_file).unwrap();
+                let mut tls_config = rustls::ClientConfig::builder_with_provider(
+                    CryptoProvider {
+                        cipher_suites: cipher_suites_copy,
+                        ..rustls::crypto::ring::default_provider()
+                    }
+                    .into(),
+                )
+                .with_protocol_versions(&[&rustls::version::TLS13])
+                .expect("Inconsistent cipher-suite/versions selected")
+                .with_root_certificates(auth_root_certs_copy)
+                .with_client_auth_cert(certs_copy, key)
+                .expect("Invalid client auth certs/key");
+                tls_config.enable_early_data = true;
+                tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
+                tls_config.alpn_protocols = Vec::new();
+                tls_config.max_fragment_size = args.max_frag_size;
+                if args.insecure {
+                    tls_config.dangerous().set_certificate_verifier(Arc::new(
+                        tls::danger::NoCertificateVerification {},
+                    ));
+                }
+                tls_client_config = Some(tls_config);
             }
             GatewayTypeCommand::Service(args) => {
                 mfa_scheme = AuthnType::Insecure;
@@ -723,6 +760,7 @@ impl AppConfig {
             server_host: config_args.host,
             server_port: config_args.port,
             tls_server_config_builder,
+            tls_client_config,
             crl_reloader_loading,
             mfa_scheme,
             verbose_logging: config_args.verbose,
@@ -743,6 +781,7 @@ impl AppConfig {
             ca_validity_period_days,
             ca_reissuance_threshold_days,
             dns_client,
+            device,
         })
     }
 
@@ -885,6 +924,7 @@ impl AppConfig {
 #[cfg(test)]
 pub mod tests {
     use super::*;
+    use crate::control::client::device;
     use crate::repository::access_repo::tests::MockAccessRepo;
     use crate::repository::access_repo::AccessRepository;
     use crate::repository::role_repo::tests::MockRoleRepo;
@@ -908,6 +948,8 @@ pub mod tests {
         "testdata",
         "client-uid100.crt.pem",
     ];
+    const CERTFILE_ROOT_CA_PATHPARTS: [&str; 3] =
+        [env!("CARGO_MANIFEST_DIR"), "testdata", "root-ca.crt.pem"];
     const CERTFILE_GATEWAY_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "gateway.crt.pem"];
     const KEYFILE_GATEWAY_PATHPARTS: [&str; 3] =
@@ -926,14 +968,26 @@ pub mod tests {
         role_repo: Arc<Mutex<dyn RoleRepository>>,
         access_repo: Arc<Mutex<dyn AccessRepository>>,
     ) -> Result<AppConfig, AppError> {
+        let rootca_cert_file: PathBuf = CERTFILE_ROOT_CA_PATHPARTS.iter().collect();
+        let rootca_cert = load_certificates(rootca_cert_file.to_str().as_ref().unwrap())?;
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_cert = load_certificates(gateway_cert_file.to_str().as_ref().unwrap())?;
+        let gateway_cert_copy = gateway_cert.clone();
+        let gateway_cert_copy2 = gateway_cert.clone();
         let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_key = load_private_key(gateway_key_file.to_str().as_ref().unwrap())?;
-        let auth_root_certs = rustls::RootCertStore::empty();
         let cipher_suites: Vec<rustls::SupportedCipherSuite> =
             rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
+        let cipher_suites_copy = cipher_suites.clone();
         let alpn_protocols = vec![alpn::Protocol::ControlPlane.to_string().into_bytes()];
+
+        let mut auth_root_certs = rustls::RootCertStore::empty();
+        for ca_root_cert in rootca_cert {
+            auth_root_certs.add(ca_root_cert).map_err(|err| {
+                AppError::General(format!("Error adding CA root cert: err={:?}", &err))
+            })?;
+        }
+        let auth_root_certs_copy = auth_root_certs.clone();
 
         let tls_server_config_builder = TlsServerConfigBuilder {
             certs: gateway_cert,
@@ -955,6 +1009,9 @@ pub mod tests {
         let ca_key_algorithm;
         let ca_validity_period_days;
         let ca_reissuance_threshold_days;
+        let mut tls_client_config = None;
+        let device = Device::new(gateway_cert_copy2, None)?;
+
         match &gateway_type {
             GatewayType::Full => {
                 service_gateway_host = None;
@@ -975,6 +1032,25 @@ pub mod tests {
                 ca_validity_period_days = Some(DEFAULT_CA_CERTIFICATE_VALIDITY_PERIOD_DAYS);
                 ca_reissuance_threshold_days =
                     Some(DEFAULT_CA_CERTIFICATE_REISSUANCE_THRESHOLD_DAYS);
+                // Create TLS client configuration
+                let gateway_key = load_private_key(gateway_key_file.to_str().as_ref().unwrap())?;
+                let mut tls_config = rustls::ClientConfig::builder_with_provider(
+                    CryptoProvider {
+                        cipher_suites: cipher_suites_copy,
+                        ..rustls::crypto::ring::default_provider()
+                    }
+                    .into(),
+                )
+                .with_protocol_versions(&[&rustls::version::TLS13])
+                .expect("Inconsistent cipher-suite/versions selected")
+                .with_root_certificates(auth_root_certs_copy)
+                .with_client_auth_cert(gateway_cert_copy, gateway_key)
+                .expect("Invalid client auth certs/key");
+                tls_config.enable_early_data = true;
+                tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
+                tls_config.alpn_protocols = Vec::new();
+                tls_config.max_fragment_size = Some(1024);
+                tls_client_config = Some(tls_config);
             }
             GatewayType::Service => {
                 service_gateway_host = None;
@@ -992,6 +1068,7 @@ pub mod tests {
             server_host: "127.0.0.1".to_string(),
             server_port: 2000,
             tls_server_config_builder,
+            tls_client_config,
             crl_reloader_loading: Arc::new(Mutex::new(false)),
             mfa_scheme: AuthnType::Insecure,
             verbose_logging: false,
@@ -1012,6 +1089,7 @@ pub mod tests {
             ca_validity_period_days,
             ca_reissuance_threshold_days,
             dns_client,
+            device,
         })
     }
 
@@ -1173,6 +1251,7 @@ pub mod tests {
         let config = result.unwrap();
 
         assert_eq!(config.gateway_type, GatewayType::Full);
+        assert!(config.tls_client_config.is_none());
         assert_eq!(config.server_host, "127.0.0.1");
         assert_eq!(config.server_port, 8000);
         assert!(config.service_gateway_host.is_none());
@@ -1201,6 +1280,14 @@ pub mod tests {
         assert!(config.ca_reissuance_threshold_days.is_some());
         assert_eq!(config.ca_reissuance_threshold_days.unwrap(), 30);
         assert!(config.verbose_logging);
+        assert_eq!(
+            config.device.get_id(),
+            format!(
+                "{}:{}",
+                device::DEVICE_ID_PREFIX_GATEWAY,
+                &hex::encode(vec![3u8, 231u8]),
+            )
+        );
     }
 
     #[test]
@@ -1223,6 +1310,7 @@ pub mod tests {
         let config = result.unwrap();
 
         assert_eq!(config.gateway_type, GatewayType::Client);
+        assert!(config.tls_client_config.is_some());
         assert_eq!(config.server_host, "127.0.0.1");
         assert_eq!(config.server_port, 8000);
         assert!(config.service_gateway_host.is_some());
@@ -1249,6 +1337,14 @@ pub mod tests {
         assert!(config.ca_reissuance_threshold_days.is_some());
         assert_eq!(config.ca_reissuance_threshold_days.unwrap(), 30);
         assert!(config.verbose_logging);
+        assert_eq!(
+            config.device.get_id(),
+            format!(
+                "{}:{}",
+                device::DEVICE_ID_PREFIX_GATEWAY,
+                &hex::encode(vec![3u8, 231u8]),
+            )
+        );
     }
 
     #[test]
@@ -1271,6 +1367,7 @@ pub mod tests {
         let config = result.unwrap();
 
         assert_eq!(config.gateway_type, GatewayType::Service);
+        assert!(config.tls_client_config.is_none());
         assert_eq!(config.server_host, "127.0.0.1");
         assert_eq!(config.server_port, 8000);
         assert!(config.service_gateway_host.is_none());
@@ -1292,6 +1389,14 @@ pub mod tests {
         assert!(config.ca_validity_period_days.is_none());
         assert!(config.ca_reissuance_threshold_days.is_none());
         assert!(config.verbose_logging);
+        assert_eq!(
+            config.device.get_id(),
+            format!(
+                "{}:{}",
+                device::DEVICE_ID_PREFIX_GATEWAY,
+                &hex::encode(vec![3u8, 231u8]),
+            )
+        );
     }
 
     #[test]
@@ -1344,6 +1449,7 @@ pub mod tests {
         assert_eq!(config.server_host, "127.0.0.1");
         assert_eq!(config.server_port, 8888);
         assert_eq!(config.gateway_type, GatewayType::Full);
+        assert!(config.tls_client_config.is_none());
         assert!(config.service_gateway_host.is_none());
         assert!(config.service_gateway_port.is_none());
         assert!(config.gateway_service_host.is_some());
@@ -1376,6 +1482,14 @@ pub mod tests {
             DEFAULT_CA_CERTIFICATE_REISSUANCE_THRESHOLD_DAYS
         );
         assert!(config.verbose_logging);
+        assert_eq!(
+            config.device.get_id(),
+            format!(
+                "{}:{}",
+                device::DEVICE_ID_PREFIX_GATEWAY,
+                &hex::encode(vec![3u8, 231u8]),
+            )
+        );
     }
 
     #[test]
@@ -1449,6 +1563,7 @@ pub mod tests {
             .to_str()
             .unwrap()
             .to_string();
+        #[allow(clippy::type_complexity)]
         let repo_factories: (
             Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
             Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,
@@ -1546,6 +1661,7 @@ pub mod tests {
 
     #[test]
     fn appconfig_create_datasource_repositories_when_nodb_ds() {
+        #[allow(clippy::type_complexity)]
         let repo_factories: (
             Box<dyn Fn() -> Arc<Mutex<dyn AccessRepository>>>,
             Box<dyn Fn() -> Arc<Mutex<dyn ServiceRepository>>>,

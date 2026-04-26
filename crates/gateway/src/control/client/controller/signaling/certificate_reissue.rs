@@ -1,17 +1,10 @@
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
-
 use anyhow::Result;
 use rand::random;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 #[cfg(test)]
 use time::macros::datetime;
 use time::{Duration, OffsetDateTime};
-
-use crate::client::controller::signaling;
-use crate::client::controller::signaling::SignalingEventHandler;
-use crate::client::device;
-use crate::client::device::Device;
-use crate::config::AppConfig;
 use trust0_common::control::signaling::event::{EventType, SignalEvent};
 use trust0_common::control::signaling::security::CertificateReissueEvent;
 use trust0_common::crypto::ca;
@@ -19,6 +12,12 @@ use trust0_common::crypto::ca::{Certificate, KeyAlgorithm};
 use trust0_common::error::AppError;
 use trust0_common::logging::info;
 use trust0_common::{control, file, target};
+
+use crate::config::AppConfig;
+use crate::control::client::controller::signaling;
+use crate::control::client::controller::signaling::SignalingEventHandler;
+use crate::control::client::device;
+use crate::control::client::device::Device;
 
 const PROCESSING_RECHECK_DURATION_SECS: u64 = 3_600;
 
@@ -289,7 +288,7 @@ mod tests {
         app_config.ca_reissuance_threshold_days = Some(20);
         let certs_file: PathBuf = CERTFILE_CLIENT_UID100_PATHPARTS.iter().collect();
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
-        let device = Device::new(certs).unwrap();
+        let device = Device::new(certs, None).unwrap();
 
         let processor = CertReissuanceProcessor::new(
             &Arc::new(app_config),
@@ -325,7 +324,7 @@ mod tests {
         app_config.ca_root_cert_file = rootca_certs_file.to_str().unwrap().to_string();
         app_config.ca_root_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
-        let device = Device::new(certs).unwrap();
+        let device = Device::new(certs, None).unwrap();
 
         let mut processor = CertReissuanceProcessor::new(
             &Arc::new(app_config),
@@ -365,7 +364,7 @@ mod tests {
         app_config.ca_root_cert_file = rootca_certs_file.to_str().unwrap().to_string();
         app_config.ca_root_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
-        let device = Device::new(certs).unwrap();
+        let device = Device::new(certs, None).unwrap();
 
         let mut processor = CertReissuanceProcessor::new(
             &Arc::new(app_config),
@@ -404,7 +403,7 @@ mod tests {
         app_config.ca_root_cert_file = rootca_certs_file.to_str().unwrap().to_string();
         app_config.ca_root_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
-        let device = Device::new(certs).unwrap();
+        let device = Device::new(certs, None).unwrap();
 
         let mut processor = CertReissuanceProcessor::new(
             &Arc::new(app_config),
@@ -443,7 +442,7 @@ mod tests {
         app_config.ca_root_cert_file = rootca_certs_file.to_str().unwrap().to_string();
         app_config.ca_root_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
-        let device = Device::new(certs).unwrap();
+        let device = Device::new(certs, None).unwrap();
 
         let mut processor = CertReissuanceProcessor::new(
             &Arc::new(app_config),
@@ -486,7 +485,7 @@ mod tests {
         app_config.ca_root_cert_file = rootca_certs_file.to_str().unwrap().to_string();
         app_config.ca_root_key_file = Some(rootca_key_file.to_str().unwrap().to_string());
         let certs = load_certificates(certs_file.to_str().as_ref().unwrap()).unwrap();
-        let device = Device::new(certs).unwrap();
+        let device = Device::new(certs, None).unwrap();
 
         let mut processor = CertReissuanceProcessor::new(
             &Arc::new(app_config),

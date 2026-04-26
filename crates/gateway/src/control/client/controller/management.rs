@@ -1,19 +1,10 @@
+use anyhow::Result;
+use serde_json::Value;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
-
-use anyhow::Result;
-use serde_json::Value;
-
-use crate::client::controller::ChannelProcessor;
-use crate::client::device::Device;
-use crate::config::AppConfig;
-use crate::repository::access_repo::AccessRepository;
-use crate::repository::service_repo::ServiceRepository;
-use crate::repository::user_repo::UserRepository;
-use crate::service::manager::ServiceMgr;
 use trust0_common::authn::authenticator::{AuthenticatorServer, AuthnMessage, AuthnType};
 use trust0_common::authn::insecure_authenticator::InsecureAuthenticatorServer;
 use trust0_common::authn::scram_sha256_authenticator::ScramSha256AuthenticatorServer;
@@ -24,6 +15,14 @@ use trust0_common::error::AppError;
 use trust0_common::logging::error;
 use trust0_common::net::tls_server::conn_std;
 use trust0_common::{control, model, sync, target};
+
+use crate::config::AppConfig;
+use crate::control::client::controller::ChannelProcessor;
+use crate::control::client::device::Device;
+use crate::repository::access_repo::AccessRepository;
+use crate::repository::service_repo::ServiceRepository;
+use crate::repository::user_repo::UserRepository;
+use crate::service::manager::ServiceMgr;
 
 /// (MFA) Authentication context
 struct AuthnContext {
@@ -370,12 +369,13 @@ impl ManagementController {
                     format!("Unknown service: svc_name={}", service_name),
                 ))?;
 
-        if self
-            .access_repo
-            .lock()
-            .unwrap()
-            .get_for_user(service.service_id, &self.user)?
-            .is_none()
+        if !self.device.is_non_proxying_gateway()
+            && self
+                .access_repo
+                .lock()
+                .unwrap()
+                .get_for_user(service.service_id, &self.user)?
+                .is_none()
         {
             return Err(AppError::GenWithCodeAndMsg(
                 control::pdu::CODE_FORBIDDEN,
@@ -391,7 +391,7 @@ impl ManagementController {
             .service_mgr
             .lock()
             .unwrap()
-            .startup(self.service_mgr.clone(), service)?;
+            .startup(self.service_mgr.clone(), service, &None)?;
 
         // Return service proxy connection
         let service = Self::prepare_response_service(service, self.app_config.mask_addresses);
@@ -727,10 +727,10 @@ impl ChannelProcessor for ManagementController {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::client::controller::tests::{
+    use crate::config;
+    use crate::control::client::controller::tests::{
         assert_msg_frame_pdu_contains, assert_msg_frame_pdu_equality, create_device, create_user,
     };
-    use crate::config;
     use crate::repository::access_repo::tests::MockAccessRepo;
     use crate::repository::role_repo::tests::MockRoleRepo;
     use crate::repository::service_repo::tests::MockServiceRepo;
@@ -743,6 +743,7 @@ pub mod tests {
     use trust0_common::authn::authenticator::{AuthenticatorClient, AuthenticatorServer};
     use trust0_common::authn::scram_sha256_authenticator::ScramSha256AuthenticatorClient;
     use trust0_common::control::pdu::ControlChannel;
+    use trust0_common::crypto::ca;
     use trust0_common::model::access::{EntityType, ServiceAccess};
 
     // mocks
@@ -760,6 +761,7 @@ pub mod tests {
     // utils
     // =====
 
+    #[allow(clippy::type_complexity)]
     fn create_repos(
         expect_user_get: bool,
         expect_access_get_all_for_user: bool,
@@ -937,9 +939,13 @@ pub mod tests {
             };
             service_mgr
                 .expect_startup()
-                .with(predicate::always(), predicate::eq(service))
+                .with(
+                    predicate::always(),
+                    predicate::eq(service),
+                    predicate::always(),
+                )
                 .times(1)
-                .return_once(move |_, _| Ok((Some("proxyhost1".to_string()), 6000)));
+                .return_once(move |_, _, _| Ok((Some("proxyhost1".to_string()), 6000)));
         }
 
         if expect_shutdown_proxy {
@@ -970,6 +976,7 @@ pub mod tests {
         access_repo: &Arc<Mutex<dyn AccessRepository>>,
         mfa_scheme: AuthnType,
         message_outbox: Arc<Mutex<VecDeque<Vec<u8>>>>,
+        for_non_proxying_gateway_device: bool,
     ) -> Result<ManagementController, AppError> {
         let mut app_config = config::tests::create_app_config_with_repos(
             config::GatewayType::Client,
@@ -980,17 +987,28 @@ pub mod tests {
         )?;
         app_config.mfa_scheme = mfa_scheme;
 
-        Ok(ManagementController::new(
+        let mut device = create_device().unwrap();
+
+        if for_non_proxying_gateway_device {
+            device.cert_access_context = ca::CertAccessContext {
+                entity_type: ca::EntityType::Gateway,
+                platform: "".to_string(),
+                user_id: 0,
+            };
+            device.proxied_access_context = None;
+        }
+
+        ManagementController::new(
             &Arc::new(app_config),
             &service_mgr,
-            &access_repo,
-            &service_repo,
-            &user_repo,
+            access_repo,
+            service_repo,
+            user_repo,
             &event_channel_sender,
-            &create_device().unwrap(),
+            &device,
             &create_user(),
             &message_outbox,
-        )?)
+        )
     }
 
     // tests
@@ -1011,6 +1029,7 @@ pub mod tests {
             &repos.2,
             AuthnType::Insecure,
             message_outbox.clone(),
+            false,
         )
         .unwrap();
 
@@ -1054,6 +1073,7 @@ pub mod tests {
             &repos.2,
             AuthnType::Insecure,
             message_outbox.clone(),
+            false,
         )
         .unwrap();
 
@@ -1108,6 +1128,7 @@ pub mod tests {
             &repos.2,
             AuthnType::Insecure,
             message_outbox.clone(),
+            false,
         )
         .unwrap();
 
@@ -1162,6 +1183,7 @@ pub mod tests {
             &repos.2,
             AuthnType::ScramSha256,
             message_outbox.clone(),
+            false,
         )
         .unwrap();
 
@@ -1216,6 +1238,7 @@ pub mod tests {
             &repos.2,
             AuthnType::ScramSha256,
             message_outbox.clone(),
+            false,
         )
         .unwrap();
 
@@ -1284,6 +1307,7 @@ pub mod tests {
             &repos.2,
             AuthnType::ScramSha256,
             message_outbox.clone(),
+            false,
         )
         .unwrap();
 
@@ -1353,6 +1377,7 @@ pub mod tests {
             &repos.2,
             AuthnType::ScramSha256,
             message_outbox.clone(),
+            false,
         )
         .unwrap();
         let mut authenticator =
@@ -1435,6 +1460,7 @@ pub mod tests {
             &repos.2,
             AuthnType::Insecure,
             message_outbox.clone(),
+            false,
         )
         .unwrap();
 
@@ -1482,6 +1508,7 @@ pub mod tests {
             &repos.2,
             AuthnType::Insecure,
             message_outbox.clone(),
+            false,
         )
         .unwrap();
 
@@ -1529,6 +1556,7 @@ pub mod tests {
             &repos.2,
             AuthnType::Insecure,
             message_outbox.clone(),
+            false,
         )
         .unwrap();
 
@@ -1574,6 +1602,7 @@ pub mod tests {
             &repos.2,
             AuthnType::Insecure,
             message_outbox.clone(),
+            false,
         )
         .unwrap();
 
@@ -1621,6 +1650,7 @@ pub mod tests {
             &repos.2,
             AuthnType::Insecure,
             message_outbox.clone(),
+            false,
         )
         .unwrap();
 
@@ -1652,7 +1682,7 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_message_when_start() {
+    fn mgtcontrol_process_inbound_message_when_start_for_user_context() {
         let repos = create_repos(false, false, true);
         let event_channel = mpsc::channel();
         let service_mgr = create_service_mgr(false, false, true, false);
@@ -1666,6 +1696,7 @@ pub mod tests {
             &repos.2,
             AuthnType::Insecure,
             message_outbox.clone(),
+            false,
         )
         .unwrap();
 
@@ -1705,7 +1736,61 @@ pub mod tests {
     }
 
     #[test]
-    fn mgtcontrol_process_inbound_message_when_invalid_start() {
+    fn mgtcontrol_process_inbound_message_when_start_for_nonprxy_gateway_context() {
+        let repos = create_repos(false, false, false);
+        let event_channel = mpsc::channel();
+        let service_mgr = create_service_mgr(false, false, true, false);
+        let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
+
+        let mut controller = create_controller(
+            service_mgr,
+            event_channel.0,
+            &repos.0,
+            &repos.1,
+            &repos.2,
+            AuthnType::Insecure,
+            message_outbox.clone(),
+            true,
+        )
+        .unwrap();
+
+        let request_json = serde_json::to_value(management::request::Request::Start {
+            service_name: "Service200".to_string(),
+            local_port: 3000,
+        })
+        .unwrap();
+        let request_cmd_json = Value::String(format!(
+            "{} -s {} -p {}",
+            management::request::PROTOCOL_REQUEST_START,
+            "Service200",
+            3000
+        ));
+
+        let result = controller.process_inbound_message(MessageFrame::new(
+            ControlChannel::Management,
+            control::pdu::CODE_OK,
+            &None,
+            &None,
+            &Some(request_cmd_json.clone()),
+        ));
+
+        if let Err(err) = &result {
+            panic!("Unexpected process request result: err={:?}", err);
+        }
+
+        let expected_response_pdu = MessageFrame::new(
+            ControlChannel::Management,
+            control::pdu::CODE_OK,
+            &None,
+            &Some(request_json),
+            &Some(json!({"client_port":3000,"gateway_host":"proxyhost1","gateway_port":6000,"service":{"address":"localhost:8200","id":200,"name":"Service200","transport":"TCP"}})),
+        ).build_pdu().unwrap();
+
+        assert_msg_frame_pdu_equality(&message_outbox, expected_response_pdu, None);
+    }
+
+    #[test]
+    fn mgtcontrol_process_inbound_message_when_invalid_start_for_bad_service() {
         let repos = create_repos(false, false, true);
         let event_channel = mpsc::channel();
         let service_mgr = create_service_mgr(false, false, false, false);
@@ -1719,6 +1804,7 @@ pub mod tests {
             &repos.2,
             AuthnType::Insecure,
             message_outbox.clone(),
+            false,
         )
         .unwrap();
 
@@ -1760,6 +1846,70 @@ pub mod tests {
     }
 
     #[test]
+    fn mgtcontrol_process_inbound_message_when_invalid_start_for_unauthorized_user() {
+        let repos = create_repos(false, false, false);
+        let event_channel = mpsc::channel();
+        let service_mgr = create_service_mgr(false, false, false, false);
+        let message_outbox = Arc::new(Mutex::new(VecDeque::new()));
+
+        let mut access_repo = MockAccessRepo::new();
+        access_repo
+            .expect_get_for_user()
+            .with(predicate::eq(200), predicate::eq(create_user()))
+            .times(1)
+            .return_once(move |_, _| Ok(None));
+        let access_repo: Arc<Mutex<dyn AccessRepository>> = Arc::new(Mutex::new(access_repo));
+
+        let mut controller = create_controller(
+            service_mgr,
+            event_channel.0,
+            &repos.0,
+            &repos.1,
+            &access_repo,
+            AuthnType::Insecure,
+            message_outbox.clone(),
+            false,
+        )
+        .unwrap();
+
+        let request_json = serde_json::to_value(management::request::Request::Start {
+            service_name: "Service200".to_string(),
+            local_port: 3000,
+        })
+        .unwrap();
+        let request_cmd_json = Value::String(format!(
+            "{} -s {} -p {}",
+            management::request::PROTOCOL_REQUEST_START,
+            "Service200",
+            3000
+        ));
+
+        let result = controller.process_inbound_message(MessageFrame::new(
+            ControlChannel::Management,
+            control::pdu::CODE_OK,
+            &None,
+            &None,
+            &Some(request_cmd_json.clone()),
+        ));
+
+        if let Err(err) = &result {
+            panic!("Unexpected process request result: err={:?}", err);
+        }
+
+        let expected_response_pdu = MessageFrame::new(
+            ControlChannel::Management,
+            control::pdu::CODE_FORBIDDEN,
+            &Some("Response: code=403, msg=User is not authorized for service: user_id=100, svc_id=200".to_string()),
+            &Some(request_json),
+            &None,
+        )
+        .build_pdu()
+        .unwrap();
+
+        assert_msg_frame_pdu_equality(&message_outbox, expected_response_pdu, None);
+    }
+
+    #[test]
     fn mgtcontrol_process_inbound_message_when_stop() {
         let repos = create_repos(false, false, true);
         let event_channel = mpsc::channel();
@@ -1774,6 +1924,7 @@ pub mod tests {
             &repos.2,
             AuthnType::Insecure,
             message_outbox.clone(),
+            false,
         )
         .unwrap();
 
@@ -1827,6 +1978,7 @@ pub mod tests {
             &repos.2,
             AuthnType::Insecure,
             message_outbox.clone(),
+            false,
         )
         .unwrap();
 
@@ -1880,6 +2032,7 @@ pub mod tests {
             &repos.2,
             AuthnType::ScramSha256,
             message_outbox.clone(),
+            false,
         )
         .unwrap();
 
@@ -1902,6 +2055,7 @@ pub mod tests {
             &repos.2,
             AuthnType::Insecure,
             message_outbox.clone(),
+            false,
         )
         .unwrap();
 

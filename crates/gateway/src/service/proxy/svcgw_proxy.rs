@@ -4,21 +4,23 @@ use anyhow::Result;
 use rustls::server::Accepted;
 use rustls::ServerConfig;
 use std::collections::HashMap;
-use std::net::{SocketAddr, TcpStream};
+use std::net::TcpStream;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
+use trust0_common::client::service::ProxyAddrs;
 use trust0_common::control::tls;
 use trust0_common::control::tls::message::{self, ConnectionAddrs};
 use trust0_common::crypto::alpn;
-#[cfg(test)]
 use trust0_common::crypto::ca::{CertAccessContext, EntityType};
 use trust0_common::error::AppError;
 use trust0_common::model::service::Service;
 #[cfg(test)]
 use trust0_common::model::user;
 use trust0_common::net::stream_utils;
+use trust0_common::net::tls_client;
+use trust0_common::net::tls_client::conn_std::TlsClientConnection;
+use trust0_common::net::tls_server;
 use trust0_common::net::tls_server::conn_std::TlsServerConnection;
-use trust0_common::net::tls_server::{conn_std, server_std};
 use trust0_common::proxy::event::ProxyEvent;
 use trust0_common::proxy::executor::ProxyExecutorEvent;
 use trust0_common::proxy::proxy_base::ProxyType;
@@ -27,20 +29,19 @@ use trust0_common::sync;
 use x509_parser::prelude::{ASN1Time, Validity};
 
 use crate::config::AppConfig;
-use crate::control::client::connection::ClientConnVisitor;
-#[cfg(test)]
-use crate::control::client::device::Device;
+use crate::control;
+use crate::control::client::device;
 use crate::service::manager::ServiceMgr;
 use crate::service::proxy::proxy_base::{GatewayServiceProxy, GatewayServiceProxyVisitor};
 
-/// Gateway service proxy (TCP trust0 gateway <-> TCP service)
-pub struct TcpGatewayProxy {
+/// Gateway-to-gateway service proxy (TCP trust0 client-gateway <-> TLS trust0 service-gateway)
+pub struct ServiceGatewayProxy {
     /// TLS server (delegate) for given service proxy
-    tls_server: server_std::Server,
+    tls_server: tls_server::server_std::Server,
 }
 
-impl TcpGatewayProxy {
-    /// TcpGatewayProxy constructor
+impl ServiceGatewayProxy {
+    /// ServiceGatewayProxy constructor
     ///
     /// # Arguments
     ///
@@ -50,15 +51,15 @@ impl TcpGatewayProxy {
     ///
     /// # Returns
     ///
-    /// A newly constructed [`TcpGatewayProxy`] object.
+    /// A newly constructed [`ServiceGatewayProxy`] object.
     ///
     pub fn new(
         app_config: &Arc<AppConfig>,
-        server_visitor: Arc<Mutex<TcpGatewayProxyServerVisitor>>,
+        server_visitor: Arc<Mutex<ServiceGatewayProxyServerVisitor>>,
         proxy_port: u16,
     ) -> Self {
         Self {
-            tls_server: server_std::Server::new(
+            tls_server: tls_server::server_std::Server::new(
                 server_visitor,
                 &app_config.server_host,
                 proxy_port,
@@ -68,7 +69,7 @@ impl TcpGatewayProxy {
     }
 }
 
-impl GatewayServiceProxy for TcpGatewayProxy {
+impl GatewayServiceProxy for ServiceGatewayProxy {
     fn startup(&mut self) -> Result<(), AppError> {
         self.tls_server.bind_listener()?;
         self.tls_server.poll_new_connections()
@@ -79,10 +80,10 @@ impl GatewayServiceProxy for TcpGatewayProxy {
     }
 }
 
-unsafe impl Send for TcpGatewayProxy {}
+unsafe impl Send for ServiceGatewayProxy {}
 
 /// tls_server::server_std::Server strategy visitor pattern implementation
-pub struct TcpGatewayProxyServerVisitor {
+pub struct ServiceGatewayProxyServerVisitor {
     /// Application configuration object
     app_config: Arc<AppConfig>,
     /// Service manager
@@ -105,11 +106,13 @@ pub struct TcpGatewayProxyServerVisitor {
     proxy_addrs_by_proxy_key: HashMap<String, ConnectionAddrs>,
     /// Map of proxy keys/addresses by device
     proxy_keys_by_device: HashMap<String, Vec<(String, ConnectionAddrs)>>,
+    /// Service proxy addrs result from service startup on service-gateway
+    service_gateway_proxy_addrs: ProxyAddrs,
 }
 
-impl TcpGatewayProxyServerVisitor {
+impl ServiceGatewayProxyServerVisitor {
     #[allow(clippy::too_many_arguments)]
-    /// TcpGatewayProxyServerVisitor constructor
+    /// ServiceGatewayProxyServerVisitor constructor
     ///
     /// # Arguments
     ///
@@ -121,10 +124,11 @@ impl TcpGatewayProxyServerVisitor {
     /// * `proxy_tasks_sender` - Channel sender for proxy executor events
     /// * `proxy_events_sender` - Channel sender for proxy events
     /// * `services_by_proxy_key` - Map of services by proxy key
+    /// * `service_gateway_proxy_addrs` - Service proxy addrs result from service startup on service-gateway
     ///
     /// # Returns
     ///
-    /// A [`Result`] containing a newly constructed [`TcpGatewayProxyServerVisitor`] object.
+    /// A [`Result`] containing a newly constructed [`ServiceGatewayProxyServerVisitor`] object.
     ///
     pub fn new(
         app_config: &Arc<AppConfig>,
@@ -135,6 +139,7 @@ impl TcpGatewayProxyServerVisitor {
         proxy_tasks_sender: &Sender<ProxyExecutorEvent>,
         proxy_events_sender: &Sender<ProxyEvent>,
         services_by_proxy_key: &Arc<Mutex<HashMap<String, i64>>>,
+        service_gateway_proxy_addrs: &ProxyAddrs,
     ) -> Result<Self, AppError> {
         Ok(Self {
             app_config: app_config.clone(),
@@ -148,6 +153,7 @@ impl TcpGatewayProxyServerVisitor {
             devices_by_proxy_addrs: HashMap::new(),
             proxy_addrs_by_proxy_key: HashMap::new(),
             proxy_keys_by_device: HashMap::new(),
+            service_gateway_proxy_addrs: service_gateway_proxy_addrs.clone(),
         })
     }
 
@@ -161,32 +167,39 @@ impl TcpGatewayProxyServerVisitor {
     ///
     /// # Returns
     ///
-    /// A [`Result`] containing tuple of: connection visitor; device ID; user ID; ALPN protocol
+    /// A [`Result`] containing tuple of: device ID; user ID; ALPN protocol
     ///
     #[cfg(not(test))]
     fn process_connection_authorization(
         &self,
         tls_conn: &TlsServerConnection,
         client_msg: Option<message::SessionMessage>,
-    ) -> Result<(ClientConnVisitor, String, i64, alpn::Protocol), AppError> {
-        let mut conn_visitor = ClientConnVisitor::new(&self.app_config, &self.service_mgr);
-        let protocol = conn_visitor.process_authorization(
+    ) -> Result<(String, i64, alpn::Protocol), AppError> {
+        let mut control_conn_visitor = control::client::connection::ClientConnVisitor::new(
+            &self.app_config,
+            &self.service_mgr,
+        );
+        let protocol = control_conn_visitor.process_authorization(
             tls_conn,
             Some(self.service.service_id),
             client_msg,
         )?;
-        let device_id = conn_visitor.get_device().as_ref().unwrap().get_id();
-        let user_id = conn_visitor.get_user().as_ref().unwrap().user_id;
-        Ok((conn_visitor, device_id.to_string(), user_id, protocol))
+        let device_id = control_conn_visitor.get_device().as_ref().unwrap().get_id();
+        let user_id = control_conn_visitor.get_user().as_ref().unwrap().user_id;
+        Ok((device_id.to_string(), user_id, protocol))
     }
+
     #[cfg(test)]
     fn process_connection_authorization(
         &self,
         _tls_conn: &TlsServerConnection,
         _client_msg: Option<message::SessionMessage>,
-    ) -> Result<(ClientConnVisitor, String, i64, alpn::Protocol), AppError> {
-        let mut conn_visitor = ClientConnVisitor::new(&self.app_config, &self.service_mgr);
-        let device = Device {
+    ) -> Result<(String, i64, alpn::Protocol), AppError> {
+        let mut control_conn_visitor = control::client::connection::ClientConnVisitor::new(
+            &self.app_config,
+            &self.service_mgr,
+        );
+        let device = device::Device {
             cert_subj: HashMap::new(),
             cert_alt_subj: HashMap::new(),
             cert_access_context: CertAccessContext {
@@ -194,7 +207,11 @@ impl TcpGatewayProxyServerVisitor {
                 platform: "plat1".to_string(),
                 user_id: 100,
             },
-            proxied_access_context: None,
+            proxied_access_context: Some(CertAccessContext {
+                entity_type: EntityType::Client,
+                platform: "plat1".to_string(),
+                user_id: 100,
+            }),
             cert_serial_num: vec![0x03u8, 0xe8u8],
             cert_validity: Validity {
                 not_before: ASN1Time::from(datetime!(2025-12-21 19:04:45.0 +00:00:00)),
@@ -202,31 +219,26 @@ impl TcpGatewayProxyServerVisitor {
             },
         };
         let user = user::User::new(100, None, None, "name100", &user::Status::Active, &[]);
-        conn_visitor.set_device(Some(device.clone()));
-        conn_visitor.set_user(Some(user.clone()));
-        conn_visitor.set_protocol(Some(alpn::Protocol::Service(200)));
-        Ok((
-            conn_visitor,
-            device.get_id(),
-            user.user_id,
-            alpn::Protocol::Service(200),
-        ))
+        control_conn_visitor.set_device(Some(device.clone()));
+        control_conn_visitor.set_user(Some(user.clone()));
+        control_conn_visitor.set_protocol(Some(alpn::Protocol::Service(200)));
+        Ok((device.get_id(), user.user_id, alpn::Protocol::Service(200)))
     }
 }
 
-impl server_std::ServerVisitor for TcpGatewayProxyServerVisitor {
+impl tls_server::server_std::ServerVisitor for ServiceGatewayProxyServerVisitor {
     fn create_client_conn(
         &mut self,
         tls_conn: TlsServerConnection,
         client_msg: Option<tls::message::SessionMessage>,
-    ) -> Result<conn_std::Connection, AppError> {
-        let (conn_visitor, device_id, _user_id, alpn_protocol) =
+    ) -> Result<tls_server::conn_std::Connection, AppError> {
+        let (device_id, _user_id, alpn_protocol) =
             self.process_connection_authorization(&tls_conn, client_msg)?;
         let conn_addrs = tls::message::Trust0Connection::create_connection_addrs(&tls_conn.sock);
         self.devices_by_proxy_addrs
             .insert(conn_addrs.clone(), device_id);
-        conn_std::Connection::new(
-            Box::new(conn_visitor),
+        tls_server::conn_std::Connection::new(
+            Box::new(ServerConnVisitor::new()?),
             tls_conn,
             &conn_addrs,
             &alpn_protocol,
@@ -253,58 +265,50 @@ impl server_std::ServerVisitor for TcpGatewayProxyServerVisitor {
         )))
     }
 
-    fn on_conn_accepted(&mut self, connection: conn_std::Connection) -> Result<(), AppError> {
-        // Make connection to service
+    fn on_conn_accepted(
+        &mut self,
+        connection: tls_server::conn_std::Connection,
+    ) -> Result<(), AppError> {
+        // Make connection to service-gateway service proxy
 
-        let mut service_stream: Option<TcpStream> = None;
-        let mut response_err = None;
-
-        let resolved_host = self
+        let mut tls_client_config = self
             .app_config
-            .dns_client
-            .lookup_ip(self.service.host.as_str())
-            .map_err(|err| {
-                AppError::General(format!(
-                    "Failed resolving host: host={}, err={:?}",
-                    &self.service.host, &err
-                ))
-            })?;
+            .as_ref()
+            .tls_client_config
+            .as_ref()
+            .unwrap()
+            .clone();
+        tls_client_config.alpn_protocols =
+            vec![alpn::Protocol::create_service_protocol(self.service.service_id).into_bytes()];
 
-        for host_addr in resolved_host.into_iter() {
-            let service_addr = SocketAddr::new(host_addr, self.service.port);
+        let device_id_parsed = device::Device::parse_id(
+            self.devices_by_proxy_addrs
+                .get(connection.get_session_addrs())
+                .ok_or(AppError::General(format!(
+                    "Unknown device for proxy session address pair: addrs={:?}",
+                    connection.get_session_addrs()
+                )))?
+                .as_str(),
+        )?;
 
-            match TcpStream::connect(service_addr) {
-                Ok(socket) => {
-                    let tcp_socket_str = format!("{:?}", &socket);
-                    stream_utils::set_std_tcp_stream_blocking_and_delay(
-                        &socket,
-                        false,
-                        false,
-                        Box::new(move || format!("socket={:?}", &tcp_socket_str)),
-                    )?;
-                    service_stream = Some(socket);
-                    break;
-                }
-                Err(err) => {
-                    response_err = Some(AppError::General(format!(
-                        "Failed connect to service endpoint(s): addr={:?}, svc={:?}, err={:?}",
-                        &service_addr, &self.service, &err
-                    )));
-                }
-            }
-        }
+        let mut tls_client = tls_client::client_std::Client::new(
+            Box::new(ServiceGatewayClientVisitor::new(
+                device_id_parsed.2.unwrap(),
+            )),
+            tls_client_config,
+            self.service_gateway_proxy_addrs.get_gateway_host(),
+            self.service_gateway_proxy_addrs.get_gateway_port(),
+            true,
+        );
 
-        if service_stream.is_none() {
-            return match response_err {
-                Some(err) => Err(err),
-                None => Err(AppError::General(format!(
-                    "No resolved service endpoints: svc={:?}",
-                    &self.service
-                ))),
-            };
-        }
+        tls_client.connect()?;
 
-        let service_stream = service_stream.unwrap();
+        let tls_client_conn = tls_client.get_connection().as_ref().unwrap();
+
+        let svcgw_stream = stream_utils::clone_std_tcp_stream(
+            tls_client_conn.get_tcp_stream(),
+            "svcgw-proxy-server",
+        )?;
 
         // Send request to proxy executor to startup new proxy
 
@@ -313,21 +317,21 @@ impl server_std::ServerVisitor for TcpGatewayProxyServerVisitor {
         let proxy_key = ProxyEvent::key_value(
             &ProxyType::TcpAndTcp,
             &tcp_stream.peer_addr().ok(),
-            &service_stream.peer_addr().ok(),
+            &svcgw_stream.peer_addr().ok(),
         );
-        let client_stream = stream_utils::clone_std_tcp_stream(tcp_stream, "tcp-proxy-server")?;
-        let service_stream_copy =
-            stream_utils::clone_std_tcp_stream(&service_stream, "tcp-proxy-server-service")?;
+        let client_stream = stream_utils::clone_std_tcp_stream(tcp_stream, "svcgw-proxy-server")?;
 
         let open_proxy_request = ProxyExecutorEvent::OpenTcpAndTcpProxy(
             proxy_key.clone(),
             (
                 client_stream,
-                service_stream,
+                svcgw_stream,
                 Arc::new(Mutex::new(Box::<TlsServerConnection>::new(
                     connection.into(),
                 ))),
-                Arc::new(Mutex::new(Box::new(service_stream_copy))),
+                Arc::new(Mutex::new(Box::<TlsClientConnection>::new(
+                    tls_client.into(),
+                ))),
                 self.proxy_events_sender.clone(),
             ),
         );
@@ -338,7 +342,7 @@ impl server_std::ServerVisitor for TcpGatewayProxyServerVisitor {
             open_proxy_request,
             Box::new(move || {
                 format!(
-                    "Error while sending request for new TCP proxy: proxy_key={},",
+                    "Error while sending request for new SVCGW proxy: proxy_key={},",
                     &proxy_key_copy
                 )
             }),
@@ -375,7 +379,7 @@ impl server_std::ServerVisitor for TcpGatewayProxyServerVisitor {
     }
 }
 
-impl GatewayServiceProxyVisitor for TcpGatewayProxyServerVisitor {
+impl GatewayServiceProxyVisitor for ServiceGatewayProxyServerVisitor {
     fn get_service(&self) -> Service {
         self.service.clone()
     }
@@ -484,6 +488,135 @@ impl GatewayServiceProxyVisitor for TcpGatewayProxyServerVisitor {
     }
 }
 
+/// tls_client::std_client::Client strategy visitor pattern implementation
+pub struct ServiceGatewayClientVisitor {
+    /// Trust0 client user ID
+    proxied_user_id: i64,
+}
+
+unsafe impl Send for ServiceGatewayClientVisitor {}
+
+impl ServiceGatewayClientVisitor {
+    /// ClientVisitor constructor
+    ///
+    /// # Arguments
+    ///
+    /// * `proxied_user_id` - Trust0 client device user ID
+    ///
+    /// # Returns
+    ///
+    /// A newly constructed [`ServiceGatewayClientVisitor`]
+    ///
+    pub fn new(proxied_user_id: i64) -> Self {
+        Self { proxied_user_id }
+    }
+
+    /// Generate client access context session message
+    ///
+    /// # Returns
+    ///
+    /// The [`tls::message::SessionMessage`] of a [`tls::message::DataType::ClientAccessContext`]
+    /// message type for the given user client device access context
+    ///
+    fn create_access_session_message(
+        &self,
+    ) -> Result<Option<tls::message::SessionMessage>, AppError> {
+        Ok(Some(tls::message::SessionMessage::new(
+            &tls::message::DataType::ClientAccessContext,
+            &Some(
+                serde_json::to_value(tls::message::ClientAccessContext {
+                    access: CertAccessContext {
+                        entity_type: EntityType::Gateway,
+                        platform: "".to_string(),
+                        user_id: self.proxied_user_id,
+                    },
+                })
+                .unwrap(),
+            ),
+        )))
+    }
+}
+
+impl tls_client::client_std::ClientVisitor for ServiceGatewayClientVisitor {
+    fn create_server_conn(
+        &mut self,
+        tls_conn: tls_client::conn_std::TlsClientConnection,
+        server_msg: Option<tls::message::SessionMessage>,
+    ) -> Result<tls_client::conn_std::Connection, AppError> {
+        let conn_visitor = ClientConnVisitor::new()?;
+
+        let session_addrs = match server_msg {
+            Some(msg) if msg.data_type == tls::message::DataType::Trust0Connection => {
+                let t0_conn =
+                    serde_json::from_value::<tls::message::Trust0Connection>(msg.data.unwrap())
+                        .map_err(|err| {
+                            AppError::General(format!(
+                                "Invalid Trust0Connection json: err={:?}",
+                                &err
+                            ))
+                        })?;
+                Some(t0_conn.binds)
+            }
+            _ => None,
+        };
+        let session_addrs = match session_addrs {
+            Some(addrs) => addrs,
+            None => tls::message::Trust0Connection::create_connection_addrs(&tls_conn.sock),
+        };
+
+        tls_client::conn_std::Connection::new(Box::new(conn_visitor), tls_conn, &session_addrs)
+    }
+
+    fn on_client_msg_provider(
+        &mut self,
+        _tls_conn: &TlsClientConnection,
+    ) -> Result<Option<tls::message::SessionMessage>, AppError> {
+        self.create_access_session_message()
+    }
+}
+
+/// tls_server::std_conn::Connection strategy visitor pattern implementation
+pub struct ServerConnVisitor {}
+
+impl ServerConnVisitor {
+    /// ServerConnVisitor constructor
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing a newly constructed [`ServerConnVisitor`] object.
+    ///
+    pub fn new() -> Result<Self, AppError> {
+        Ok(Self {})
+    }
+}
+
+impl tls_server::conn_std::ConnectionVisitor for ServerConnVisitor {
+    fn send_error_response(&mut self, _err: &AppError) {}
+}
+
+unsafe impl Send for ServerConnVisitor {}
+
+/// tls_client::std_conn::Connection strategy visitor pattern implementation
+pub struct ClientConnVisitor {}
+
+impl ClientConnVisitor {
+    /// ClientConnVisitor constructor
+    ///
+    /// # Returns
+    ///
+    /// A [`Result`] containing a newly constructed [`ClientConnVisitor`] object.
+    ///
+    pub fn new() -> Result<Self, AppError> {
+        Ok(Self {})
+    }
+}
+
+impl tls_client::conn_std::ConnectionVisitor for ClientConnVisitor {
+    fn send_error_response(&mut self, _err: &AppError) {}
+}
+
+unsafe impl Send for ClientConnVisitor {}
+
 /// Unit tests
 #[cfg(test)]
 pub mod tests {
@@ -504,10 +637,10 @@ pub mod tests {
     use trust0_common::net::tls_server::server_std::ServerVisitor;
 
     #[test]
-    fn tcpgwproxy_new() {
+    fn svcgwproxy_new() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
-                config::GatewayType::Service,
+                config::GatewayType::Client,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -516,7 +649,7 @@ pub mod tests {
             .unwrap(),
         );
         let service_mgr = Arc::new(Mutex::new(MockSvcMgr::new()));
-        let server_visitor = Arc::new(Mutex::new(TcpGatewayProxyServerVisitor {
+        let server_visitor = Arc::new(Mutex::new(ServiceGatewayProxyServerVisitor {
             app_config: app_config.clone(),
             service_mgr: service_mgr.clone(),
             service: Service {
@@ -534,16 +667,17 @@ pub mod tests {
             devices_by_proxy_addrs: HashMap::new(),
             proxy_addrs_by_proxy_key: HashMap::new(),
             proxy_keys_by_device: HashMap::new(),
+            service_gateway_proxy_addrs: ProxyAddrs(2000, "host1".to_string(), 8888),
         }));
 
-        let _ = TcpGatewayProxy::new(&app_config, server_visitor, 3000);
+        let _ = ServiceGatewayProxy::new(&app_config, server_visitor, 3000);
     }
 
     #[test]
-    fn tcpsvrproxyvisit_new() {
+    fn svcgwsvrproxyvisit_new() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
-                config::GatewayType::Service,
+                config::GatewayType::Client,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -553,7 +687,7 @@ pub mod tests {
         );
         let service_mgr: Arc<Mutex<dyn ServiceMgr>> = Arc::new(Mutex::new(MockSvcMgr::new()));
 
-        let result = TcpGatewayProxyServerVisitor::new(
+        let result = ServiceGatewayProxyServerVisitor::new(
             &app_config,
             &service_mgr,
             &Service {
@@ -568,6 +702,7 @@ pub mod tests {
             &sync::mpsc::channel().0,
             &sync::mpsc::channel().0,
             &Arc::new(Mutex::new(HashMap::new())),
+            &ProxyAddrs(2000, "host1".to_string(), 8888),
         );
 
         if let Err(err) = result {
@@ -576,10 +711,10 @@ pub mod tests {
     }
 
     #[test]
-    fn tcpsvrproxyvisit_create_client_conn() {
+    fn svcgwsvrproxyvisit_create_client_conn() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
-                config::GatewayType::Service,
+                config::GatewayType::Client,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -592,7 +727,7 @@ pub mod tests {
         let connected_tcp_local_addr = connected_tcp_stream.server_stream.0.local_addr().unwrap();
         let service_mgr = Arc::new(Mutex::new(MockSvcMgr::new()));
 
-        let mut server_visitor = TcpGatewayProxyServerVisitor {
+        let mut server_visitor = ServiceGatewayProxyServerVisitor {
             app_config: app_config.clone(),
             service_mgr: service_mgr.clone(),
             service: Service {
@@ -610,6 +745,7 @@ pub mod tests {
             devices_by_proxy_addrs: HashMap::new(),
             proxy_addrs_by_proxy_key: HashMap::new(),
             proxy_keys_by_device: HashMap::new(),
+            service_gateway_proxy_addrs: ProxyAddrs(2000, "host1".to_string(), 8888),
         };
 
         if let Err(err) = server_visitor.create_client_conn(
@@ -624,7 +760,7 @@ pub mod tests {
                 .unwrap(),
                 stream_utils::clone_std_tcp_stream(
                     &connected_tcp_stream.server_stream.0,
-                    "tcp-proxy-server",
+                    "svcgw-proxy-server",
                 )
                 .unwrap(),
             ),
@@ -638,6 +774,7 @@ pub mod tests {
             format!("{:?}", connected_tcp_peer_addr),
             format!("{:?}", connected_tcp_local_addr),
         );
+
         assert!(server_visitor
             .devices_by_proxy_addrs
             .contains_key(&expected_proxy_addrs));
@@ -651,10 +788,10 @@ pub mod tests {
     }
 
     #[test]
-    fn tcpsvrproxyvisit_on_server_msg_provider() {
+    fn svcgwsvrproxyvisit_on_server_msg_provider() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
-                config::GatewayType::Service,
+                config::GatewayType::Client,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -665,7 +802,7 @@ pub mod tests {
         let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
         let service_mgr = Arc::new(Mutex::new(MockSvcMgr::new()));
 
-        let mut server_visitor = TcpGatewayProxyServerVisitor {
+        let mut server_visitor = ServiceGatewayProxyServerVisitor {
             app_config: app_config.clone(),
             service_mgr: service_mgr.clone(),
             service: Service {
@@ -683,6 +820,7 @@ pub mod tests {
             devices_by_proxy_addrs: HashMap::new(),
             proxy_addrs_by_proxy_key: HashMap::new(),
             proxy_keys_by_device: HashMap::new(),
+            service_gateway_proxy_addrs: ProxyAddrs(2000, "host1".to_string(), 8888),
         };
 
         let server_msg_result = server_visitor.on_server_msg_provider(
@@ -721,10 +859,10 @@ pub mod tests {
     }
 
     #[test]
-    fn tcpsvrproxyvisit_on_conn_accepted_when_service_unresolvable() {
+    fn svcgwsvrproxyvisit_on_conn_accepted_when_service_unresolvable() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
-                config::GatewayType::Service,
+                config::GatewayType::Client,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -735,14 +873,14 @@ pub mod tests {
         let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
         let service_mgr = Arc::new(Mutex::new(MockSvcMgr::new()));
 
-        let mut server_visitor = TcpGatewayProxyServerVisitor {
+        let mut server_visitor = ServiceGatewayProxyServerVisitor {
             app_config: app_config.clone(),
             service_mgr: service_mgr.clone(),
             service: Service {
                 service_id: 200,
                 name: "svc200".to_string(),
                 transport: Transport::TCP,
-                host: "invalid svc200 host".to_string(),
+                host: "host".to_string(),
                 port: 4000,
             },
             proxy_host: Some("gwhost1".to_string()),
@@ -753,6 +891,7 @@ pub mod tests {
             devices_by_proxy_addrs: HashMap::new(),
             proxy_addrs_by_proxy_key: HashMap::new(),
             proxy_keys_by_device: HashMap::new(),
+            service_gateway_proxy_addrs: ProxyAddrs(2000, "invalid svcgw host".to_string(), 8888),
         };
 
         let client_conn = server_visitor
@@ -779,9 +918,7 @@ pub mod tests {
         match server_visitor.on_conn_accepted(client_conn) {
             Ok(()) => panic!("Unexpected successful result"),
             Err(err) => {
-                if !err.to_string().contains("resolving host")
-                    && !err.to_string().contains("resolved service endpoint")
-                {
+                if !err.to_string().contains("Failed to resolve server host") {
                     panic!("Unexpected result: err={:?}", &err);
                 }
             }
@@ -789,10 +926,10 @@ pub mod tests {
     }
 
     #[test]
-    fn tcpsvrproxyvisit_on_conn_accepted_when_successful() {
+    fn svcgwsvrproxyvisit_on_conn_accepted_when_successful() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
-                config::GatewayType::Service,
+                config::GatewayType::Client,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -806,8 +943,6 @@ pub mod tests {
         let connected_tcp_stream = stream_utils::ConnectedTcpStream::new().unwrap();
         let connected_tcp_peer_addr = connected_tcp_stream.server_stream.0.peer_addr().unwrap();
         let connected_tcp_local_addr = connected_tcp_stream.server_stream.0.local_addr().unwrap();
-        let server_listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let service_port = server_listener.local_addr().unwrap().port();
         let service_mgr = Arc::new(Mutex::new(MockSvcMgr::new()));
         let expected_device_id = "C:03e8:100";
         let expected_proxy_addrs = (
@@ -815,15 +950,26 @@ pub mod tests {
             format!("{:?}", connected_tcp_local_addr),
         );
 
-        let mut server_visitor = TcpGatewayProxyServerVisitor {
+        let tcp_listener = std::net::TcpListener::bind("localhost:0").unwrap();
+        let svcgw_proxy_port = tcp_listener.local_addr().unwrap().port();
+        let tls_server_config = Arc::new(
+            proxy_base::tests::create_tls_server_config(
+                true,
+                vec![alpn::Protocol::create_service_protocol(200).into_bytes()],
+            )
+            .unwrap(),
+        );
+        proxy_base::tests::spawn_tls_server_listener(tcp_listener, tls_server_config, 1).unwrap();
+
+        let mut server_visitor = ServiceGatewayProxyServerVisitor {
             app_config: app_config.clone(),
             service_mgr: service_mgr.clone(),
             service: Service {
                 service_id: 200,
                 name: "svc200".to_string(),
                 transport: Transport::TCP,
-                host: "localhost".to_string(),
-                port: service_port,
+                host: "svc200-host".to_string(),
+                port: 2000,
             },
             proxy_host: Some("gwhost1".to_string()),
             proxy_port: 2000,
@@ -836,6 +982,11 @@ pub mod tests {
             )]),
             proxy_addrs_by_proxy_key: HashMap::new(),
             proxy_keys_by_device: HashMap::new(),
+            service_gateway_proxy_addrs: ProxyAddrs(
+                2000,
+                "localhost".to_string(),
+                svcgw_proxy_port,
+            ),
         };
 
         let client_conn = server_visitor
@@ -898,10 +1049,10 @@ pub mod tests {
     }
 
     #[test]
-    fn tcpsvrproxyvisit_accessors_and_mutators() {
+    fn svcgwsvrproxyvisit_accessors_and_mutators() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
-                config::GatewayType::Service,
+                config::GatewayType::Client,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -920,7 +1071,7 @@ pub mod tests {
         let device100_id = "C:03e8:100";
         let device101_id = "C:a756:101";
 
-        let server_visitor = TcpGatewayProxyServerVisitor {
+        let server_visitor = ServiceGatewayProxyServerVisitor {
             app_config: app_config.clone(),
             service_mgr: Arc::new(Mutex::new(MockSvcMgr::new())),
             service: Service {
@@ -976,6 +1127,7 @@ pub mod tests {
                     )],
                 ),
             ]),
+            service_gateway_proxy_addrs: ProxyAddrs(2000, "host1".to_string(), 8888),
         };
 
         assert_eq!(server_visitor.get_service(), service);
@@ -999,10 +1151,10 @@ pub mod tests {
     }
 
     #[test]
-    fn tcpsvrproxyvisit_shutdown_connections_when_no_device_supplied() {
+    fn svcgwsvrproxyvisit_shutdown_connections_when_no_device_supplied() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
-                config::GatewayType::Service,
+                config::GatewayType::Client,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -1015,7 +1167,7 @@ pub mod tests {
         let device100_id = "C:03e8:100";
         let device101_id = "C:a756:101";
 
-        let mut server_visitor = TcpGatewayProxyServerVisitor {
+        let mut server_visitor = ServiceGatewayProxyServerVisitor {
             app_config: app_config.clone(),
             service_mgr: Arc::new(Mutex::new(MockSvcMgr::new())),
             service: Service {
@@ -1084,6 +1236,7 @@ pub mod tests {
                     )],
                 ),
             ]),
+            service_gateway_proxy_addrs: ProxyAddrs(2000, "host1".to_string(), 8888),
         };
 
         if let Err(err) = server_visitor.shutdown_connections(&proxy_tasks_sender, None) {
@@ -1124,10 +1277,10 @@ pub mod tests {
     }
 
     #[test]
-    fn tcpsvrproxyvisit_shutdown_connections_when_device_supplied() {
+    fn svcgwsvrproxyvisit_shutdown_connections_when_device_supplied() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
-                config::GatewayType::Service,
+                config::GatewayType::Client,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -1140,7 +1293,7 @@ pub mod tests {
         let device100_id = "C:03e8:100";
         let device101_id = "C:a756:101";
 
-        let mut server_visitor = TcpGatewayProxyServerVisitor {
+        let mut server_visitor = ServiceGatewayProxyServerVisitor {
             app_config: app_config.clone(),
             service_mgr: Arc::new(Mutex::new(MockSvcMgr::new())),
             service: Service {
@@ -1209,6 +1362,7 @@ pub mod tests {
                     )],
                 ),
             ]),
+            service_gateway_proxy_addrs: ProxyAddrs(2000, "host1".to_string(), 8888),
         };
 
         if let Err(err) =
@@ -1273,10 +1427,10 @@ pub mod tests {
     }
 
     #[test]
-    fn tcpsvrproxyvisit_shutdown_connection_when_proxy_key_known() {
+    fn svcgwsvrproxyvisit_shutdown_connection_when_proxy_key_known() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
-                config::GatewayType::Service,
+                config::GatewayType::Client,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -1289,7 +1443,7 @@ pub mod tests {
         let device100_id = "C:03e8:100";
         let device101_id = "C:a756:101";
 
-        let mut server_visitor = TcpGatewayProxyServerVisitor {
+        let mut server_visitor = ServiceGatewayProxyServerVisitor {
             app_config: app_config.clone(),
             service_mgr: Arc::new(Mutex::new(MockSvcMgr::new())),
             service: Service {
@@ -1358,6 +1512,7 @@ pub mod tests {
                     )],
                 ),
             ]),
+            service_gateway_proxy_addrs: ProxyAddrs(2000, "host1".to_string(), 8888),
         };
 
         if let Err(err) = server_visitor.shutdown_connection(&proxy_tasks_sender, "key3") {
@@ -1442,10 +1597,10 @@ pub mod tests {
     }
 
     #[test]
-    fn tcpsvrproxyvisit_shutdown_connection_when_proxy_key_unknown() {
+    fn svcgwsvrproxyvisit_shutdown_connection_when_proxy_key_unknown() {
         let app_config = Arc::new(
             config::tests::create_app_config_with_repos(
-                config::GatewayType::Service,
+                config::GatewayType::Client,
                 Arc::new(Mutex::new(MockUserRepo::new())),
                 Arc::new(Mutex::new(MockServiceRepo::new())),
                 Arc::new(Mutex::new(MockRoleRepo::new())),
@@ -1458,7 +1613,7 @@ pub mod tests {
         let device100_id = "C:03e8:100";
         let device101_id = "C:a756:101";
 
-        let mut server_visitor = TcpGatewayProxyServerVisitor {
+        let mut server_visitor = ServiceGatewayProxyServerVisitor {
             app_config: app_config.clone(),
             service_mgr: Arc::new(Mutex::new(MockSvcMgr::new())),
             service: Service {
@@ -1527,6 +1682,7 @@ pub mod tests {
                     )],
                 ),
             ]),
+            service_gateway_proxy_addrs: ProxyAddrs(2000, "host1".to_string(), 8888),
         };
 
         if let Err(err) = server_visitor.shutdown_connection(&proxy_tasks_sender, "key4") {
@@ -1559,5 +1715,31 @@ pub mod tests {
             server_visitor.services_by_proxy_key.lock().unwrap().len(),
             3
         );
+    }
+
+    #[test]
+    fn svrconnvisit_new() {
+        let visitor = ServerConnVisitor::new();
+        assert!(visitor.is_ok());
+    }
+
+    #[test]
+    fn svrconnvisit_send_error_response() {
+        use trust0_common::net::tls_server::conn_std::ConnectionVisitor;
+        let mut visitor = ServerConnVisitor {};
+        visitor.send_error_response(&AppError::StreamEOF);
+    }
+
+    #[test]
+    fn cliconnvisit_new() {
+        let visitor = ClientConnVisitor::new();
+        assert!(visitor.is_ok());
+    }
+
+    #[test]
+    fn cliconnvisit_send_error_response() {
+        use trust0_common::net::tls_client::conn_std::ConnectionVisitor;
+        let mut visitor = ClientConnVisitor {};
+        visitor.send_error_response(&AppError::StreamEOF);
     }
 }

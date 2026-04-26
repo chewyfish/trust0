@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use std::fs;
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
-
-use crate::repository::role_repo::RoleRepository;
 use trust0_common::error::AppError;
 use trust0_common::file::{ReloadableFile, ReloadableTextFile};
 use trust0_common::logging::error;
 use trust0_common::model::role::Role;
 use trust0_common::target;
+
+use crate::repository::role_repo::RoleRepository;
 
 pub struct InMemRoleRepo {
     roles: RwLock<HashMap<i64, Role>>,
@@ -226,7 +226,7 @@ mod tests {
                 .into_inner()
                 .unwrap()
                 .iter()
-                .map(|e| (e.0.clone(), e.1.clone()))
+                .map(|e| (*e.0, e.1.clone()))
                 .collect::<Vec<(i64, Role)>>(),
         );
 
@@ -279,7 +279,7 @@ mod tests {
                 .into_inner()
                 .unwrap()
                 .iter()
-                .map(|e| (e.0.clone(), e.1.clone()))
+                .map(|e| (*e.0, e.1.clone()))
                 .collect::<Vec<(i64, Role)>>(),
         );
 
@@ -399,7 +399,7 @@ mod tests {
         let returned_role = result.unwrap();
 
         let stored_map = role_repo.roles.read().unwrap();
-        let stored_entry = stored_map.iter().map(|e| e.1).cloned().next();
+        let stored_entry = stored_map.iter().map(|e| e.1).next().cloned();
 
         role.role_id = 1;
 
