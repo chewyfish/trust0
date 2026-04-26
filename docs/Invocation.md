@@ -22,7 +22,7 @@ The gateway needs to be configured with the:
 * PKI certificates/keys (CA certificate, mTLS auth certificate, and its own certificate/key)
 * DB access information (may be left out, but client connections would be prohibited)
 
-Currently there is one type of gateway, which has the responsibility of serving Trust0 clients and proxying corresponding client service connections. In the near future, additional types will be added to divide this responsibility between serving clients (client gateway) and delegating connections to services (service gateway). Likewise client gateways will connect to service gateways to forward client service connnection traffic. This will allow for DMZ (and similar) network deployments.
+There are 3 types of gateways. The `full-gateway` has the responsibility of serving Trust0 clients and proxying corresponding client service connections. Two additional types divide this responsibility between serving clients (`client-gateway`) and delegating connections to services (`service-gateway`). Likewise client-gateways will connect to service-gateways to forward client service connnection traffic. This will allow for DMZ (and similar) network deployments.
 
 The following details the gateway invocation (common, full-gateway, client-gateway and service-gateway):
 

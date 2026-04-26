@@ -84,8 +84,11 @@ TRUST0_GATEWAY__PKI_KEY_FILE=${EXAMPLE_BUILD_DIR}/${TRUST0_GATEWAY__PKI_NAME}.ke
 TRUST0_GATEWAY__BINARY_NAME=trust0-gateway
 TRUST0_GATEWAY__BINARY_FILE=${PROJECT_BINARIES_BUILD_DIR}/${TRUST0_GATEWAY__BINARY_NAME}
 TRUST0_GATEWAY__HOST=localhost
+TRUST0_GATEWAY2__HOST=localhost
 TRUST0_GATEWAY__BIND_HOST=[::1]
+TRUST0_GATEWAY2__BIND_HOST=[::1]
 TRUST0_GATEWAY__SERVICE_HOST=${TRUST0_GATEWAY__HOST}
+TRUST0_GATEWAY2__SERVICE_HOST=${TRUST0_GATEWAY2__HOST}
 TRUST0_GATEWAY__CA_VALIDITY_PERIOD_DAYS=20
 TRUST0_GATEWAY__CA_REISSUANCE_THRESHOLD_DAYS=15
 
@@ -128,7 +131,7 @@ CRLSUPPORT__PKI_REVOKE_CLIENT_FILE=${EXAMPLE_BUILD_DIR}/revoked-${TRUST0_CLIENT_
 
 # Targets
 
-.PHONY: default clean-all trust0-common trust0-tools-image root-ca-pki generate-root-ca-pki-resources gateway-server-pki generate-gateway-pki-resources client-pki generate-client-pki-resources trust0-gateway trust0-gateway-image trust0-client trust0-client-image run-trust0-gateway run-trust0-client run-trust0-gateway-nodeps run-trust0-gateway-image-nodeps run-trust0-client-nodeps run-trust0-client-image-nodeps setup-crl-files
+.PHONY: default clean-all trust0-common trust0-tools-image root-ca-pki generate-root-ca-pki-resources gateway-server-pki generate-gateway-pki-resources client-pki generate-client-pki-resources trust0-gateway trust0-gateway-image trust0-client trust0-client-image run-trust0-gateway run-trust0-client run-trust0-gateway-nodeps run-trust0-dmz-client-gateway-nodeps run-trust0-dmz-service-gateway-nodeps run-trust0-gateway-image-nodeps run-trust0-client-nodeps run-trust0-client-image-nodeps setup-crl-files
 
 default:
 
@@ -188,6 +191,12 @@ run-trust0-gateway: trust0-gateway
 run-trust0-gateway-nodeps:
 	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --ca-root-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource ${TRUST0_GATEWAY__DATASOURCE} --db-connect ${TRUST0_GATEWAY__DB_CONNECT} full-gateway
 
+run-trust0-dmz-client-gateway-nodeps:
+	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --ca-root-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource ${TRUST0_GATEWAY__DATASOURCE} --db-connect ${TRUST0_GATEWAY__DB_CONNECT} client-gateway --service-gateway-host ${TRUST0_GATEWAY2__HOST} --service-gateway-port ${TRUST0_GATEWAY2__PORT}
+
+run-trust0-dmz-service-gateway-nodeps:
+	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY2__BIND_HOST} --port ${TRUST0_GATEWAY2__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --ca-root-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY2__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource ${TRUST0_GATEWAY__DATASOURCE} --db-connect ${TRUST0_GATEWAY__DB_CONNECT} service-gateway
+
 run-trust0-gateway-image-nodeps:
 	${TRUST0_GATEWAY__DOCKER_CMD} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --ca-root-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource ${TRUST0_GATEWAY__DATASOURCE} --db-connect ${TRUST0_GATEWAY__DB_CONNECT} full-gateway
 else
@@ -196,6 +205,12 @@ run-trust0-gateway: trust0-gateway
 
 run-trust0-gateway-nodeps:
 	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --ca-root-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource ${TRUST0_GATEWAY__DATASOURCE} --db-connect ${TRUST0_GATEWAY__DB_CONNECT} full-gateway --ca-root-key-file ${ROOT_CA__PKI_KEY_FILE} --mfa-scheme scram-sha256 --ca-enabled --ca-key-algorithm ${TRUST0_KEYALG_TYPE} --ca-validity-period-days ${TRUST0_GATEWAY__CA_VALIDITY_PERIOD_DAYS} --ca-reissuance-threshold-days ${TRUST0_GATEWAY__CA_REISSUANCE_THRESHOLD_DAYS}
+
+run-trust0-dmz-client-gateway-nodeps:
+	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --ca-root-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource ${TRUST0_GATEWAY__DATASOURCE} --db-connect ${TRUST0_GATEWAY__DB_CONNECT} client-gateway --ca-root-key-file ${ROOT_CA__PKI_KEY_FILE} --mfa-scheme scram-sha256 --ca-enabled --ca-key-algorithm ${TRUST0_KEYALG_TYPE} --ca-validity-period-days ${TRUST0_GATEWAY__CA_VALIDITY_PERIOD_DAYS} --ca-reissuance-threshold-days ${TRUST0_GATEWAY__CA_REISSUANCE_THRESHOLD_DAYS} --service-gateway-host ${TRUST0_GATEWAY2__HOST} --service-gateway-port ${TRUST0_GATEWAY2__PORT}
+
+run-trust0-dmz-service-gateway-nodeps:
+	${TRUST0_GATEWAY__BINARY_FILE} --host ${TRUST0_GATEWAY2__BIND_HOST} --port ${TRUST0_GATEWAY2__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --ca-root-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY2__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource ${TRUST0_GATEWAY__DATASOURCE} --db-connect ${TRUST0_GATEWAY__DB_CONNECT} service-gateway
 
 run-trust0-gateway-image-nodeps:
 	${TRUST0_GATEWAY__DOCKER_CMD} --host ${TRUST0_GATEWAY__BIND_HOST} --port ${TRUST0_GATEWAY__PORT} --cert-file ${TRUST0_GATEWAY__PKI_CERT_FILE} --key-file ${TRUST0_GATEWAY__PKI_KEY_FILE} --ca-root-cert-file ${ROOT_CA__PKI_CERT_FILE} --gateway-service-host ${TRUST0_GATEWAY__SERVICE_HOST} ${EXECBIN_EXTRA_ARGS} --datasource ${TRUST0_GATEWAY__DATASOURCE} --db-connect ${TRUST0_GATEWAY__DB_CONNECT} full-gateway --ca-root-key-file ${ROOT_CA__PKI_KEY_FILE} --mfa-scheme scram-sha256 --ca-enabled --ca-key-algorithm ${TRUST0_KEYALG_TYPE} --ca-validity-period-days ${TRUST0_GATEWAY__CA_VALIDITY_PERIOD_DAYS} --ca-reissuance-threshold-days ${TRUST0_GATEWAY__CA_REISSUANCE_THRESHOLD_DAYS}

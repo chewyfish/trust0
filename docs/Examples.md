@@ -7,6 +7,7 @@
       * [macOS](#macos)
       * [Windows](#windows)
     * [Example - Chat TCP Service](#example---chat-tcp-service)
+    * [Example - Chat TCP Service (DMZ)](#example---chat-tcp-service-dmz)
     * [Example - Echo UDP Service](#example---echo-udp-service)
     * [Example - Reissue Certificate](#example---reissue-certificate)
     * [Example - Revoke Certificate](#example---revoke-certificate)
@@ -19,6 +20,7 @@
 The following examples are provided in the `examples` directory:
 
 * [Chat TCP Service](#example---chat-tcp-service)
+* [Chat TCP Service (DMZ)](#example---chat-tcp-service-dmz)
 * [Echo UDP Service](#example---echo-udp-service)
 * [Reissue Certificate](#example---reissue-certificate)
 * [Revoke Certificate](#example---revoke-certificate)
@@ -96,7 +98,8 @@ Note - An analogous example script (`run-chat-tcp-docker-example.sh`) is availab
 ```
 [example] $ ./run-chat-tcp-example.sh
 If example requires secondary authentication credentials, please use "user1", "pass1"
-Enter an available port for the trust0 gateway: 8400
+Enter an available port for the trust0 gateway (#1): 8300
+...
 Enter an available port for the chat service: 8500
 Enter an available port for the chat proxy: 8501
 ...
@@ -116,6 +119,37 @@ Follow the instructions in step order. The following shows a screencast (using a
 
 [![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-chat-tcp.png)](https://asciinema.org/a/626132)
 
+### Example - Chat TCP Service (DMZ)
+
+In the `example` directory, you can run an example, which lets clients access a "chat" (TCP-based) service. It uses the DMZ installation, whereas there will be a `Client Gateway` and a `Service Gateway` used to proxy connections.
+
+To run this example, execute the `run-chat-tcp-dmz-example.sh` script. You will be asked for free ports to be used for the client, gateway and the chat service (script uses these ports to update the chat service DB record and also now knows how to run the gateway).
+
+```
+[example] $ ./run-chat-tcp-example.sh
+If example requires secondary authentication credentials, please use "user1", "pass1"
+Enter an available port for the trust0 gateway (#1): 8300
+Enter an available port for the trust0 gateway (#2): 8400
+Enter an available port for the chat service: 8500
+Enter an available port for the chat proxy: 8501
+...
+
+(... PKI certificates/keys created, trust0 binaries built ...)
+```
+
+You will be presented with a tmux session w/multiple panes, which represent:
+* Chat service
+* Trust0 Service Gateway
+* Trust0 Client Gateway
+* Trust0 Client
+* Chat client 1
+* Chat client 2
+* Shutdown example action
+
+Follow the instructions in step order. The following shows a screencast (using asciinema) of a chat session:
+
+[![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-chat-tcp-dmz.png)](https://asciinema.org/a/975728)
+
 ### Example - Echo UDP Service
 
 In the `example` directory, you can run an example, which lets clients access an "echo" (UDP-based) service. The service will merely return the same text data, which it was given by a client.
@@ -125,7 +159,7 @@ To run this example, execute the `run-echo-udp-example.sh` script. You will be a
 ```
 [example] $ ./run-echo-udp-example.sh
 If example requires secondary authentication credentials, please use "user1", "pass1"
-Enter an available port for the trust0 gateway: 8400
+Enter an available port for the trust0 gateway (#1): 8300
 ...
 Enter an available port for the echo service: 8600
 Enter an available port for the echo proxy: 8601
@@ -153,7 +187,7 @@ To run this example, execute the `run-reissue-cert-example.sh` script. You will 
 ```
 [example] $ ./run-reissue-cert-example.sh
 If example requires secondary authentication credentials, please use "user1", "pass1"
-Enter an available port for the trust0 gateway: 8400
+Enter an available port for the trust0 gateway (#1): 8300
 ...
 Enter an available port for the echo service: 8600
 Enter an available port for the echo proxy: 8601
@@ -182,7 +216,7 @@ To run this example, execute the `run-revoke-cert-example.sh` script. You will b
 ```
 [example] $ ./run-revoke-cert-example.sh
 If example requires secondary authentication credentials, please use "user1", "pass1"
-Enter an available port for the trust0 gateway: 8400
+Enter an available port for the trust0 gateway (#1): 8300
 ...
 Enter an available port for the echo service: 8600
 Enter an available port for the echo proxy: 8601
