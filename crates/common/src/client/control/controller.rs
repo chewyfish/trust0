@@ -6,6 +6,7 @@ use std::collections::{HashMap, VecDeque};
 use std::ops::DerefMut;
 use std::sync::{mpsc, Arc, Mutex};
 
+use crate::client::control::controller::signaling::SignalingController;
 use crate::client::replshell_io::{ReplShellInputReader, ReplShellOutputWriter};
 use crate::client::service::ClientControlServiceMgr;
 use crate::control::pdu::{ControlChannel, MessageFrame};
@@ -23,6 +24,8 @@ pub struct ControlPlane {
     message_inbox: VecDeque<u8>,
     /// Control plane channel processors
     channel_processors: HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>>,
+    /// Signaling controller
+    signaling_controller: Arc<Mutex<SignalingController>>,
 }
 
 impl ControlPlane {
@@ -56,18 +59,18 @@ impl ControlPlane {
             service_mgr,
             &message_outbox,
         )));
-        Self::spawn_signaling_event_loop(&signaling_controller)?;
 
         let mut channel_processors: HashMap<ControlChannel, Arc<Mutex<dyn ChannelProcessor>>> =
             HashMap::new();
         channel_processors.insert(ControlChannel::Management, management_controller);
-        channel_processors.insert(ControlChannel::Signaling, signaling_controller);
+        channel_processors.insert(ControlChannel::Signaling, signaling_controller.clone());
 
         Ok(Self {
             event_channel_sender: None,
             message_outbox,
             message_inbox: VecDeque::new(),
             channel_processors,
+            signaling_controller,
         })
     }
 
@@ -129,7 +132,7 @@ impl MessageProcessor for ControlPlane {
                 .on_connected(event_channel_sender)?;
         }
 
-        Ok(())
+        Self::spawn_signaling_event_loop(&self.signaling_controller)
     }
 
     fn process_outbound_messages(&mut self) -> Result<(), AppError> {
@@ -307,11 +310,20 @@ pub mod tests {
     fn ctlplane_send_connection_event_when_no_errors() {
         let event_channel = mpsc::channel();
 
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
+        let signaling_controller = Arc::new(Mutex::new(SignalingController::new(
+            &Arc::new(Mutex::new(Box::new(MockShellOutputWriter::new()))),
+            &service_mgr,
+            &Arc::new(Mutex::new(VecDeque::new())),
+        )));
+
         let control_plane = ControlPlane {
             event_channel_sender: Some(event_channel.0),
             message_outbox: Arc::new(Mutex::new(VecDeque::new())),
             message_inbox: VecDeque::new(),
             channel_processors: HashMap::new(),
+            signaling_controller,
         };
 
         if let Err(err) = control_plane
@@ -331,11 +343,20 @@ pub mod tests {
 
     #[test]
     fn ctlplane_send_connection_event_when_error() {
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
+        let signaling_controller = Arc::new(Mutex::new(SignalingController::new(
+            &Arc::new(Mutex::new(Box::new(MockShellOutputWriter::new()))),
+            &service_mgr,
+            &Arc::new(Mutex::new(VecDeque::new())),
+        )));
+
         let control_plane = ControlPlane {
             event_channel_sender: Some(mpsc::channel().0),
             message_outbox: Arc::new(Mutex::new(VecDeque::new())),
             message_inbox: VecDeque::new(),
             channel_processors: HashMap::new(),
+            signaling_controller,
         };
 
         if let Ok(msg) = control_plane
@@ -370,11 +391,20 @@ pub mod tests {
             Arc::new(Mutex::new(signal_controller)),
         );
 
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
+        let signaling_controller = Arc::new(Mutex::new(SignalingController::new(
+            &Arc::new(Mutex::new(Box::new(MockShellOutputWriter::new()))),
+            &service_mgr,
+            &Arc::new(Mutex::new(VecDeque::new())),
+        )));
+
         let mut control_plane = ControlPlane {
             event_channel_sender: None,
             message_outbox: Arc::new(Mutex::new(VecDeque::new())),
             message_inbox: VecDeque::new(),
             channel_processors,
+            signaling_controller,
         };
 
         if let Err(err) = control_plane.on_connected(&mpsc::channel().0) {
@@ -409,6 +439,14 @@ pub mod tests {
             Arc::new(Mutex::new(signal_controller)),
         );
 
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
+        let signaling_controller = Arc::new(Mutex::new(SignalingController::new(
+            &Arc::new(Mutex::new(Box::new(MockShellOutputWriter::new()))),
+            &service_mgr,
+            &Arc::new(Mutex::new(VecDeque::new())),
+        )));
+
         let expected_pdu = vec![65, 66, 67];
 
         let mut control_plane = ControlPlane {
@@ -416,6 +454,7 @@ pub mod tests {
             message_outbox: Arc::new(Mutex::new(VecDeque::from(vec![expected_pdu.clone()]))),
             message_inbox: VecDeque::new(),
             channel_processors,
+            signaling_controller,
         };
 
         let result = control_plane.process_outbound_messages();
@@ -459,11 +498,20 @@ pub mod tests {
             Arc::new(Mutex::new(signal_controller)),
         );
 
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
+        let signaling_controller = Arc::new(Mutex::new(SignalingController::new(
+            &Arc::new(Mutex::new(Box::new(MockShellOutputWriter::new()))),
+            &service_mgr,
+            &Arc::new(Mutex::new(VecDeque::new())),
+        )));
+
         let mut control_plane = ControlPlane {
             event_channel_sender: Some(channel_sender),
             message_outbox: Arc::new(Mutex::new(VecDeque::new())),
             message_inbox: VecDeque::new(),
             channel_processors,
+            signaling_controller,
         };
 
         let result = control_plane.process_outbound_messages();
@@ -507,11 +555,20 @@ pub mod tests {
             Arc::new(Mutex::new(signal_controller)),
         );
 
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
+        let signaling_controller = Arc::new(Mutex::new(SignalingController::new(
+            &Arc::new(Mutex::new(Box::new(MockShellOutputWriter::new()))),
+            &service_mgr,
+            &Arc::new(Mutex::new(VecDeque::new())),
+        )));
+
         let mut control_plane = ControlPlane {
             event_channel_sender: Some(mpsc::channel().0),
             message_outbox: Arc::new(Mutex::new(VecDeque::new())),
             message_inbox: VecDeque::new(),
             channel_processors,
+            signaling_controller,
         };
 
         let result = control_plane.process_inbound_messages(vec![0, 10, 65, 66, 67].as_slice());
@@ -550,11 +607,20 @@ pub mod tests {
             Arc::new(Mutex::new(signal_controller)),
         );
 
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
+        let signaling_controller = Arc::new(Mutex::new(SignalingController::new(
+            &Arc::new(Mutex::new(Box::new(MockShellOutputWriter::new()))),
+            &service_mgr,
+            &Arc::new(Mutex::new(VecDeque::new())),
+        )));
+
         let mut control_plane = ControlPlane {
             event_channel_sender: Some(mpsc::channel().0),
             message_outbox: Arc::new(Mutex::new(VecDeque::new())),
             message_inbox: VecDeque::from(mgmt_pdu0.to_vec()),
             channel_processors,
+            signaling_controller,
         };
 
         let result = control_plane.process_inbound_messages(mgmt_pdu1);
@@ -588,11 +654,20 @@ pub mod tests {
             Arc::new(Mutex::new(signal_controller)),
         );
 
+        let service_mgr: Arc<Mutex<Box<dyn ClientControlServiceMgr + 'static>>> =
+            Arc::new(Mutex::new(Box::new(MockClientControlSvcMgr::new())));
+        let signaling_controller = Arc::new(Mutex::new(SignalingController::new(
+            &Arc::new(Mutex::new(Box::new(MockShellOutputWriter::new()))),
+            &service_mgr,
+            &Arc::new(Mutex::new(VecDeque::new())),
+        )));
+
         let mut control_plane = ControlPlane {
             event_channel_sender: Some(mpsc::channel().0),
             message_outbox: Arc::new(Mutex::new(VecDeque::new())),
             message_inbox: VecDeque::from(tls_pdu0.to_vec()),
             channel_processors,
+            signaling_controller,
         };
 
         let result = control_plane.process_inbound_messages(tls_pdu1);
