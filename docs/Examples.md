@@ -39,7 +39,7 @@ To run the examples, the following commands are required:
 
 | Facility       | Original tested version                                       | Notes                                                                                   |
 |----------------|---------------------------------------------------------------|-----------------------------------------------------------------------------------------|
-| Rust toolchain | Linux, macOS: `1.74.0`, Windows: `1.75.0`                     |                                                                                         |
+| Rust toolchain | Linux, macOS, Windows: `1.95.0`                               |                                                                                         |
 | `bash`         | Linux, macOS, Windows: `5.2.21`                               | Code will assert version is 4 or higher                                                 |
 | `gmake`        | Linux, macOS, Windows: `4.4.1`                                |                                                                                         |
 | `openssl`      | Linux: `3.3.1`, macOS, Windows: `3.2.0`                       | This is not needed unless you change the example code to use the `OpenSSL` PKI provider |
