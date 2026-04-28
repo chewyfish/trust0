@@ -512,25 +512,24 @@ impl CommonCertificateBuilder {
         }
 
         if self.key_pair_pem.is_some() || self.certificate_pem.is_some() {
-            if self.key_pair_pem.is_none() {
-                errors.push(VALIDATION_MSG_KEY_PAIR_PEM_REQUIRED.to_string());
-            } else {
-                match rcgen::KeyPair::from_pem(self.key_pair_pem.as_ref().unwrap()) {
+            match &self.key_pair_pem {
+                None => errors.push(VALIDATION_MSG_KEY_PAIR_PEM_REQUIRED.to_string()),
+                Some(kp_pem) => match rcgen::KeyPair::from_pem(kp_pem) {
                     Ok(kp) => key_pair = Some(kp),
                     Err(_) => errors.push(VALIDATION_MSG_INVALID_KEY_PAIR_PEM_CONTENTS.to_string()),
-                }
+                },
             }
 
-            if self.certificate_pem.is_none() {
-                errors.push(VALIDATION_MSG_CERTIFICATE_PEM_REQUIRED.to_string());
-            } else if key_pair.is_some() {
-                let certificate_result = pki_types::CertificateDer::from_pem_slice(
-                    self.certificate_pem.as_ref().unwrap().as_bytes(),
-                );
-                match certificate_result {
-                    Ok(cert) => cert_der = Some(cert.as_bytes().to_vec()),
-                    Err(_) => {
-                        errors.push(VALIDATION_MSG_INVALID_CERTIFICATE_PEM_CONTENTS.to_string())
+            match &self.certificate_pem {
+                None => errors.push(VALIDATION_MSG_CERTIFICATE_PEM_REQUIRED.to_string()),
+                Some(crt_pem) => {
+                    let certificate_result =
+                        pki_types::CertificateDer::from_pem_slice(crt_pem.as_bytes());
+                    match certificate_result {
+                        Ok(cert) => cert_der = Some(cert.as_bytes().to_vec()),
+                        Err(_) => {
+                            errors.push(VALIDATION_MSG_INVALID_CERTIFICATE_PEM_CONTENTS.to_string())
+                        }
                     }
                 }
             }

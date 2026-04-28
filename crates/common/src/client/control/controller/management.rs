@@ -348,7 +348,7 @@ impl ManagementController {
             };
 
         // Send gateway PDU authentication message
-        if response_authn_msg.is_some() {
+        if let Some(resp_authn_msg) = response_authn_msg {
             let msg_frame = MessageFrame::new(
                 ControlChannel::Management,
                 control::pdu::CODE_OK,
@@ -358,8 +358,7 @@ impl ManagementController {
                     r#"{} --{} "{}""#,
                     management::request::PROTOCOL_REQUEST_LOGIN_DATA,
                     management::request::PROTOCOL_REQUEST_LOGIN_DATA_ARG_MESSAGE,
-                    response_authn_msg
-                        .unwrap()
+                    resp_authn_msg
                         .to_json_str()?
                         .replace('\\', "\\\\")
                         .replace('"', "\\\"")
