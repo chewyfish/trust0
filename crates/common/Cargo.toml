@@ -8,35 +8,35 @@ license = "Apache-2.0"
 publish = false
 
 [dependencies]
-anyhow = "1.0.100"
+anyhow = "1.0.102"
 base64 = "0.22.1"
-bytes = "1.11.0"
-clap = { version = "4.5.53", features = [ "derive", "env" ] }
+bytes = "1.11.1"
+clap = { version = "4.6.1", features = [ "derive", "env" ] }
 dotenvy = "0.15.7"
-futures-util = "0.3.31"
+futures-util = "0.3.32"
 hex = "0.4.3"
-log = { version = "0.4.28" }
+log = { version = "0.4.29" }
 log4rs = "1.4.0"
-mio = { version = "1.1.0", features = ["net", "os-poll"] }
+mio = { version = "1.2.0", features = ["net", "os-poll"] }
 oid-registry = "0.8.1"
-once_cell = "1.21.3"
-pki-types = { package = "rustls-pki-types", version = "1.13.1", features = [ "std", "alloc" ] }
-rcgen = {  version = "0.14.5", features = [ "pem", "x509-parser" ] }
-regex = "1.12.2"
+once_cell = "1.21.4"
+pki-types = { package = "rustls-pki-types", version = "1.14.1", features = [ "std", "alloc" ] }
+rcgen = {  version = "0.14.7", features = [ "pem", "x509-parser" ] }
+regex = "1.12.3"
 ring = "0.17.14"
 rpassword = "7.4.0"
-rustls = { version = "0.23.35", features = ["logging", "std", "tls12", "read_buf", "ring"], default-features = false }
+rustls = { version = "0.23.39", features = ["logging", "std", "tls12", "read_buf", "ring"], default-features = false }
 sct = "0.7.1"
 scram = "0.6.0"
 serde = { version = "*", features = ["derive"] }
 serde_derive = "*"
 serde_json = { version = "*", features = ["arbitrary_precision"] }
 shlex = "1.3.0"
-time = { version = "0.3.44", default-features = false }
-webpki-roots = "0.26.11"
+time = { version = "0.3.47", default-features = false }
+webpki-roots = "1.0.7"
 winapi = { version = "0.3.9", features = ["winnt"] }
 windows-acl = "0.3.0"
-x509-parser = { version = "0.18.0", features = ["verify"] }
+x509-parser = { version = "0.18.1", features = ["verify"] }
 
 [dev-dependencies]
 mockall = "0.14.0"
