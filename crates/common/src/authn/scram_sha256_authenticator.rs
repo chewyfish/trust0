@@ -308,10 +308,10 @@ impl AuthenticatorClient for ScramSha256AuthenticatorClient {
         &mut self,
         inbound_msg: Option<AuthnMessage>,
     ) -> Result<Option<AuthnMessage>, AppError> {
-        if inbound_msg.is_some() {
+        if let Some(msg) = inbound_msg {
             sync::send_mpsc_channel_message(
                 self.server_response_sender.as_ref().unwrap(),
-                inbound_msg.unwrap(),
+                msg,
                 Box::new(|| "Error sending SCRAM SHA256 client inbound message:".to_string()),
             )?;
         }
@@ -573,10 +573,10 @@ where
         &mut self,
         inbound_msg: Option<AuthnMessage>,
     ) -> Result<Option<AuthnMessage>, AppError> {
-        if inbound_msg.is_some() {
+        if let Some(msg) = inbound_msg {
             sync::send_mpsc_channel_message(
                 self.client_response_sender.as_ref().unwrap(),
-                inbound_msg.unwrap(),
+                msg,
                 Box::new(|| "Error sending SCRAM SHA256 server inbound message:".to_string()),
             )?;
         }
@@ -603,25 +603,24 @@ where
 /// SCRAM SHA256 authentication credentials provider implementaiton for User model
 impl scram::AuthenticationProvider for model::user::User {
     fn get_password_for(&self, user_name: &str) -> Option<scram::server::PasswordInfo> {
-        if self.user_name.is_none() || self.password.is_none() {
-            None
-        } else if self.user_name.as_ref().unwrap() == user_name {
-            match BASE64_URL_SAFE.decode(self.password.as_ref().unwrap().as_bytes()) {
-                Err(err) => {
-                    error!(
-                        "Error Base64 decoding user password: user={}, err={:?}",
-                        &user_name, &err
-                    );
-                    None
+        match (self.user_name.as_ref(), self.password.as_ref()) {
+            (Some(uname), Some(pwd)) if uname == user_name => {
+                match BASE64_URL_SAFE.decode(pwd.as_bytes()) {
+                    Err(err) => {
+                        error!(
+                            "Error Base64 decoding user password: user={}, err={:?}",
+                            &user_name, &err
+                        );
+                        None
+                    }
+                    Ok(decoded_password) => Some(scram::server::PasswordInfo::new(
+                        decoded_password,
+                        4096,
+                        user_name.bytes().collect(),
+                    )),
                 }
-                Ok(decoded_password) => Some(scram::server::PasswordInfo::new(
-                    decoded_password,
-                    4096,
-                    user_name.bytes().collect(),
-                )),
             }
-        } else {
-            None
+            _ => None,
         }
     }
 }

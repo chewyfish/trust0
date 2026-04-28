@@ -111,23 +111,14 @@ impl AppConfigArgs {
             "CA_ROOT_CERT_FILE".to_string(),
             self.ca_root_cert_file.clone(),
         );
-        if self.protocol_version.is_some() {
-            env_map.insert(
-                "PROTOCOL_VERSION".to_string(),
-                self.protocol_version.unwrap().join(","),
-            );
+        if let Some(protocol_version) = self.protocol_version.as_ref() {
+            env_map.insert("PROTOCOL_VERSION".to_string(), protocol_version.join(","));
         }
-        if self.cipher_suite.is_some() {
-            env_map.insert(
-                "CIPHER_SUITE".to_string(),
-                self.cipher_suite.unwrap().join(","),
-            );
+        if let Some(cipher_suite) = self.cipher_suite.as_ref() {
+            env_map.insert("CIPHER_SUITE".to_string(), cipher_suite.join(","));
         }
-        if self.max_frag_size.is_some() {
-            env_map.insert(
-                "MAX_FRAG_SIZE".to_string(),
-                self.max_frag_size.unwrap().to_string(),
-            );
+        if let Some(max_frag_size) = self.max_frag_size.as_ref() {
+            env_map.insert("MAX_FRAG_SIZE".to_string(), max_frag_size.to_string());
         }
         env_map.insert(
             "SESSION_RESUMPTION".to_string(),

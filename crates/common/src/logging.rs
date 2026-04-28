@@ -129,8 +129,8 @@ impl Logger {
     pub fn debug(&self, target: &str, msg: &str) {
         if log_enabled!(Level::Debug) {
             debug!(target: target, "{}", msg);
-            if self.visitor.is_some() {
-                self.visitor.as_ref().unwrap()(LogLevel::DEBUG, msg);
+            if let Some(visitor) = self.visitor.as_ref() {
+                visitor(LogLevel::DEBUG, msg);
             }
         }
     }
@@ -145,8 +145,8 @@ impl Logger {
     pub fn info(&self, target: &str, msg: &str) {
         if log_enabled!(Level::Info) {
             info!(target: target, "{}", msg);
-            if self.visitor.is_some() {
-                self.visitor.as_ref().unwrap()(LogLevel::INFO, msg);
+            if let Some(visitor) = self.visitor.as_ref() {
+                visitor(LogLevel::INFO, msg);
             }
         }
     }
@@ -161,8 +161,8 @@ impl Logger {
     pub fn warn(&self, target: &str, msg: &str) {
         if log_enabled!(Level::Warn) {
             warn!(target: target, "{}", msg);
-            if self.visitor.is_some() {
-                self.visitor.as_ref().unwrap()(LogLevel::WARN, msg);
+            if let Some(visitor) = self.visitor.as_ref() {
+                visitor(LogLevel::WARN, msg);
             }
         }
     }
@@ -177,8 +177,8 @@ impl Logger {
     pub fn error(&self, target: &str, msg: &str) {
         if log_enabled!(Level::Error) {
             error!(target: target, "{}", msg);
-            if self.visitor.is_some() {
-                self.visitor.as_ref().unwrap()(LogLevel::ERROR, msg);
+            if let Some(visitor) = self.visitor.as_ref() {
+                visitor(LogLevel::ERROR, msg);
             }
         }
     }

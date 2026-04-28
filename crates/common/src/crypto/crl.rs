@@ -122,10 +122,13 @@ impl RevokedCertificateBuilder {
         // Validation
         let mut errors = Vec::new();
 
-        if self.serial_number.is_none() {
-            errors.push(VALIDATION_MSG_CERTIFICATE_SERIAL_NUMBER_REQUIRED.to_string());
-        } else if self.serial_number.as_ref().unwrap().len() > ca::SERIAL_NUMBER_MAX_OCTETS {
-            errors.push(VALIDATION_MSG_SERIAL_NUMBER_LIMIT_EXCEEDED.to_string());
+        match &self.serial_number {
+            None => errors.push(VALIDATION_MSG_CERTIFICATE_SERIAL_NUMBER_REQUIRED.to_string()),
+            Some(ser_num) => {
+                if ser_num.len() > ca::SERIAL_NUMBER_MAX_OCTETS {
+                    errors.push(VALIDATION_MSG_SERIAL_NUMBER_LIMIT_EXCEEDED.to_string());
+                }
+            }
         }
         if self.revocation_datetime.is_none() {
             errors.push(VALIDATION_MSG_CERTIFICATE_REVOCATION_DATETIME_REQUIRED.to_string());
@@ -288,10 +291,13 @@ impl CertificateRevocationListBuilder {
         // Validation
         let mut errors = Vec::new();
 
-        if self.crl_number.is_none() {
-            errors.push(VALIDATION_MSG_CRL_NUMBER_REQUIRED.to_string());
-        } else if self.crl_number.as_ref().unwrap().len() > ca::SERIAL_NUMBER_MAX_OCTETS {
-            errors.push(VALIDATION_MSG_CRL_NUMBER_LIMIT_EXCEEDED.to_string());
+        match &self.crl_number {
+            None => errors.push(VALIDATION_MSG_CRL_NUMBER_REQUIRED.to_string()),
+            Some(crl_num) => {
+                if crl_num.len() > ca::SERIAL_NUMBER_MAX_OCTETS {
+                    errors.push(VALIDATION_MSG_CRL_NUMBER_LIMIT_EXCEEDED.to_string());
+                }
+            }
         }
         if self.update_datetime.is_none() {
             errors.push(VALIDATION_MSG_UPDATE_DATETIME_REQUIRED.to_string());
