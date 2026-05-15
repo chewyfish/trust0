@@ -119,7 +119,7 @@ You will be presented with a tmux session w/multiple panes, which represent:
 
 Follow the instructions in step order. The following shows a screencast (using asciinema) of a chat session:
 
-[![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-chat-tcp.png)](https://asciinema.org/a/626132)
+[![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-chat-tcp.png)](https://asciinema.org/a/1061249)
 
 ### Example - Chat TCP Service (DMZ)
 
@@ -150,7 +150,7 @@ You will be presented with a tmux session w/multiple panes, which represent:
 
 Follow the instructions in step order. The following shows a screencast (using asciinema) of a chat session:
 
-[![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-chat-tcp-dmz.png)](https://asciinema.org/a/975728)
+[![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-chat-tcp-dmz.png)](https://asciinema.org/a/1061251)
 
 ### Example - Echo UDP Service
 
@@ -178,7 +178,7 @@ You will be presented with a tmux session w/multiple panes, which represent:
 
 Follow the instructions in step order. The following shows a screencast (using asciinema) of a echo session:
 
-[![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-echo-udp.png)](https://asciinema.org/a/626134)
+[![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-echo-udp.png)](https://asciinema.org/a/1061272)
 
 ### Example - SSHD Service
 
@@ -237,7 +237,7 @@ You will be presented with a tmux session w/multiple panes, which represent:
 
 Follow the instructions in step order. The following shows a screencast (using asciinema) of a revoke certificate session:
 
-[![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-reissue-cert.png)](https://asciinema.org/a/640971)
+[![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-reissue-cert.png)](https://asciinema.org/a/1061340)
 
 ### Example - Revoke Certificate
 
@@ -266,4 +266,5 @@ You will be presented with a tmux session w/multiple panes, which represent:
 
 Follow the instructions in step order. The following shows a screencast (using asciinema) of a revoke certificate session:
 
-[![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-revoke-cert.png)](https://asciinema.org/a/628346)
+[![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-revoke-cert.png)](https://asciinema.org/a/1061381)
+
