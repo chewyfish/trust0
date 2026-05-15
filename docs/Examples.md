@@ -9,6 +9,7 @@
     * [Example - Chat TCP Service](#example---chat-tcp-service)
     * [Example - Chat TCP Service (DMZ)](#example---chat-tcp-service-dmz)
     * [Example - Echo UDP Service](#example---echo-udp-service)
+    * [Example - SSHD Service](#example---sshd-service)
     * [Example - Reissue Certificate](#example---reissue-certificate)
     * [Example - Revoke Certificate](#example---revoke-certificate)
 <!-- TOC -->
@@ -22,6 +23,7 @@ The following examples are provided in the `examples` directory:
 * [Chat TCP Service](#example---chat-tcp-service)
 * [Chat TCP Service (DMZ)](#example---chat-tcp-service-dmz)
 * [Echo UDP Service](#example---echo-udp-service)
+* [SSHD Service](#example---sshd-service)
 * [Reissue Certificate](#example---reissue-certificate)
 * [Revoke Certificate](#example---revoke-certificate)
 
@@ -177,6 +179,36 @@ You will be presented with a tmux session w/multiple panes, which represent:
 Follow the instructions in step order. The following shows a screencast (using asciinema) of a echo session:
 
 [![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-echo-udp.png)](https://asciinema.org/a/626134)
+
+### Example - SSHD Service
+
+In the `example` directory, you can run an example, which lets clients access a "SSHD" (TCP-based) service.
+
+To run this example, execute the `run-ssh-tcp-example.sh` script. You will be asked for free ports to be used for the client, gateway and the SSHD service (script uses these ports to update the SSHD service DB record and also now knows how to run the gateway).
+
+```
+[example] $ ./run-ssh-tcp-example.sh
+If example requires secondary authentication credentials, please use "user1", "pass1"
+Enter an available port for the trust0 gateway (#1): 8300
+Enter an available port for the trust0 gateway (#2): 8400
+...
+Enter an available port for the sshd service: 22
+Enter an available port for the sshd proxy: 8701
+...
+
+(... PKI certificates/keys created, trust0 binaries built ...)
+```
+
+You will be presented with a tmux session w/multiple panes, which represent:
+* Simple shell, which can be used to startup the SSHD daemon (if needed)
+* Trust0 Gateway
+* Trust0 Client
+* SSH client 1
+* Shutdown example action
+
+Follow the instructions in step order. The following shows a screencast (using asciinema) of a SSHD session:
+
+[![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-ssh-tcp.png)](https://asciinema.org/a/1053875)
 
 ### Example - Reissue Certificate
 

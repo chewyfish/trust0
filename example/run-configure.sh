@@ -28,6 +28,7 @@ TMUX_CMD=${TMUX_CMD:-tmux}
 NCAT_CMD=${NCAT_CMD:-ncat}
 NETCAT_CMD=${NETCAT_CMD:-nc}
 CAT_CMD=${CAT_CMD:-cat}
+SSH_CMD=${SSH_CMD:-ssh}
 
 # Check pre-requisites
 
@@ -64,6 +65,7 @@ check_command_exists "${TMUX_CMD}" "Y" && TMUX_CMD=$(which "${TMUX_CMD}")
 check_command_exists "${NCAT_CMD}" "Y" && NCAT_CMD=$(which "${NCAT_CMD}")
 check_command_exists "${NETCAT_CMD}" "Y" && NETCAT_CMD=$(which "${NETCAT_CMD}")
 check_command_exists "${CAT_CMD}" "Y" && CAT_CMD=$(which "${CAT_CMD}")
+check_command_exists "${SSH_CMD}" "N" && SSH_CMD=$(which "${SSH_CMD}")
 
 if [ "${PREREQ_MISSING}" == "1" ]; then
   exit 1
@@ -80,7 +82,9 @@ if [ -f "${EXAMPLE_CONFIG_FILE}" ] && \
      grep -q CHAT_SERVICE__PORT "${EXAMPLE_CONFIG_FILE}" > /dev/null && \
      grep -q CHAT_PROXY__PORT "${EXAMPLE_CONFIG_FILE}" > /dev/null && \
      grep -q ECHO_SERVICE__PORT "${EXAMPLE_CONFIG_FILE}" > /dev/null && \
-     grep -q ECHO_PROXY__PORT "${EXAMPLE_CONFIG_FILE}" > /dev/null; then
+     grep -q ECHO_PROXY__PORT "${EXAMPLE_CONFIG_FILE}" > /dev/null && \
+     grep -q SSHD_SERVICE__PORT "${EXAMPLE_CONFIG_FILE}" > /dev/null && \
+     grep -q SSHD_PROXY__PORT "${EXAMPLE_CONFIG_FILE}" > /dev/null; then
   read -p "Example config file already exists, enter 'y' to reconfigure this file: " reconf_config
   if [ "$reconf_config" == 'y' ]; then
     RECONFIGURE=y
@@ -103,12 +107,14 @@ if [ "$RECONFIGURE" == 'y' ]; then
   read -rp "Enter an available port for the chat proxy: " chat_proxy_port && echo CHAT_PROXY__PORT=${chat_proxy_port} >> ${EXAMPLE_CONFIG_FILE}
   read -rp "Enter an available port for the echo service: " echo_service_port && echo ECHO_SERVICE__PORT=${echo_service_port} >> ${EXAMPLE_CONFIG_FILE}
   read -rp "Enter an available port for the echo proxy: " echo_proxy_port && echo ECHO_PROXY__PORT=${echo_proxy_port} >> ${EXAMPLE_CONFIG_FILE}
+  read -rp "Enter an available port for the sshd service: " sshd_service_port && echo SSHD_SERVICE__PORT=${sshd_service_port} >> ${EXAMPLE_CONFIG_FILE}
+  read -rp "Enter an available port for the sshd proxy: " sshd_proxy_port && echo SSHD_PROXY__PORT=${sshd_proxy_port} >> ${EXAMPLE_CONFIG_FILE}
 fi
 
 if [ ! -f "${DATASOURCE_INMEMDB_ACCESS_FILE}" ] ||  [ ! -f "${DATASOURCE_INMEMDB_SERVICE_FILE}" ] ||  [ ! -f "${DATASOURCE_INMEMDB_ROLE_FILE}" ] ||  [ ! -f "${DATASOURCE_INMEMDB_USER_FILE}" ]; then
   source "${EXAMPLE_CONFIG_FILE}"
   ${M4_CMD} "${DATASOURCE_INMEMDB_ACCESS_M4_FILE}" > "${DATASOURCE_INMEMDB_ACCESS_FILE}"
-  ${M4_CMD} -D xCHAT_PORT="${CHAT_SERVICE__PORT}" -D xECHO_PORT="${ECHO_SERVICE__PORT}" "${DATASOURCE_INMEMDB_SERVICE_M4_FILE}" > "${DATASOURCE_INMEMDB_SERVICE_FILE}"
+  ${M4_CMD} -D xCHAT_PORT="${CHAT_SERVICE__PORT}" -D xECHO_PORT="${ECHO_SERVICE__PORT}" -D xSSHD_PORT="${SSHD_SERVICE__PORT}" "${DATASOURCE_INMEMDB_SERVICE_M4_FILE}" > "${DATASOURCE_INMEMDB_SERVICE_FILE}"
   ${M4_CMD} "${DATASOURCE_INMEMDB_ROLE_M4_FILE}" > "${DATASOURCE_INMEMDB_ROLE_FILE}"
   ${M4_CMD} "${DATASOURCE_INMEMDB_USER_M4_FILE}" > "${DATASOURCE_INMEMDB_USER_FILE}"
 fi
