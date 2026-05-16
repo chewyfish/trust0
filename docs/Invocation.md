@@ -195,7 +195,7 @@ Options:
           Print help
 ```
 
-#### Client-gateway invocation usage (future release)
+#### Client-gateway invocation usage
 
 ```
 Client gateway type
@@ -261,7 +261,7 @@ Options:
           Print help
 ```
 
-#### Service-gateway invocation usage (future release)
+#### Service-gateway invocation usage
 
 ```
 Service gateway type

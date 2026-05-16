@@ -128,7 +128,7 @@ In the `example` directory, you can run an example, which lets clients access a 
 To run this example, execute the `run-chat-tcp-dmz-example.sh` script. You will be asked for free ports to be used for the client, gateway and the chat service (script uses these ports to update the chat service DB record and also now knows how to run the gateway).
 
 ```
-[example] $ ./run-chat-tcp-example.sh
+[example] $ ./run-chat-tcp-dmz-example.sh
 If example requires secondary authentication credentials, please use "user1", "pass1"
 Enter an available port for the trust0 gateway (#1): 8300
 Enter an available port for the trust0 gateway (#2): 8400
@@ -235,7 +235,7 @@ You will be presented with a tmux session w/multiple panes, which represent:
 * Chat client 2
 * Shutdown example action
 
-Follow the instructions in step order. The following shows a screencast (using asciinema) of a revoke certificate session:
+Follow the instructions in step order. The following shows a screencast (using asciinema) of a reissue certificate session:
 
 [![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-reissue-cert.png)](https://asciinema.org/a/1061340)
 
