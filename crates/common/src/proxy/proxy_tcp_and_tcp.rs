@@ -1,3 +1,4 @@
+use log::{log_enabled, Level};
 use std::net::Shutdown;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -6,15 +7,13 @@ use std::{io, sync, thread};
 use anyhow::Result;
 
 use crate::error::AppError;
-use crate::logging::{error, info, warn};
+use crate::logging::{debug, error, info, warn};
 use crate::net::stream_utils;
 use crate::net::stream_utils::StreamReaderWriter;
 use crate::proxy::event::ProxyEvent;
-use crate::proxy::proxy_base::ProxyStream;
+use crate::proxy::proxy_base::{self, EventTokens, ProxyStream};
 use crate::target;
 
-const STREAM1_TOKEN: mio::Token = mio::Token(0);
-const STREAM2_TOKEN: mio::Token = mio::Token(1);
 const POLLING_DURATION_MSECS: u64 = 1000;
 
 /// Proxy based on 2 connected TCP streams
@@ -141,10 +140,11 @@ impl TcpAndTcpStreamProxy {
                 }
             }
 
-            if let Err(err) =
-                poll.registry()
-                    .register(&mut tcp_stream1, STREAM1_TOKEN, mio::Interest::READABLE)
-            {
+            if let Err(err) = poll.registry().register(
+                &mut tcp_stream1,
+                proxy_base::TCP_STREAM1_TOKEN,
+                mio::Interest::READABLE,
+            ) {
                 Self::perform_shutdown(
                     &proxy_key,
                     &tcp_stream1,
@@ -158,10 +158,11 @@ impl TcpAndTcpStreamProxy {
                 )));
             }
 
-            if let Err(err) =
-                poll.registry()
-                    .register(&mut tcp_stream2, STREAM2_TOKEN, mio::Interest::READABLE)
-            {
+            if let Err(err) = poll.registry().register(
+                &mut tcp_stream2,
+                proxy_base::TCP_STREAM2_TOKEN,
+                mio::Interest::READABLE,
+            ) {
                 Self::perform_shutdown(
                     &proxy_key,
                     &tcp_stream1,
@@ -175,25 +176,33 @@ impl TcpAndTcpStreamProxy {
                 )));
             }
 
-            let mut events = mio::Events::with_capacity(4196);
             let mut proxy_error = None;
+            let events = mio::Events::with_capacity(4196);
+            let mut event_tokens = EventTokens::new(
+                events,
+                vec![proxy_base::TCP_STREAM1_TOKEN, proxy_base::TCP_STREAM2_TOKEN],
+            );
 
             // IO events processing loop
             'EVENTS: while !*closing.lock().unwrap() {
-                match poll.poll(
-                    &mut events,
-                    Some(Duration::from_millis(POLLING_DURATION_MSECS)),
-                ) {
-                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => continue,
-                    Err(err) => {
-                        proxy_error = Some(AppError::General(format!(
-                            "Error while polling for IO events: err={:?}",
-                            &err
-                        )));
-                        *closing.lock().unwrap() = true;
-                        continue 'EVENTS;
+                if event_tokens.initial_tokens.is_empty() {
+                    match poll.poll(
+                        &mut event_tokens.events,
+                        Some(Duration::from_millis(POLLING_DURATION_MSECS)),
+                    ) {
+                        Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                            continue 'EVENTS;
+                        }
+                        Err(err) => {
+                            proxy_error = Some(AppError::General(format!(
+                                "Error while polling for IO events: err={:?}",
+                                &err
+                            )));
+                            *closing.lock().unwrap() = true;
+                            continue 'EVENTS;
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
 
                 #[cfg(windows)]
@@ -201,25 +210,39 @@ impl TcpAndTcpStreamProxy {
                 #[cfg(windows)]
                 let mut processed_stream2 = false;
 
-                for event in events.iter() {
-                    match event.token() {
-                        STREAM1_TOKEN => {
+                for event_token in event_tokens.iter() {
+                    match *event_token {
+                        proxy_base::TCP_STREAM1_TOKEN => {
                             match stream_utils::read_tcp_stream(&mut stream1_reader_writer) {
                                 Ok(data) => {
-                                    match stream_utils::write_tcp_stream(
-                                        &mut stream2_reader_writer,
-                                        data.as_slice(),
-                                    ) {
-                                        Ok(()) => {}
-                                        Err(err) => match err {
-                                            AppError::WouldBlock => {}
-                                            AppError::StreamEOF => break 'EVENTS,
-                                            _ => {
-                                                proxy_error = Some(err);
-                                                *closing.lock().unwrap() = true;
-                                                continue 'EVENTS;
-                                            }
-                                        },
+                                    let data = data.as_slice();
+                                    if log_enabled!(Level::Debug) {
+                                        debug(
+                                            &target!(),
+                                            &format!(
+                                            "Proxy stream1->stream2: kind=tcptcp, key={}, dat={}",
+                                            &proxy_key,
+                                            String::from_utf8_lossy(data)
+                                        ),
+                                        );
+                                    }
+                                    loop {
+                                        match stream_utils::write_tcp_stream(
+                                            &mut stream2_reader_writer,
+                                            data,
+                                        ) {
+                                            Ok(()) => break,
+                                            Err(err) => match err {
+                                                AppError::WouldBlock => {}
+                                                AppError::StreamEOF => break 'EVENTS,
+                                                _ => {
+                                                    proxy_error = Some(err);
+                                                    *closing.lock().unwrap() = true;
+                                                    continue 'EVENTS;
+                                                }
+                                            },
+                                        }
+                                        thread::sleep(Duration::from_millis(5));
                                     }
                                 }
                                 Err(err) => {
@@ -234,7 +257,7 @@ impl TcpAndTcpStreamProxy {
                                 if !processed_stream1 {
                                     if let Err(err) = poll.registry().reregister(
                                         &mut tcp_stream1,
-                                        STREAM1_TOKEN,
+                                        proxy_base::TCP_STREAM1_TOKEN,
                                         mio::Interest::READABLE,
                                     ) {
                                         proxy_error = Some(AppError::General(format!(
@@ -249,23 +272,37 @@ impl TcpAndTcpStreamProxy {
                             }
                         }
 
-                        STREAM2_TOKEN => {
+                        proxy_base::TCP_STREAM2_TOKEN => {
                             match stream_utils::read_tcp_stream(&mut stream2_reader_writer) {
                                 Ok(data) => {
-                                    match stream_utils::write_tcp_stream(
-                                        &mut stream1_reader_writer,
-                                        data.as_slice(),
-                                    ) {
-                                        Ok(()) => {}
-                                        Err(err) => match err {
-                                            AppError::WouldBlock => {}
-                                            AppError::StreamEOF => break 'EVENTS,
-                                            _ => {
-                                                proxy_error = Some(err);
-                                                *closing.lock().unwrap() = true;
-                                                continue 'EVENTS;
-                                            }
-                                        },
+                                    let data = data.as_slice();
+                                    if log_enabled!(Level::Debug) {
+                                        debug(
+                                            &target!(),
+                                            &format!(
+                                            "Proxy stream2->stream1: kind=tcptcp, key={}, dat={}",
+                                            &proxy_key,
+                                            String::from_utf8_lossy(data)
+                                        ),
+                                        );
+                                    }
+                                    loop {
+                                        match stream_utils::write_tcp_stream(
+                                            &mut stream1_reader_writer,
+                                            data,
+                                        ) {
+                                            Ok(()) => break,
+                                            Err(err) => match err {
+                                                AppError::WouldBlock => {}
+                                                AppError::StreamEOF => break 'EVENTS,
+                                                _ => {
+                                                    proxy_error = Some(err);
+                                                    *closing.lock().unwrap() = true;
+                                                    continue 'EVENTS;
+                                                }
+                                            },
+                                        }
+                                        thread::sleep(Duration::from_millis(5));
                                     }
                                 }
                                 Err(err) => {
@@ -280,7 +317,7 @@ impl TcpAndTcpStreamProxy {
                                 if !processed_stream2 {
                                     if let Err(err) = poll.registry().reregister(
                                         &mut tcp_stream2,
-                                        STREAM2_TOKEN,
+                                        proxy_base::TCP_STREAM2_TOKEN,
                                         mio::Interest::READABLE,
                                     ) {
                                         proxy_error = Some(AppError::General(format!(
@@ -295,9 +332,23 @@ impl TcpAndTcpStreamProxy {
                             }
                         }
 
+                        proxy_base::TCP_STREAM1_CLOSED_TOKEN => {
+                            warn(&target!(), "TCP stream1 connection closed");
+                            *closing.lock().unwrap() = true;
+                            continue 'EVENTS;
+                        }
+
+                        proxy_base::TCP_STREAM2_CLOSED_TOKEN => {
+                            warn(&target!(), "TCP stream2 connection closed");
+                            *closing.lock().unwrap() = true;
+                            continue 'EVENTS;
+                        }
+
                         _ => {}
                     }
                 }
+
+                event_tokens.initial_tokens.clear();
             }
 
             // Shutdown proxy resources

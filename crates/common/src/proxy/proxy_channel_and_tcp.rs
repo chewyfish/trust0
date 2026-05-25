@@ -11,10 +11,9 @@ use crate::logging::{error, info, warn};
 use crate::net::stream_utils;
 use crate::net::stream_utils::StreamReaderWriter;
 use crate::proxy::event::ProxyEvent;
-use crate::proxy::proxy_base::ProxyStream;
+use crate::proxy::proxy_base::{self, EventTokens, ProxyStream};
 use crate::target;
 
-const TCP_STREAM_TOKEN: mio::Token = mio::Token(0);
 const POLLING_DURATION_MSECS: u64 = 1000;
 
 /// Proxy based on a sync channel and a TCP stream
@@ -139,14 +138,14 @@ impl ChannelAndTcpStreamProxy {
                     // Process event
                     if let ProxyEvent::Message(_, _, data) = socket_event {
                         match stream_utils::encode_proxied_datagram(data.as_slice()) {
-                            Ok(encoded_datagram) => {
+                            Ok(encoded_datagram) => loop {
                                 match stream_utils::write_tcp_stream(
                                     &mut tcp_stream_reader_writer,
                                     &encoded_datagram,
                                 ) {
-                                    Ok(()) => {}
+                                    Ok(()) => break,
                                     Err(err) => match err {
-                                        AppError::WouldBlock => continue,
+                                        AppError::WouldBlock => {}
                                         AppError::StreamEOF => break 'EVENTS,
                                         _ => {
                                             proxy_error = Some(err);
@@ -155,7 +154,8 @@ impl ChannelAndTcpStreamProxy {
                                         }
                                     },
                                 }
-                            }
+                                thread::sleep(Duration::from_millis(5));
+                            },
                             Err(err) => {
                                 error(
                                     &target!(),
@@ -216,7 +216,7 @@ impl ChannelAndTcpStreamProxy {
 
                 if let Err(err) = poll.registry().register(
                     &mut tcp_stream,
-                    TCP_STREAM_TOKEN,
+                    proxy_base::TCP_STREAM1_TOKEN,
                     mio::Interest::READABLE,
                 ) {
                     Self::perform_shutdown(&proxy_key, &tcp_stream, &proxy_channel_sender, &closed);
@@ -227,29 +227,33 @@ impl ChannelAndTcpStreamProxy {
                 }
 
                 let mut datagram_buffer = BytesMut::with_capacity(0);
-                let mut events = mio::Events::with_capacity(4196);
                 let mut proxy_error = None;
+                let events = mio::Events::with_capacity(4196);
+                let mut event_tokens =
+                    EventTokens::new(events, vec![proxy_base::TCP_STREAM1_TOKEN]);
 
                 // IO events processing loop
                 'EVENTS: while !*closing.lock().unwrap() {
-                    match poll.poll(
-                        &mut events,
-                        Some(Duration::from_millis(POLLING_DURATION_MSECS)),
-                    ) {
-                        Err(err) if err.kind() == io::ErrorKind::WouldBlock => continue,
-                        Err(err) => {
-                            proxy_error = Some(AppError::General(format!(
-                                "Error while polling for IO events: err={:?}",
-                                &err
-                            )));
-                            *closing.lock().unwrap() = true;
-                            continue 'EVENTS;
+                    if event_tokens.initial_tokens.is_empty() {
+                        match poll.poll(
+                            &mut event_tokens.events,
+                            Some(Duration::from_millis(POLLING_DURATION_MSECS)),
+                        ) {
+                            Err(err) if err.kind() == io::ErrorKind::WouldBlock => continue,
+                            Err(err) => {
+                                proxy_error = Some(AppError::General(format!(
+                                    "Error while polling for IO events: err={:?}",
+                                    &err
+                                )));
+                                *closing.lock().unwrap() = true;
+                                continue 'EVENTS;
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
 
-                    for event in events.iter() {
-                        if event.token() == TCP_STREAM_TOKEN {
+                    for event_token in event_tokens.iter() {
+                        if event_token == &proxy_base::TCP_STREAM1_TOKEN {
                             match stream_utils::read_tcp_stream(&mut tcp_stream_reader_writer) {
                                 Ok(data) => {
                                     if !data.is_empty() {
@@ -300,7 +304,7 @@ impl ChannelAndTcpStreamProxy {
                             {
                                 if let Err(err) = poll.registry().reregister(
                                     &mut tcp_stream,
-                                    TCP_STREAM_TOKEN,
+                                    proxy_base::TCP_STREAM1_TOKEN,
                                     mio::Interest::READABLE,
                                 ) {
                                     proxy_error = Some(AppError::General(format!(
@@ -313,6 +317,8 @@ impl ChannelAndTcpStreamProxy {
                             }
                         }
                     }
+
+                    event_tokens.initial_tokens.clear();
                 }
 
                 // Close proxy connection stream

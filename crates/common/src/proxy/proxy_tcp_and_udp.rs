@@ -11,11 +11,9 @@ use crate::logging::{error, info, warn};
 use crate::net::stream_utils;
 use crate::net::stream_utils::StreamReaderWriter;
 use crate::proxy::event::ProxyEvent;
-use crate::proxy::proxy_base::ProxyStream;
+use crate::proxy::proxy_base::{self, EventTokens, ProxyStream};
 use crate::target;
 
-const TCP_STREAM_TOKEN: mio::Token = mio::Token(0);
-const UDP_SOCKET_TOKEN: mio::Token = mio::Token(1);
 const POLLING_DURATION_MSECS: u64 = 1000;
 
 /// Proxy based on 2 connected sockets: TCP stream and a UDP socket
@@ -135,10 +133,11 @@ impl TcpAndUdpStreamProxy {
                 }
             }
 
-            if let Err(err) =
-                poll.registry()
-                    .register(&mut tcp_stream, TCP_STREAM_TOKEN, mio::Interest::READABLE)
-            {
+            if let Err(err) = poll.registry().register(
+                &mut tcp_stream,
+                proxy_base::TCP_STREAM1_TOKEN,
+                mio::Interest::READABLE,
+            ) {
                 Self::perform_shutdown(
                     &proxy_key,
                     &tcp_stream,
@@ -152,10 +151,11 @@ impl TcpAndUdpStreamProxy {
                 )));
             }
 
-            if let Err(err) =
-                poll.registry()
-                    .register(&mut udp_socket, UDP_SOCKET_TOKEN, mio::Interest::READABLE)
-            {
+            if let Err(err) = poll.registry().register(
+                &mut udp_socket,
+                proxy_base::UDP_SOCKET1_TOKEN,
+                mio::Interest::READABLE,
+            ) {
                 Self::perform_shutdown(
                     &proxy_key,
                     &tcp_stream,
@@ -170,30 +170,38 @@ impl TcpAndUdpStreamProxy {
             }
 
             let mut datagram_buffer = BytesMut::with_capacity(0);
-            let mut events = mio::Events::with_capacity(4196);
             let mut proxy_error = None;
+            let events = mio::Events::with_capacity(4196);
+            let mut event_tokens = EventTokens::new(
+                events,
+                vec![proxy_base::TCP_STREAM1_TOKEN, proxy_base::UDP_SOCKET1_TOKEN],
+            );
 
             // IO events processing loop
             'EVENTS: while !*closing.lock().unwrap() {
-                match poll.poll(
-                    &mut events,
-                    Some(Duration::from_millis(POLLING_DURATION_MSECS)),
-                ) {
-                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => continue,
-                    Err(err) => {
-                        proxy_error = Some(AppError::General(format!(
-                            "Error while polling for IO events: err={:?}",
-                            &err
-                        )));
-                        *closing.lock().unwrap() = true;
-                        continue 'EVENTS;
+                if event_tokens.initial_tokens.is_empty() {
+                    match poll.poll(
+                        &mut event_tokens.events,
+                        Some(Duration::from_millis(POLLING_DURATION_MSECS)),
+                    ) {
+                        Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                            continue 'EVENTS;
+                        }
+                        Err(err) => {
+                            proxy_error = Some(AppError::General(format!(
+                                "Error while polling for IO events: err={:?}",
+                                &err
+                            )));
+                            *closing.lock().unwrap() = true;
+                            continue 'EVENTS;
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
 
-                for event in events.iter() {
-                    match event.token() {
-                        TCP_STREAM_TOKEN => {
+                'EVENT_TOKENS: for event_token in event_tokens.iter() {
+                    match *event_token {
+                        proxy_base::TCP_STREAM1_TOKEN => {
                             match stream_utils::read_tcp_stream(&mut tcp_stream_reader_writer) {
                                 Ok(data) => {
                                     datagram_buffer.extend_from_slice(data.as_slice());
@@ -202,14 +210,14 @@ impl TcpAndUdpStreamProxy {
                                             &mut datagram_buffer,
                                         ) {
                                             Ok(None) => break,
-                                            Ok(Some(datagram)) => {
+                                            Ok(Some(datagram)) => loop {
                                                 match stream_utils::write_mio_udp_socket(
                                                     &udp_socket,
                                                     &datagram,
                                                 ) {
-                                                    Ok(()) => {}
+                                                    Ok(()) => break,
                                                     Err(err) => match err {
-                                                        AppError::WouldBlock => continue,
+                                                        AppError::WouldBlock => {}
                                                         AppError::StreamEOF => break 'EVENTS,
                                                         _ => {
                                                             proxy_error = Some(err);
@@ -218,11 +226,11 @@ impl TcpAndUdpStreamProxy {
                                                         }
                                                     },
                                                 }
-                                            }
+                                                thread::sleep(Duration::from_millis(5));
+                                            },
                                             Err(err) => {
                                                 error(&target!(), &format!("Error decoding proxied datagram, discarding: err={:?}", &err));
                                                 datagram_buffer.clear();
-                                                break;
                                             }
                                         }
                                     }
@@ -238,7 +246,7 @@ impl TcpAndUdpStreamProxy {
                             {
                                 if let Err(err) = poll.registry().reregister(
                                     &mut tcp_stream,
-                                    TCP_STREAM_TOKEN,
+                                    proxy_base::TCP_STREAM1_TOKEN,
                                     mio::Interest::READABLE,
                                 ) {
                                     proxy_error = Some(AppError::General(format!(
@@ -251,16 +259,16 @@ impl TcpAndUdpStreamProxy {
                             }
                         }
 
-                        UDP_SOCKET_TOKEN => {
+                        proxy_base::UDP_SOCKET1_TOKEN => {
                             match stream_utils::read_mio_udp_socket(&udp_socket) {
                                 Ok((_socket_addr, data)) => {
                                     match stream_utils::encode_proxied_datagram(data.as_slice()) {
-                                        Ok(encoded_datagram) => {
+                                        Ok(encoded_datagram) => loop {
                                             match stream_utils::write_tcp_stream(
                                                 &mut tcp_stream_reader_writer,
                                                 &encoded_datagram,
                                             ) {
-                                                Ok(()) => {}
+                                                Ok(()) => break,
                                                 Err(err) => match err {
                                                     AppError::WouldBlock => {}
                                                     AppError::StreamEOF => break 'EVENTS,
@@ -271,25 +279,29 @@ impl TcpAndUdpStreamProxy {
                                                     }
                                                 },
                                             }
-                                        }
+                                            thread::sleep(Duration::from_millis(5));
+                                        },
                                         Err(err) => {
                                             error(&target!(), &format!("Error encoding proxied datagram, discarding: err={:?}", &err));
-                                            continue 'EVENTS;
+                                            continue 'EVENT_TOKENS;
                                         }
                                     }
                                 }
-                                Err(err) => {
-                                    proxy_error = Some(err);
-                                    *closing.lock().unwrap() = true;
-                                    continue 'EVENTS;
-                                }
+                                Err(err) => match err {
+                                    AppError::WouldBlock => {}
+                                    _ => {
+                                        proxy_error = Some(err);
+                                        *closing.lock().unwrap() = true;
+                                        continue 'EVENTS;
+                                    }
+                                },
                             }
 
                             #[cfg(windows)]
                             {
                                 if let Err(err) = poll.registry().reregister(
                                     &mut udp_socket,
-                                    UDP_SOCKET_TOKEN,
+                                    proxy_base::UDP_SOCKET1_TOKEN,
                                     mio::Interest::READABLE,
                                 ) {
                                     proxy_error = Some(AppError::General(format!(
@@ -302,9 +314,17 @@ impl TcpAndUdpStreamProxy {
                             }
                         }
 
+                        proxy_base::TCP_STREAM1_CLOSED_TOKEN => {
+                            warn(&target!(), "TCP stream1 connection closed");
+                            *closing.lock().unwrap() = true;
+                            continue 'EVENTS;
+                        }
+
                         _ => {}
                     }
                 }
+
+                event_tokens.initial_tokens.clear();
             }
 
             // Shutdown proxy resources
