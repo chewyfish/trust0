@@ -22,6 +22,13 @@ const SESSIONMSG_READ_LOOP_MAX_READS: u16 = 10;
 
 const NEWLINE: &[u8] = "\n".as_bytes();
 
+pub const HTTPCODE_OK: u16 = 200;
+pub const HTTPCODE_BAD_REQUEST: u16 = 400;
+pub const HTTPCODE_SERVER_ERROR: u16 = 500;
+
+const HTTPRESP_BAD_REQUEST: &str = "HTTP/1.1 400 Bad Request\r\n\r\n";
+const HTTPRESP_SERVER_ERROR: &str = "HTTP/1.1 500 Internal Server Error\r\n\r\n";
+
 /// Represents a stream, which implements [`io::Read`] and [`io::Write`]
 pub trait StreamReaderWriter: io::Read + io::Write + Send {}
 
@@ -309,7 +316,7 @@ pub fn encode_proxied_datagram(datagram: &[u8]) -> Result<Bytes, AppError> {
 ///
 /// # Returns
 ///
-/// A [`Result`] containing an optiona;l [`Bytes`] object representing next decoded datagram
+/// A [`Result`] containing an optional [`Bytes`] object representing next decoded datagram
 ///
 pub fn decode_proxied_datagram(buffer: &mut BytesMut) -> Result<Option<Bytes>, AppError> {
     let buffer_len = buffer.len();
@@ -326,6 +333,89 @@ pub fn decode_proxied_datagram(buffer: &mut BytesMut) -> Result<Option<Bytes>, A
     Ok(Some(buffer.copy_to_bytes(usize::from(datagram_len))))
 }
 
+/// Process HTTP CONNECT request from stream. Returns the appropriate HTTP response (code, fulll
+/// response, log string)
+///
+/// # Arguments
+///
+/// * `stream_reader_writer` - TCP stream reader/writer
+/// * `expected_uri` - The URI which should be given in the CONNECT string
+///
+/// # Returns
+///
+/// The appropriate HTTP response code, line and log text for this CONNECT request context.
+///
+pub fn process_http_connect_request(
+    stream_reader_writer: &Arc<Mutex<Box<dyn StreamReaderWriter>>>,
+    expected_uri: &str,
+) -> (u16, String, String) {
+    // Gather input as request
+
+    let mut request = String::new();
+    let mut stream_reader_writer = stream_reader_writer.clone();
+    let mut read_tries = 0;
+
+    loop {
+        match read_tcp_stream(&mut stream_reader_writer) {
+            Ok(data) => {
+                if data.is_empty() {
+                    if !request.is_empty() {
+                        break;
+                    }
+                    read_tries += 1;
+                    if read_tries == 200 {
+                        return (
+                            HTTPCODE_BAD_REQUEST,
+                            HTTPRESP_BAD_REQUEST.to_string(),
+                            "CONNECT request not sent".to_string(),
+                        );
+                    }
+                    thread::sleep(Duration::from_millis(5));
+                } else {
+                    request.push_str(&String::from_utf8_lossy(data.as_slice()));
+                }
+            }
+            Err(err) => {
+                return (
+                    HTTPCODE_SERVER_ERROR,
+                    HTTPRESP_SERVER_ERROR.to_string(),
+                    format!("Error reading stream for CONNECT request: err={:?}", &err),
+                )
+            }
+        }
+    }
+
+    // Determine response
+
+    let connect_request_re = regex::Regex::new(r"^CONNECT +(\S+) +HTTP/(\d+\.\d+)").unwrap();
+
+    match connect_request_re.captures(&request) {
+        Some(captures) => {
+            if &captures[1] != expected_uri {
+                return (
+                    HTTPCODE_BAD_REQUEST,
+                    HTTPRESP_BAD_REQUEST.to_string(),
+                    format!(
+                        "Invalid CONNECT request URI: req={:?}, exp_uri={}",
+                        &request, expected_uri
+                    ),
+                );
+            }
+            (
+                HTTPCODE_OK,
+                format!("HTTP/{} 200 Connection Established\r\n\r\n", &captures[2]),
+                format!("HTTP proxy connection established: uri={}", &captures[1]),
+            )
+        }
+        None => (
+            HTTPCODE_BAD_REQUEST,
+            HTTPRESP_BAD_REQUEST.to_string(),
+            format!("Invalid CONNECT request: req={:?}", &request),
+        ),
+    }
+}
+
+/// # Arguments
 /// Connected TCP stream pair creator
 pub struct ConnectedTcpStream {
     /// TCP listener used in creating the connected TCP streams
@@ -1148,6 +1238,176 @@ pub mod tests {
             Err(err) => panic!("Unexpected result (second decode): err={:?}", &err),
         }
         assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn streamutl_process_http_connect_when_valid() {
+        let inp_buf1 = "CONNECT example.com:443 HTTP/1.1\r\n";
+        let inp_buf2 = "HEADER1: VALUE1\r\n";
+        let mut stream_reader = MockStreamReadWrite::new();
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|buf| {
+                buf[..inp_buf1.len()].copy_from_slice(inp_buf1.as_bytes());
+                Ok(inp_buf1.len())
+            });
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|buf| {
+                buf[..inp_buf2.len()].copy_from_slice(inp_buf2.as_bytes());
+                Ok(inp_buf2.len())
+            });
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|_| Err(io::ErrorKind::WouldBlock.into()));
+        let stream_reader: Arc<Mutex<Box<dyn StreamReaderWriter>>> =
+            Arc::new(Mutex::new(Box::new(stream_reader)));
+
+        let expected_response = "HTTP/1.1 200 Connection Established\r\n\r\n";
+
+        let (code, resp, _log) = process_http_connect_request(&stream_reader, "example.com:443");
+        assert_eq!(code, HTTPCODE_OK);
+        assert_eq!(resp.as_str(), expected_response);
+    }
+
+    #[test]
+    fn streamutl_process_http_connect_when_no_request() {
+        let mut stream_reader = MockStreamReadWrite::new();
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(200)
+            .returning(|_| Err(io::ErrorKind::WouldBlock.into()));
+        let stream_reader: Arc<Mutex<Box<dyn StreamReaderWriter>>> =
+            Arc::new(Mutex::new(Box::new(stream_reader)));
+
+        let (code, resp, _log) = process_http_connect_request(&stream_reader, "example.com:443");
+        assert_eq!(code, HTTPCODE_BAD_REQUEST);
+        assert_eq!(resp.as_str(), HTTPRESP_BAD_REQUEST);
+    }
+
+    #[test]
+    fn streamutl_process_http_connect_when_read_error() {
+        let mut stream_reader = MockStreamReadWrite::new();
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|_| Err(io::ErrorKind::NotConnected.into()));
+        let stream_reader: Arc<Mutex<Box<dyn StreamReaderWriter>>> =
+            Arc::new(Mutex::new(Box::new(stream_reader)));
+
+        let (code, resp, _log) = process_http_connect_request(&stream_reader, "example.com:443");
+        assert_eq!(code, HTTPCODE_SERVER_ERROR);
+        assert_eq!(resp.as_str(), HTTPRESP_SERVER_ERROR);
+    }
+
+    #[test]
+    fn streamutl_process_http_connect_when_not_connect_request() {
+        let inp_buf1 = "GET / HTTP/1.1\r\n";
+        let inp_buf2 = "HOST: example.com\r\n";
+        let mut stream_reader = MockStreamReadWrite::new();
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|buf| {
+                buf[..inp_buf1.len()].copy_from_slice(inp_buf1.as_bytes());
+                Ok(inp_buf1.len())
+            });
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|buf| {
+                buf[..inp_buf2.len()].copy_from_slice(inp_buf2.as_bytes());
+                Ok(inp_buf2.len())
+            });
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|_| Err(io::ErrorKind::WouldBlock.into()));
+        let stream_reader: Arc<Mutex<Box<dyn StreamReaderWriter>>> =
+            Arc::new(Mutex::new(Box::new(stream_reader)));
+
+        let (code, resp, _log) = process_http_connect_request(&stream_reader, "example.com:443");
+        assert_eq!(code, HTTPCODE_BAD_REQUEST);
+        assert_eq!(resp.as_str(), HTTPRESP_BAD_REQUEST);
+    }
+
+    #[test]
+    fn streamutl_process_http_connect_when_invalid_http_vers() {
+        let inp_buf1 = "CONNECT example.com:443 HTTP/123\r\n";
+        let inp_buf2 = "HEADER1: VALUE1\r\n";
+        let mut stream_reader = MockStreamReadWrite::new();
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|buf| {
+                buf[..inp_buf1.len()].copy_from_slice(inp_buf1.as_bytes());
+                Ok(inp_buf1.len())
+            });
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|buf| {
+                buf[..inp_buf2.len()].copy_from_slice(inp_buf2.as_bytes());
+                Ok(inp_buf2.len())
+            });
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|_| Err(io::ErrorKind::WouldBlock.into()));
+        let stream_reader: Arc<Mutex<Box<dyn StreamReaderWriter>>> =
+            Arc::new(Mutex::new(Box::new(stream_reader)));
+
+        let (code, resp, _log) = process_http_connect_request(&stream_reader, "example.com:443");
+        assert_eq!(code, HTTPCODE_BAD_REQUEST);
+        assert_eq!(resp.as_str(), HTTPRESP_BAD_REQUEST);
+    }
+
+    #[test]
+    fn streamutl_process_http_connect_when_wrong_uri() {
+        let inp_buf1 = "CONNECT example2.com:443 HTTP/1.1\r\n";
+        let inp_buf2 = "HEADER1: VALUE1\r\n";
+        let mut stream_reader = MockStreamReadWrite::new();
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|buf| {
+                buf[..inp_buf1.len()].copy_from_slice(inp_buf1.as_bytes());
+                Ok(inp_buf1.len())
+            });
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|buf| {
+                buf[..inp_buf2.len()].copy_from_slice(inp_buf2.as_bytes());
+                Ok(inp_buf2.len())
+            });
+        stream_reader
+            .expect_read()
+            .with(predicate::always())
+            .times(1)
+            .return_once(|_| Err(io::ErrorKind::WouldBlock.into()));
+        let stream_reader: Arc<Mutex<Box<dyn StreamReaderWriter>>> =
+            Arc::new(Mutex::new(Box::new(stream_reader)));
+
+        let (code, resp, _log) = process_http_connect_request(&stream_reader, "example.com:443");
+        assert_eq!(code, HTTPCODE_BAD_REQUEST);
+        assert_eq!(resp.as_str(), HTTPRESP_BAD_REQUEST);
     }
 
     #[test]
