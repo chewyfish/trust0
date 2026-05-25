@@ -6,6 +6,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
+#[cfg(not(test))]
 use std::time::Duration;
 use trust0_common::client::service::ProxyAddrs;
 use trust0_common::error::AppError;
@@ -21,6 +22,7 @@ use crate::control::gateway::client::ControllerClient;
 use crate::service::proxy::proxy_base::{GatewayServiceProxy, GatewayServiceProxyVisitor};
 use crate::service::proxy::svcgw_proxy::{ServiceGatewayProxy, ServiceGatewayProxyServerVisitor};
 use crate::service::proxy::tcp_proxy::{TcpGatewayProxy, TcpGatewayProxyServerVisitor};
+use crate::service::proxy::tls_proxy::{TlsGatewayProxy, TlsGatewayProxyServerVisitor};
 use crate::service::proxy::udp_proxy::{UdpGatewayProxy, UdpGatewayProxyServerVisitor};
 
 const DEFAULT_SERVICE_PORT_START: u16 = 8200;
@@ -425,6 +427,30 @@ impl ServiceMgr for GatewayServiceMgr {
                         service_proxy_visitor = tcp_proxy_visitor;
                     }
 
+                    // Starts up TLS service proxy
+                    Transport::TLS => {
+                        // Setup service proxy objects
+                        let tls_proxy_visitor =
+                            Arc::new(Mutex::new(TlsGatewayProxyServerVisitor::new(
+                                &self.app_config,
+                                &service_mgr,
+                                service,
+                                &service_host,
+                                service_port,
+                                &self.proxy_tasks_sender,
+                                &self.proxy_events_sender,
+                                &self.services_by_proxy_key,
+                            )?));
+
+                        service_proxy = Arc::new(Mutex::new(TlsGatewayProxy::new(
+                            &self.app_config,
+                            tls_proxy_visitor.clone(),
+                            service_port,
+                        )));
+
+                        service_proxy_visitor = tls_proxy_visitor;
+                    }
+
                     // Starts up UDP service proxy
                     Transport::UDP => {
                         // Setup service proxy objects
@@ -447,11 +473,6 @@ impl ServiceMgr for GatewayServiceMgr {
                         )));
 
                         service_proxy_visitor = udp_proxy_visitor;
-                    }
-
-                    // Starts up TLS service proxy
-                    Transport::TLS => {
-                        unimplemented!();
                     }
                 }
 
@@ -582,7 +603,6 @@ pub mod tests {
     use crate::repository::user_repo::tests::MockUserRepo;
     use crate::service::proxy::proxy_base::tests::MockGwSvcProxyVisitor;
     use mockall::{mock, predicate};
-    use std::sync::mpsc;
 
     // mocks
     // =====
@@ -1096,6 +1116,51 @@ pub mod tests {
             service_id: 200,
             name: "Service200".to_string(),
             transport: Transport::TCP,
+            host: "localhost".to_string(),
+            port: 8200,
+        };
+        let service_mgr = create_gw_service_mgr(config::GatewayType::Full, true);
+        let orig_svc_ports_len = service_mgr.service_ports.len();
+        let orig_svc_proxies_len = service_mgr.service_proxies.len();
+        let orig_svc_proxy_visitors_len = service_mgr.service_proxy_visitors.len();
+        let service_mgr = Arc::new(Mutex::new(service_mgr));
+
+        match service_mgr
+            .clone()
+            .lock()
+            .unwrap()
+            .startup(service_mgr.clone(), &service, &None)
+        {
+            Ok((host, port)) => {
+                assert!(host.is_some());
+                assert_eq!(host.unwrap(), GATEWAY_HOST.to_string());
+                assert_eq!(port, GATEWAY_SHARED_PORT);
+            }
+            Err(err) => {
+                panic!("Unexpected startup result: err={:?}", &err);
+            }
+        }
+
+        assert_eq!(
+            service_mgr.lock().unwrap().service_ports.len(),
+            orig_svc_ports_len + 1
+        );
+        assert_eq!(
+            service_mgr.lock().unwrap().service_proxies.len(),
+            orig_svc_proxies_len + 1
+        );
+        assert_eq!(
+            service_mgr.lock().unwrap().service_proxy_visitors.len(),
+            orig_svc_proxy_visitors_len + 1
+        );
+    }
+
+    #[test]
+    fn gwsvcmgr_startup_when_tls_service() {
+        let service = Service {
+            service_id: 200,
+            name: "Service200".to_string(),
+            transport: Transport::TLS,
             host: "localhost".to_string(),
             port: 8200,
         };

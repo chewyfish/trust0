@@ -1,4 +1,7 @@
 use clap::Parser;
+use pki_types::{
+    CertificateDer, PrivateKeyDer, PrivatePkcs1KeyDer, PrivatePkcs8KeyDer, PrivateSec1KeyDer,
+};
 use rustls::crypto::CryptoProvider;
 use rustls::{RootCertStore, SupportedCipherSuite};
 use std::env;
@@ -86,11 +89,58 @@ pub struct AppConfigArgs {
     help: Option<bool>,
 }
 
+/// TLS server configuration builder
+pub struct TlsServerConfigBuilder {
+    pub certs: Vec<CertificateDer<'static>>,
+    pub key: PrivateKeyDer<'static>,
+    pub cipher_suites: Vec<rustls::SupportedCipherSuite>,
+}
+
+impl TlsServerConfigBuilder {
+    /// Create TLS server configuration
+    pub fn build(&self) -> Result<rustls::ServerConfig, AppError> {
+        let mut tls_server_config = rustls::ServerConfig::builder_with_provider(
+            CryptoProvider {
+                cipher_suites: self.cipher_suites.to_vec(),
+                ..rustls::crypto::ring::default_provider()
+            }
+            .into(),
+        )
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .expect("Inconsistent cipher-suites/versions specified")
+        .with_no_client_auth()
+        .with_single_cert(
+            self.certs.clone(),
+            match &self.key {
+                PrivateKeyDer::Pkcs1(key_der) => {
+                    Ok(PrivatePkcs1KeyDer::from(key_der.secret_pkcs1_der().to_vec()).into())
+                }
+                PrivateKeyDer::Pkcs8(key_der) => {
+                    Ok(PrivatePkcs8KeyDer::from(key_der.secret_pkcs8_der().to_vec()).into())
+                }
+                PrivateKeyDer::Sec1(key_der) => {
+                    Ok(PrivateSec1KeyDer::from(key_der.secret_sec1_der().to_vec()).into())
+                }
+                _ => Err(AppError::General(format!(
+                    "Unsupported key type: key={:?}",
+                    &self.key
+                ))),
+            }?,
+        )
+        .expect("Bad certificates/private key");
+
+        tls_server_config.key_log = Arc::new(rustls::KeyLogFile::new());
+
+        Ok(tls_server_config)
+    }
+}
+
 pub struct AppConfig {
     pub client_host: String,
     pub gateway_host: String,
     pub gateway_port: u16,
     pub tls_client_config: rustls::ClientConfig,
+    pub tls_server_config_builder: TlsServerConfigBuilder,
     pub verbose_logging: bool,
     pub repl_shell_input: Arc<Mutex<Box<dyn ReplShellInputReader>>>,
     pub repl_shell_output: Arc<Mutex<Box<dyn ReplShellOutputWriter>>>,
@@ -150,7 +200,7 @@ impl AppConfig {
 
         let mut tls_client_config = rustls::ClientConfig::builder_with_provider(
             CryptoProvider {
-                cipher_suites,
+                cipher_suites: cipher_suites.clone(),
                 ..rustls::crypto::ring::default_provider()
             }
             .into(),
@@ -158,7 +208,7 @@ impl AppConfig {
         .with_protocol_versions(&[&rustls::version::TLS13])
         .expect("Inconsistent cipher-suite/versions selected")
         .with_root_certificates(ca_root_store)
-        .with_client_auth_cert(auth_certs, auth_key)
+        .with_client_auth_cert(auth_certs.clone(), auth_key)
         .expect("Invalid client auth certs/key");
 
         tls_client_config.enable_early_data = true;
@@ -182,12 +232,19 @@ impl AppConfig {
         ));
         spawn_line_reader(&*repl_shell_input);
 
+        let tls_server_config_builder = TlsServerConfigBuilder {
+            certs: auth_certs,
+            key: load_private_key(&config_args.auth_key_file).unwrap(),
+            cipher_suites,
+        };
+
         // Instantiate AppConfig
         Ok(AppConfig {
             client_host: config_args.host.clone(),
             gateway_host: config_args.gateway_host.clone(),
             gateway_port: config_args.gateway_port,
             tls_client_config,
+            tls_server_config_builder,
             verbose_logging: config_args.verbose,
             repl_shell_input: Arc::new(Mutex::new(repl_shell_input)),
             repl_shell_output: Arc::new(Mutex::new(repl_shell_output)),
@@ -270,7 +327,7 @@ pub mod tests {
 
         let tls_client_config = rustls::ClientConfig::builder_with_provider(
             CryptoProvider {
-                cipher_suites,
+                cipher_suites: cipher_suites.clone(),
                 ..rustls::crypto::ring::default_provider()
             }
             .into(),
@@ -278,7 +335,7 @@ pub mod tests {
         .with_protocol_versions(&[&rustls::version::TLS13])
         .expect("Inconsistent cipher-suite/versions selected")
         .with_root_certificates(auth_root_certs)
-        .with_client_auth_cert(client_cert, client_key)
+        .with_client_auth_cert(client_cert.clone(), client_key)
         .expect("Invalid client auth certs/key");
 
         let repl_shell_input = Box::new(ShellInputReader::new(
@@ -288,11 +345,18 @@ pub mod tests {
         ));
         let repl_shell_output = Box::new(ShellOutputWriter::new(None));
 
+        let tls_server_config_builder = TlsServerConfigBuilder {
+            certs: client_cert,
+            key: load_private_key(client_pki_files.1.to_str().as_ref().unwrap())?,
+            cipher_suites,
+        };
+
         Ok(AppConfig {
             client_host: "127.0.0.1".to_string(),
             gateway_host: "gwhost1".to_string(),
             gateway_port: 2000,
             tls_client_config,
+            tls_server_config_builder,
             verbose_logging: false,
             repl_shell_input: Arc::new(Mutex::new(repl_shell_input)),
             repl_shell_output: Arc::new(Mutex::new(repl_shell_output)),
