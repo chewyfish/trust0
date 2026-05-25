@@ -218,6 +218,7 @@ impl Certificate {
     pub fn client_certificate_builder() -> ClientCertificateBuilder {
         ClientCertificateBuilder {
             common_builder: CommonCertificateBuilder::default(),
+            san_dns_names: Vec::new(),
             san_uri_user_id: None,
             san_uri_platform: None,
         }
@@ -1024,6 +1025,8 @@ impl GatewayCertificateBuilder {
 pub struct ClientCertificateBuilder {
     /// Common certificate builder delegate object
     common_builder: CommonCertificateBuilder,
+    /// Subject alternative name DNS value (vector of Strings representing host naming)
+    san_dns_names: Vec<String>,
     /// Subject alternative name URI access context JSON `userId` property
     san_uri_user_id: Option<i64>,
     /// Subject alternative name URI access context JSON `platform` property
@@ -1136,6 +1139,21 @@ impl ClientCertificateBuilder {
         self
     }
 
+    /// Sets the subject alternative name DNS value(s) (vector of Strings representing host naming)
+    ///
+    /// # Arguments
+    ///
+    /// * `dns_names` - A vector of host name Strings, used to compose SAN DNS entries
+    ///
+    /// # Returns
+    ///
+    /// [`Self`] for further function invocation.
+    ///
+    pub fn san_dns_names(&mut self, dns_names: &[String]) -> &mut Self {
+        self.san_dns_names = dns_names.to_vec();
+        self
+    }
+
     /// Sets the subject alternative name URI access context JSON `userId` property
     ///
     /// # Arguments
@@ -1201,6 +1219,9 @@ impl ClientCertificateBuilder {
             cert_params
                 .extended_key_usages
                 .push(rcgen::ExtendedKeyUsagePurpose::ClientAuth);
+            cert_params
+                .extended_key_usages
+                .push(rcgen::ExtendedKeyUsagePurpose::ServerAuth);
 
             let access_context = CertAccessContext {
                 entity_type: EntityType::Client,
@@ -1216,6 +1237,11 @@ impl ClientCertificateBuilder {
             cert_params.subject_alt_names.push(rcgen::SanType::URI(
                 access_context_ser.as_str().try_into().unwrap(),
             ));
+            for san_dns_name in &self.san_dns_names {
+                cert_params.subject_alt_names.push(rcgen::SanType::DnsName(
+                    san_dns_name.as_str().try_into().unwrap(),
+                ));
+            }
         }
 
         let key_pair = key_pair.map_or_else(
@@ -1466,6 +1492,7 @@ mod tests {
             builder.common_builder.dn_organization,
             DEFAULT_DISTINGUISHED_NAME_ORGANIZATION_NAME
         );
+        assert!(builder.san_dns_names.is_empty());
         assert!(builder.san_uri_user_id.is_none());
         assert!(builder.san_uri_platform.is_none());
     }
@@ -1999,6 +2026,7 @@ mod tests {
         let one_week = Duration::new(86_400 * 7, 0);
         let validity_not_after = OffsetDateTime::now_utc().checked_add(one_week).unwrap();
         let validity_not_before = OffsetDateTime::now_utc().checked_sub(one_week).unwrap();
+        let san_dns_names = vec!["dns1".to_string(), "dns2".to_string()];
 
         let mut builder = Certificate::client_certificate_builder();
         let result = builder
@@ -2009,6 +2037,7 @@ mod tests {
             .dn_common_name("name1")
             .dn_country("country1")
             .dn_organization("org1")
+            .san_dns_names(&san_dns_names)
             .san_uri_user_id(100)
             .san_uri_platform("Linux")
             .build();
@@ -2049,7 +2078,10 @@ mod tests {
             );
         }
 
-        let expected_ext_key_usages = HashSet::from([rcgen::ExtendedKeyUsagePurpose::ClientAuth]);
+        let expected_ext_key_usages = HashSet::from([
+            rcgen::ExtendedKeyUsagePurpose::ClientAuth,
+            rcgen::ExtendedKeyUsagePurpose::ServerAuth,
+        ]);
         let ext_key_usages = HashSet::from_iter(cert_params.extended_key_usages.iter().cloned());
         if !ext_key_usages.eq(&expected_ext_key_usages) {
             panic!(
@@ -2064,9 +2096,14 @@ mod tests {
             platform: "Linux".to_string(),
         })
         .unwrap();
-        let expected_san_values = HashSet::from([rcgen::SanType::URI(
+        let mut expected_san_values = HashSet::from([rcgen::SanType::URI(
             access_context_ser.as_str().try_into().unwrap(),
         )]);
+        expected_san_values.extend(
+            san_dns_names
+                .iter()
+                .map(|dns_name| rcgen::SanType::DnsName(dns_name.as_str().try_into().unwrap())),
+        );
         let san_values = HashSet::from_iter(cert_params.subject_alt_names.iter().cloned());
         if !san_values.eq(&expected_san_values) {
             panic!(
