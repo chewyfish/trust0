@@ -40,6 +40,8 @@ There is no authentication enforced for network connections made to the T0C. Lik
 
 There are 2 different topologies which may be used in deploying the gateways: `Single-Gateway`, `Dual-Gateways`. Single-Gateway has a single gateway which handles all T0C clients as well as proxying connections to services. Dual-Gateway has a `Client-Gateway` and a `Service-Gateway`. They divide the responsibilities between T0C and service connections respectively. Traffic is proxied between these 2 gateways (effectively adding an additional hop from the Single-Gateway setup). Both of these topologies allow you to configure a DMZ setup, which helps you determine what resources should be protected.
 
+Services may be `TCP`, `UDP` or `TLS`. For `TLS`, currently only HTTP-based services are supported. Furthermore, the service client must assume that the Trust0 service proxy is available as an HTTP proxy tunnel utilizing the `CONNECT` flow. Refer to [Web TLS Example](./Examples.md#example---web-tls-service) for an example showing a TLS service being utilized.
+
 For more details on gateway topologies:
 
 * Refer to [Trust0 Gateway Invocation](./Invocation.md#trust0-gateway) for information on how to configure the gateway
@@ -142,7 +144,7 @@ Once started, the specified local port (`8501` in the example above) will listen
 
 To recap, 3 total connections make up the virtual connection to a service:
 
-&nbsp;&nbsp;&nbsp;&nbsp;<u>Service Client</u> ` <--TCP|UDP--> ` <u>T0C</u> ` <--mTLS--> ` <u>T0G</u> ` <--TCP|UDP--> ` <u>Service</u>.
+&nbsp;&nbsp;&nbsp;&nbsp;<u>Service Client</u> ` <--TCP|UDP|TLS--> ` <u>T0C</u> ` <--mTLS--> ` <u>T0G</u> ` <--TCP|UDP|TLS--> ` <u>Service</u>.
 
 ### Client Auth
 
@@ -273,7 +275,7 @@ Service lists all the details for all services the Trust0 framework can access f
 |------------|---------------------------------------------------------------------------|
 | service ID | A unique integer serving as the primary key for the record                |
 | name       | A unique name value, used by clients to specify service proxy connections |
-| transport  | Network transport for service connection. Values are 'TCP', 'UDP'         |
+| transport  | Network transport for service connection. Values are 'TCP', 'UDP', 'TLS'  |
 | host       | Service host used by the gateway for connection establishment             |
 | port       | Service port used by the gateway for connection establishment             |
 

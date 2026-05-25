@@ -10,6 +10,7 @@ use rustls::crypto::CryptoProvider;
 use rustls::server::danger::ClientCertVerifier;
 use rustls::server::WebPkiClientVerifier;
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -20,6 +21,8 @@ use trust0_common::crypto::file::{load_certificates, load_private_key};
 use trust0_common::crypto::{alpn, ca, tls};
 use trust0_common::error::AppError;
 use trust0_common::file::ReloadableFile;
+use trust0_common::logging::warn;
+use trust0_common::target;
 
 use crate::control::client::device::Device;
 use crate::repository::access_repo::AccessRepository;
@@ -426,7 +429,7 @@ pub struct ClientGatewayArgs {
 
     /// Trust0 public key pair corresponding to CA root certificate(s) from <CA_ROOT_CERT_FILE>
     /// Key pair is used in signing client authentication certificates.
-    /// This is not required, is CA is not enabled (<CA_ENABLED>)
+    /// This is not required, if CA is not enabled (<CA_ENABLED>)
     #[arg(required=false, long="ca-root-key-file", env, value_parser=trust0_common::crypto::file::verify_private_key_file, verbatim_doc_comment)]
     pub ca_root_key_file: Option<String>,
 
@@ -464,6 +467,10 @@ pub struct ServiceGatewayArgs {
     /// Hostname/ip of this gateway, which is routable by UDP services, used in UDP socket replies. If not supplied, then "127.0.0.1" will be used (if necessary)
     #[arg(required = false, long = "gateway-service-reply-host", env)]
     pub gateway_service_reply_host: Option<String>,
+
+    /// CA root certificate(s) directory for TLS service usage from <CA_ROOT_CERT_DIR>.
+    #[arg(required = false, long = "ca-root-cert-dir", env)]
+    pub ca_root_cert_dir: Option<PathBuf>,
 }
 
 /// TLS server configuration builder
@@ -559,6 +566,9 @@ pub struct AppConfig {
     pub ca_key_algorithm: Option<KeyAlgorithm>,
     pub ca_validity_period_days: Option<u16>,
     pub ca_reissuance_threshold_days: Option<u16>,
+    pub ca_root_cert_dir: Option<PathBuf>,
+    pub ca_certs_added: usize,
+    pub ca_certs_ignored: usize,
     pub dns_client: Resolver,
     pub device: Device,
 }
@@ -567,7 +577,7 @@ impl fmt::Display for AppConfig {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         write!(
             formatter,
-            "AppConfig(type={},host={},port={},mfa={},verb={},svcgw-host={:?},svcgw-port={:?},svc-host={:?},svc-port={:?},svc-reply={:?},mask-addr={},ca={},ca-crt={},ca-key={:?},ca-keyalg={:?},ca-valid={:?},ca-reiss={:?},devid={})",
+            "AppConfig(type={},host={},port={},mfa={},verb={},svcgw-host={:?},svcgw-port={:?},svc-host={:?},svc-port={:?},svc-reply={:?},mask-addr={},ca={},ca-crt={},ca-key={:?},ca-keyalg={:?},ca-valid={:?},ca-reiss={:?},ca-crt-dir={:?},ca_crt_add={},ca_crt_ign={},devid={})",
             &self.gateway_type,
             &self.server_host,
             &self.server_port,
@@ -585,6 +595,9 @@ impl fmt::Display for AppConfig {
             &self.ca_key_algorithm,
             &self.ca_validity_period_days,
             &self.ca_reissuance_threshold_days,
+            &self.ca_root_cert_dir,
+            &self.ca_certs_added,
+            &self.ca_certs_ignored,
             &self.device.get_id(),
         )
     }
@@ -628,7 +641,7 @@ impl AppConfig {
         let auth_certs = load_certificates(&config_args.ca_root_cert_file).unwrap();
         let certs = load_certificates(&config_args.cert_file).unwrap();
         let certs_copy = certs.clone();
-        let certs_copy2 = certs.clone();
+        let certs_for_tls_svc = certs.clone();
         let key = load_private_key(&config_args.key_file).unwrap();
 
         let crl_reloader_loading = Arc::new(Mutex::new(false));
@@ -643,16 +656,16 @@ impl AppConfig {
         };
 
         let mut auth_root_certs = rustls::RootCertStore::empty();
-        let mut auth_root_certs_copy = rustls::RootCertStore::empty();
+        let mut auth_root_certs_for_tls_svc = rustls::RootCertStore::empty();
         for auth_root_cert in auth_certs {
             auth_root_certs.add(auth_root_cert.clone()).unwrap();
-            auth_root_certs_copy.add(auth_root_cert).unwrap();
+            auth_root_certs_for_tls_svc.add(auth_root_cert).unwrap();
         }
 
         let cipher_suites: Vec<rustls::SupportedCipherSuite> = config_args
             .cipher_suite
             .unwrap_or(rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec());
-        let cipher_suites_copy = cipher_suites.clone();
+        let cipher_suites_for_tls_svc = cipher_suites.clone();
 
         let mut alpn_protocols = vec![alpn::Protocol::ControlPlane.to_string().into_bytes()];
         for service in repositories.1.as_ref().lock().unwrap().get_all()? {
@@ -669,7 +682,7 @@ impl AppConfig {
             alpn_protocols,
         };
 
-        let device = Device::new(certs_copy2, None)?;
+        let device = Device::new(certs_copy, None)?;
 
         // Gateway type-specific config
         let mfa_scheme;
@@ -681,7 +694,9 @@ impl AppConfig {
         let ca_validity_period_days;
         let ca_reissuance_threshold_days;
         let gateway_service_reply_host;
-        let mut tls_client_config = None;
+        let mut tls_client_max_frag_size = None;
+        let mut tls_client_insecure = false;
+        let mut tls_client_ca_root_cert_dir = None;
 
         match config_args.gateway_type {
             GatewayTypeCommand::Full(args) => {
@@ -693,6 +708,7 @@ impl AppConfig {
                 ca_key_algorithm = Some(args.client_args.ca_key_algorithm);
                 ca_validity_period_days = Some(args.client_args.ca_validity_period_days);
                 ca_reissuance_threshold_days = Some(args.client_args.ca_reissuance_threshold_days);
+                tls_client_ca_root_cert_dir = args.service_args.ca_root_cert_dir.clone();
                 gateway_service_reply_host = args
                     .service_args
                     .gateway_service_reply_host
@@ -708,30 +724,8 @@ impl AppConfig {
                 ca_validity_period_days = Some(args.client_args.ca_validity_period_days);
                 ca_reissuance_threshold_days = Some(args.client_args.ca_reissuance_threshold_days);
                 gateway_service_reply_host = None;
-                // Create TLS client configuration
-                let key = load_private_key(&config_args.key_file).unwrap();
-                let mut tls_config = rustls::ClientConfig::builder_with_provider(
-                    CryptoProvider {
-                        cipher_suites: cipher_suites_copy,
-                        ..rustls::crypto::ring::default_provider()
-                    }
-                    .into(),
-                )
-                .with_protocol_versions(&[&rustls::version::TLS13])
-                .expect("Inconsistent cipher-suite/versions selected")
-                .with_root_certificates(auth_root_certs_copy)
-                .with_client_auth_cert(certs_copy, key)
-                .expect("Invalid client auth certs/key");
-                tls_config.enable_early_data = true;
-                tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
-                tls_config.alpn_protocols = Vec::new();
-                tls_config.max_fragment_size = args.max_frag_size;
-                if args.insecure {
-                    tls_config.dangerous().set_certificate_verifier(Arc::new(
-                        tls::danger::NoCertificateVerification {},
-                    ));
-                }
-                tls_client_config = Some(tls_config);
+                tls_client_max_frag_size = args.max_frag_size;
+                tls_client_insecure = args.insecure;
             }
             GatewayTypeCommand::Service(args) => {
                 mfa_scheme = AuthnType::Insecure;
@@ -742,11 +736,45 @@ impl AppConfig {
                 ca_key_algorithm = None;
                 ca_validity_period_days = None;
                 ca_reissuance_threshold_days = None;
+                tls_client_ca_root_cert_dir = args.service_args.ca_root_cert_dir.clone();
                 gateway_service_reply_host = args
                     .service_args
                     .gateway_service_reply_host
                     .or(Some("127.0.0.1".to_string()));
             }
+        }
+
+        // Create TLS client configuration
+
+        let mut ca_root_dir_certs: Vec<CertificateDer<'static>> = vec![];
+        if let Some(ca_root_cert_dir) = &tls_client_ca_root_cert_dir {
+            ca_root_dir_certs.append(&mut Self::load_ca_certs(ca_root_cert_dir)?);
+        }
+
+        let (ca_certs_added, ca_certs_ignored) =
+            auth_root_certs_for_tls_svc.add_parsable_certificates(ca_root_dir_certs);
+
+        let key = load_private_key(&config_args.key_file).unwrap();
+        let mut tls_config = rustls::ClientConfig::builder_with_provider(
+            CryptoProvider {
+                cipher_suites: cipher_suites_for_tls_svc,
+                ..rustls::crypto::ring::default_provider()
+            }
+            .into(),
+        )
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .expect("Inconsistent cipher-suite/versions selected")
+        .with_root_certificates(auth_root_certs_for_tls_svc)
+        .with_client_auth_cert(certs_for_tls_svc, key)
+        .expect("Invalid client auth certs/key");
+        tls_config.enable_early_data = true;
+        tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
+        tls_config.alpn_protocols = Vec::new();
+        tls_config.max_fragment_size = tls_client_max_frag_size;
+        if tls_client_insecure {
+            tls_config
+                .dangerous()
+                .set_certificate_verifier(Arc::new(tls::danger::NoCertificateVerification {}));
         }
 
         // Miscellaneous
@@ -760,7 +788,7 @@ impl AppConfig {
             server_host: config_args.host,
             server_port: config_args.port,
             tls_server_config_builder,
-            tls_client_config,
+            tls_client_config: Some(tls_config),
             crl_reloader_loading,
             mfa_scheme,
             verbose_logging: config_args.verbose,
@@ -780,9 +808,56 @@ impl AppConfig {
             ca_key_algorithm,
             ca_validity_period_days,
             ca_reissuance_threshold_days,
+            ca_root_cert_dir: tls_client_ca_root_cert_dir,
+            ca_certs_added: ca_certs_added + 1,
+            ca_certs_ignored,
             dns_client,
             device,
         })
+    }
+
+    /// Load additional CA root certificates
+    fn load_ca_certs(ca_root_cert_dir: &PathBuf) -> Result<Vec<CertificateDer<'static>>, AppError> {
+        let mut ca_certs = vec![];
+
+        match fs::read_dir(ca_root_cert_dir.as_path()) {
+            Ok(read_dir_iter) => {
+                for dir_entry_result in read_dir_iter {
+                    match dir_entry_result {
+                        Ok(dir_entry) => {
+                            let dir_entry_path = &dir_entry.path();
+                            if dir_entry_path.is_file() {
+                                match load_certificates(dir_entry_path.to_str().unwrap()) {
+                                    Ok(certs) => ca_certs.append(&mut certs.clone()),
+
+                                    Err(err) => warn(
+                                        &target!(),
+                                        &format!(
+                                            "Invalid CA cert dir cert: file={:?}, err={:?}",
+                                            &dir_entry, &err
+                                        ),
+                                    ),
+                                }
+                            }
+                        }
+
+                        Err(err) => warn(
+                            &target!(),
+                            &format!("Invalid CA cert dir file entry: err={:?}", &err),
+                        ),
+                    }
+                }
+            }
+
+            Err(err) => {
+                return Err(AppError::General(format!(
+                    "Error reading CA cert dir path: path={:?}, err={:?}",
+                    &ca_root_cert_dir, &err
+                )));
+            }
+        }
+
+        Ok(ca_certs)
     }
 
     #[allow(clippy::type_complexity)]
@@ -954,6 +1029,8 @@ pub mod tests {
         [env!("CARGO_MANIFEST_DIR"), "testdata", "gateway.crt.pem"];
     const KEYFILE_GATEWAY_PATHPARTS: [&str; 3] =
         [env!("CARGO_MANIFEST_DIR"), "testdata", "gateway.key.pem"];
+    const CA_ROOT_CERT_DIR_PATHPARTS: [&str; 3] =
+        [env!("CARGO_MANIFEST_DIR"), "testdata", "cacert"];
     const DB_DIR_PATHPARTS: [&str; 2] = [env!("CARGO_MANIFEST_DIR"), "testdata"];
 
     static TEST_MUTEX: Lazy<Arc<Mutex<bool>>> = Lazy::new(|| Arc::new(Mutex::new(true)));
@@ -976,6 +1053,7 @@ pub mod tests {
         let gateway_cert_copy2 = gateway_cert.clone();
         let gateway_key_file: PathBuf = KEYFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_key = load_private_key(gateway_key_file.to_str().as_ref().unwrap())?;
+        let ca_root_cert_dir: PathBuf = CA_ROOT_CERT_DIR_PATHPARTS.iter().collect();
         let cipher_suites: Vec<rustls::SupportedCipherSuite> =
             rustls::crypto::ring::ALL_CIPHER_SUITES.to_vec();
         let cipher_suites_copy = cipher_suites.clone();
@@ -987,7 +1065,7 @@ pub mod tests {
                 AppError::General(format!("Error adding CA root cert: err={:?}", &err))
             })?;
         }
-        let auth_root_certs_copy = auth_root_certs.clone();
+        let mut auth_root_certs_copy = auth_root_certs.clone();
 
         let tls_server_config_builder = TlsServerConfigBuilder {
             certs: gateway_cert,
@@ -1009,8 +1087,8 @@ pub mod tests {
         let ca_key_algorithm;
         let ca_validity_period_days;
         let ca_reissuance_threshold_days;
-        let mut tls_client_config = None;
         let device = Device::new(gateway_cert_copy2, None)?;
+        let mut tls_client_ca_root_cert_dir = None;
 
         match &gateway_type {
             GatewayType::Full => {
@@ -1022,6 +1100,7 @@ pub mod tests {
                 ca_validity_period_days = Some(DEFAULT_CA_CERTIFICATE_VALIDITY_PERIOD_DAYS);
                 ca_reissuance_threshold_days =
                     Some(DEFAULT_CA_CERTIFICATE_REISSUANCE_THRESHOLD_DAYS);
+                tls_client_ca_root_cert_dir = Some(ca_root_cert_dir.clone());
             }
             GatewayType::Client => {
                 service_gateway_host = Some("10.0.0.1".to_string());
@@ -1032,25 +1111,6 @@ pub mod tests {
                 ca_validity_period_days = Some(DEFAULT_CA_CERTIFICATE_VALIDITY_PERIOD_DAYS);
                 ca_reissuance_threshold_days =
                     Some(DEFAULT_CA_CERTIFICATE_REISSUANCE_THRESHOLD_DAYS);
-                // Create TLS client configuration
-                let gateway_key = load_private_key(gateway_key_file.to_str().as_ref().unwrap())?;
-                let mut tls_config = rustls::ClientConfig::builder_with_provider(
-                    CryptoProvider {
-                        cipher_suites: cipher_suites_copy,
-                        ..rustls::crypto::ring::default_provider()
-                    }
-                    .into(),
-                )
-                .with_protocol_versions(&[&rustls::version::TLS13])
-                .expect("Inconsistent cipher-suite/versions selected")
-                .with_root_certificates(auth_root_certs_copy)
-                .with_client_auth_cert(gateway_cert_copy, gateway_key)
-                .expect("Invalid client auth certs/key");
-                tls_config.enable_early_data = true;
-                tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
-                tls_config.alpn_protocols = Vec::new();
-                tls_config.max_fragment_size = Some(1024);
-                tls_client_config = Some(tls_config);
             }
             GatewayType::Service => {
                 service_gateway_host = None;
@@ -1060,15 +1120,44 @@ pub mod tests {
                 ca_key_algorithm = None;
                 ca_validity_period_days = None;
                 ca_reissuance_threshold_days = None;
+                tls_client_ca_root_cert_dir = Some(ca_root_cert_dir.clone());
             }
         }
+
+        // Create TLS client configuration
+
+        let mut ca_root_dir_certs: Vec<CertificateDer<'static>> = vec![];
+        if let Some(ca_root_cert_dir) = &tls_client_ca_root_cert_dir {
+            ca_root_dir_certs.append(&mut AppConfig::load_ca_certs(ca_root_cert_dir)?);
+        }
+
+        let (ca_certs_added, ca_certs_ignored) =
+            auth_root_certs_copy.add_parsable_certificates(ca_root_dir_certs);
+
+        let gateway_key = load_private_key(gateway_key_file.to_str().as_ref().unwrap())?;
+        let mut tls_config = rustls::ClientConfig::builder_with_provider(
+            CryptoProvider {
+                cipher_suites: cipher_suites_copy,
+                ..rustls::crypto::ring::default_provider()
+            }
+            .into(),
+        )
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .expect("Inconsistent cipher-suite/versions selected")
+        .with_root_certificates(auth_root_certs_copy)
+        .with_client_auth_cert(gateway_cert_copy, gateway_key)
+        .expect("Invalid client auth certs/key");
+        tls_config.enable_early_data = true;
+        tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
+        tls_config.alpn_protocols = Vec::new();
+        tls_config.max_fragment_size = Some(1024);
 
         Ok(AppConfig {
             gateway_type,
             server_host: "127.0.0.1".to_string(),
             server_port: 2000,
             tls_server_config_builder,
-            tls_client_config,
+            tls_client_config: Some(tls_config),
             crl_reloader_loading: Arc::new(Mutex::new(false)),
             mfa_scheme: AuthnType::Insecure,
             verbose_logging: false,
@@ -1088,6 +1177,9 @@ pub mod tests {
             ca_key_algorithm,
             ca_validity_period_days,
             ca_reissuance_threshold_days,
+            ca_root_cert_dir: tls_client_ca_root_cert_dir,
+            ca_certs_added: ca_certs_added + 1,
+            ca_certs_ignored,
             dns_client,
             device,
         })
@@ -1117,6 +1209,7 @@ pub mod tests {
         env::remove_var("CA_KEY_ALGORITHM");
         env::remove_var("CA_VALIDITY_PERIOD_DAYS");
         env::remove_var("CA_REISSUANCE_THRESHOLD_DAYS");
+        env::remove_var("CA_ROOT_CERT_DIR");
         env::remove_var("VERBOSE");
     }
 
@@ -1126,6 +1219,7 @@ pub mod tests {
         cert_file: &str,
         ca_root_key_file: &str,
         ca_root_cert_file: &str,
+        ca_root_cert_dir: Option<&str>,
     ) -> Result<AppConfig, AppError> {
         let db_dir: PathBuf = DB_DIR_PATHPARTS.iter().collect();
         let db_dir = db_dir.to_str().unwrap();
@@ -1164,6 +1258,10 @@ pub mod tests {
         env::set_var("CA_VALIDITY_PERIOD_DAYS", "200");
         env::set_var("CA_REISSUANCE_THRESHOLD_DAYS", "30");
         env::set_var("VERBOSE", "true");
+
+        if let Some(ca_root_cert_dir) = ca_root_cert_dir {
+            env::set_var("CA_ROOT_CERT_DIR", ca_root_cert_dir);
+        }
 
         AppConfig::new()
     }
@@ -1237,12 +1335,16 @@ pub mod tests {
         let gateway_key_file_str = gateway_key_file.to_str().unwrap();
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_cert_file_str = gateway_cert_file.to_str().unwrap();
+        let ca_cert_root_dir_path: PathBuf = CA_ROOT_CERT_DIR_PATHPARTS.iter().collect();
+        let ca_cert_root_dir = ca_cert_root_dir_path.to_str().unwrap();
+
         let result = setup_all_env_vars(
             &GatewayType::Full,
             gateway_key_file_str,
             gateway_cert_file_str,
             gateway_key_file_str,
             gateway_cert_file_str,
+            Some(ca_cert_root_dir),
         );
 
         if let Err(err) = result {
@@ -1251,7 +1353,7 @@ pub mod tests {
         let config = result.unwrap();
 
         assert_eq!(config.gateway_type, GatewayType::Full);
-        assert!(config.tls_client_config.is_none());
+        assert!(config.tls_client_config.is_some());
         assert_eq!(config.server_host, "127.0.0.1");
         assert_eq!(config.server_port, 8000);
         assert!(config.service_gateway_host.is_none());
@@ -1288,6 +1390,10 @@ pub mod tests {
                 &hex::encode(vec![3u8, 231u8]),
             )
         );
+        assert!(config.ca_root_cert_dir.is_some());
+        assert_eq!(config.ca_root_cert_dir.unwrap(), ca_cert_root_dir_path);
+        assert_eq!(config.ca_certs_added, 147);
+        assert_eq!(config.ca_certs_ignored, 0);
     }
 
     #[test]
@@ -1302,6 +1408,7 @@ pub mod tests {
             gateway_cert_file_str,
             gateway_key_file_str,
             gateway_cert_file_str,
+            None,
         );
 
         if let Err(err) = result {
@@ -1345,6 +1452,9 @@ pub mod tests {
                 &hex::encode(vec![3u8, 231u8]),
             )
         );
+        assert!(config.ca_root_cert_dir.is_none());
+        assert_eq!(config.ca_certs_added, 1);
+        assert_eq!(config.ca_certs_ignored, 0);
     }
 
     #[test]
@@ -1353,12 +1463,15 @@ pub mod tests {
         let gateway_key_file_str = gateway_key_file.to_str().unwrap();
         let gateway_cert_file: PathBuf = CERTFILE_GATEWAY_PATHPARTS.iter().collect();
         let gateway_cert_file_str = gateway_cert_file.to_str().unwrap();
+        let ca_cert_root_dir_path: PathBuf = CA_ROOT_CERT_DIR_PATHPARTS.iter().collect();
+        let ca_cert_root_dir = ca_cert_root_dir_path.to_str().unwrap();
         let result = setup_all_env_vars(
             &GatewayType::Service,
             gateway_key_file_str,
             gateway_cert_file_str,
             gateway_key_file_str,
             gateway_cert_file_str,
+            Some(ca_cert_root_dir),
         );
 
         if let Err(err) = result {
@@ -1367,7 +1480,7 @@ pub mod tests {
         let config = result.unwrap();
 
         assert_eq!(config.gateway_type, GatewayType::Service);
-        assert!(config.tls_client_config.is_none());
+        assert!(config.tls_client_config.is_some());
         assert_eq!(config.server_host, "127.0.0.1");
         assert_eq!(config.server_port, 8000);
         assert!(config.service_gateway_host.is_none());
@@ -1397,6 +1510,10 @@ pub mod tests {
                 &hex::encode(vec![3u8, 231u8]),
             )
         );
+        assert!(config.ca_root_cert_dir.is_some());
+        assert_eq!(config.ca_root_cert_dir.unwrap(), ca_cert_root_dir_path);
+        assert_eq!(config.ca_certs_added, 147);
+        assert_eq!(config.ca_certs_ignored, 0);
     }
 
     #[test]
@@ -1449,7 +1566,7 @@ pub mod tests {
         assert_eq!(config.server_host, "127.0.0.1");
         assert_eq!(config.server_port, 8888);
         assert_eq!(config.gateway_type, GatewayType::Full);
-        assert!(config.tls_client_config.is_none());
+        assert!(config.tls_client_config.is_some());
         assert!(config.service_gateway_host.is_none());
         assert!(config.service_gateway_port.is_none());
         assert!(config.gateway_service_host.is_some());
@@ -1490,6 +1607,9 @@ pub mod tests {
                 &hex::encode(vec![3u8, 231u8]),
             )
         );
+        assert!(config.ca_root_cert_dir.is_none());
+        assert_eq!(config.ca_certs_added, 1);
+        assert_eq!(config.ca_certs_ignored, 0);
     }
 
     #[test]

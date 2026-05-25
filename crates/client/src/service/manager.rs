@@ -16,9 +16,9 @@ use trust0_common::target;
 use super::proxy::proxy_base::{
     ClientServiceProxy, ClientServiceProxyVisitor, ControlServiceProxyVisitor,
 };
-use super::proxy::tcp_proxy::TcpClientProxy;
 use crate::config::AppConfig;
-use crate::service::proxy::tcp_proxy::TcpClientProxyServerVisitor;
+use crate::service::proxy::tcp_proxy::{TcpClientProxy, TcpClientProxyServerVisitor};
+use crate::service::proxy::tls_proxy::{TlsClientProxy, TlsClientProxyServerVisitor};
 use crate::service::proxy::udp_proxy::{UdpClientProxy, UdpClientProxyServerVisitor};
 
 /// Handles management of service proxy connections
@@ -323,6 +323,36 @@ impl ServiceMgr for ClientServiceMgr {
                 }
             }
 
+            // Starts up TLS service proxy
+            Transport::TLS => {
+                let tls_proxy_visitor = Arc::new(Mutex::new(TlsClientProxyServerVisitor::new(
+                    &self.app_config,
+                    service,
+                    proxy_addrs.get_client_port(),
+                    proxy_addrs.get_gateway_host(),
+                    proxy_addrs.get_gateway_port(),
+                    &self.proxy_tasks_sender,
+                    &self.proxy_events_sender,
+                    &self.services_by_proxy_key,
+                )?));
+
+                service_proxy = Arc::new(Mutex::new(TlsClientProxy::new(
+                    &self.app_config,
+                    tls_proxy_visitor.clone(),
+                    proxy_addrs.get_client_port(),
+                )));
+
+                service_proxy_visitor = tls_proxy_visitor;
+
+                if !self.testing_mode {
+                    let service_proxy_closure = service_proxy.clone();
+                    let service_proxy_thread =
+                        thread::spawn(move || service_proxy_closure.lock().unwrap().startup());
+                    self.service_proxy_threads
+                        .insert(service.service_id, service_proxy_thread);
+                }
+            }
+
             // Starts up UDP service proxy
             Transport::UDP => {
                 let (server_socket_channel_sender, server_socket_channel_receiver) =
@@ -356,11 +386,6 @@ impl ServiceMgr for ClientServiceMgr {
                     self.service_proxy_threads
                         .insert(service.service_id, service_proxy_thread);
                 }
-            }
-
-            // Starts up TLS service proxy
-            Transport::TLS => {
-                unimplemented!();
             }
         }
 
@@ -785,6 +810,43 @@ pub mod tests {
             service_id: 200,
             name: "Service200".to_string(),
             transport: Transport::TCP,
+            host: "localhost".to_string(),
+            port: 8200,
+        };
+        let app_config = Arc::new(config::tests::create_app_config().unwrap());
+        let proxy_addrs = ProxyAddrs(3000, "gwhost1".to_string(), 8000);
+
+        let mut service_mgr =
+            ClientServiceMgr::new(&app_config, &mpsc::channel().0, &mpsc::channel().0);
+        service_mgr.testing_mode = true;
+
+        let orig_svc_addrs_len = service_mgr.service_addrs.len();
+        let orig_svc_proxies_len = service_mgr.service_proxies.len();
+        let orig_svc_proxy_visitors_len = service_mgr.service_proxy_visitors.len();
+
+        match service_mgr.startup(&service, &proxy_addrs) {
+            Ok(result_proxy_addrs) => {
+                assert_eq!(result_proxy_addrs, proxy_addrs);
+            }
+            Err(err) => {
+                panic!("Unexpected startup result: err={:?}", &err);
+            }
+        }
+
+        assert_eq!(service_mgr.service_addrs.len(), orig_svc_addrs_len + 1);
+        assert_eq!(service_mgr.service_proxies.len(), orig_svc_proxies_len + 1);
+        assert_eq!(
+            service_mgr.service_proxy_visitors.len(),
+            orig_svc_proxy_visitors_len + 1
+        );
+    }
+
+    #[test]
+    fn clisvcmgr_start_when_tls_service() {
+        let service = Service {
+            service_id: 200,
+            name: "Service200".to_string(),
+            transport: Transport::TLS,
             host: "localhost".to_string(),
             port: 8200,
         };

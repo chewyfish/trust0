@@ -119,14 +119,16 @@ impl Client {
         })?;
 
         // TLS handshaking
-        let _ = tls_client_conn
-            .complete_io(&mut tcp_stream)
-            .map_err(|err| {
-                AppError::General(format!(
-                    "Error completing TLS client connection: err={:?}",
-                    &err
-                ))
-            })?;
+        if tls_client_conn.is_handshaking() {
+            let _ = tls_client_conn
+                .complete_io(&mut tcp_stream)
+                .map_err(|err| {
+                    AppError::General(format!(
+                        "Error completing TLS client connection: err={:?}",
+                        &err
+                    ))
+                })?;
+        }
 
         // Post TLS-established connection processing
         tcp_stream.set_nonblocking(true).map_err(|err| {

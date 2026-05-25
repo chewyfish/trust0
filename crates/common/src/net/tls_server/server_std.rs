@@ -322,6 +322,9 @@ impl Server {
                 format!("server_addr={:?}, peer_addr={:?}", &listen_addr, &peer_addr);
             let reattempt_delay = Duration::from_millis(CONN_COMPLETION_REATTEMPT_DELAY_MSECS);
             for attempt in 0..CONN_COMPLETION_MAX_ATTEMPTS {
+                if !tls_srv_conn.is_handshaking() {
+                    break;
+                }
                 match tls_srv_conn.complete_io(&mut tcp_stream) {
                     Ok(_) => break,
                     Err(err) if io::ErrorKind::WouldBlock == err.kind() => {}
