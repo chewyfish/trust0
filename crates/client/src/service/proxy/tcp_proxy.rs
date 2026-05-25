@@ -167,11 +167,18 @@ impl server_std::ServerVisitor for TcpClientProxyServerVisitor {
         tls_client.connect()?;
 
         let tls_client_conn = tls_client.get_connection().as_ref().unwrap();
+        let tls_client_stream = tls_client_conn.get_tcp_stream();
 
-        let gateway_stream = stream_utils::clone_std_tcp_stream(
-            tls_client_conn.get_tcp_stream(),
-            "tcp-proxy-server",
+        let tls_tcp_socket_str = format!("{:?}", tls_client_stream);
+        stream_utils::set_std_tcp_stream_blocking_and_delay(
+            tls_client_stream,
+            false,
+            false,
+            Box::new(move || format!("socket={:?}", &tls_tcp_socket_str)),
         )?;
+
+        let gateway_stream =
+            stream_utils::clone_std_tcp_stream(tls_client_stream, "tcp-proxy-server")?;
 
         // Send request to proxy executor to startup new proxy
 
