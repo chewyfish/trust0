@@ -190,6 +190,11 @@ Options:
           Hostname/ip of this gateway, which is routable by UDP services, used in UDP socket replies. If not supplied, then "127.0.0.1" will be used (if necessary)
           
           [env: GATEWAY_SERVICE_REPLY_HOST=]
+  
+      --ca-root-cert-dir <CA_ROOT_CERT_DIR>
+          CA root certificate(s) directory for TLS service usage from <CA_ROOT_CERT_DIR>. If not supplied, then only Trust0 CA root certificate is used.
+
+          [env: CA_ROOT_CERT_DIR=]
 
       --help
           Print help
@@ -271,6 +276,11 @@ Usage: trust0-gateway --host <HOST> --port <PORT> --cert-file <CERT_FILE> --key-
 Options:
       --gateway-service-reply-host <GATEWAY_SERVICE_REPLY_HOST>
           Hostname/ip of this gateway, which is routable by UDP services, used in UDP socket replies. If not supplied, then "127.0.0.1" will be used (if necessary) [env: GATEWAY_SERVICE_REPLY_HOST=]
+  
+      --ca-root-cert-dir <CA_ROOT_CERT_DIR>
+          CA root certificate(s) directory for TLS service usage from <CA_ROOT_CERT_DIR>. If not supplied, then only Trust0 CA root certificate is used.
+
+          [env: CA_ROOT_CERT_DIR=]
 
       --help
           Print help

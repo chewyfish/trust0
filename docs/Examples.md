@@ -10,6 +10,7 @@
     * [Example - Chat TCP Service (DMZ)](#example---chat-tcp-service-dmz)
     * [Example - Echo UDP Service](#example---echo-udp-service)
     * [Example - SSHD Service](#example---sshd-service)
+    * [Example - Web TLS Service](#example---web-tls-service)
     * [Example - Reissue Certificate](#example---reissue-certificate)
     * [Example - Revoke Certificate](#example---revoke-certificate)
 <!-- TOC -->
@@ -24,6 +25,7 @@ The following examples are provided in the `examples` directory:
 * [Chat TCP Service (DMZ)](#example---chat-tcp-service-dmz)
 * [Echo UDP Service](#example---echo-udp-service)
 * [SSHD Service](#example---sshd-service)
+* [Web TLS Service](#example---web-tls-service)
 * [Reissue Certificate](#example---reissue-certificate)
 * [Revoke Certificate](#example---revoke-certificate)
 
@@ -192,7 +194,7 @@ If example requires secondary authentication credentials, please use "user1", "p
 Enter an available port for the trust0 gateway (#1): 8300
 Enter an available port for the trust0 gateway (#2): 8400
 ...
-Enter an available port for the sshd service: 22
+Enter the configured port for the sshd service: 22
 Enter an available port for the sshd proxy: 8701
 ...
 
@@ -209,6 +211,35 @@ You will be presented with a tmux session w/multiple panes, which represent:
 Follow the instructions in step order. The following shows a screencast (using asciinema) of a SSHD session:
 
 [![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-ssh-tcp.png)](https://asciinema.org/a/1053875)
+
+### Example - Web TLS Service
+
+In the `example` directory, you can run an example, which runs a curl request to `https://www.example.com` service. This showcases the TLS service type, which presents an HTTP proxy (via HTTP CONNECT) to the curl command.
+
+To run this example, execute the `run-web-tls-example.sh` script. You will be asked for free ports to be used for the client, gateway and the `www.example.com` (HTTPS) web site (script uses these ports to update the examplecom-tls service DB record and also now knows how to run the gateway).
+
+```
+[example] $ ./run-web-rls-example.sh
+If example requires secondary authentication credentials, please use "user1", "pass1"
+Enter an available port for the trust0 gateway (#1): 8300
+...
+Enter the configured port for the https://www.example.com service: 443
+Enter an available port for the https://www.example.com proxy: 8801
+...
+
+(... PKI certificates/keys created, trust0 binaries built ...)
+```
+
+You will be presented with a tmux session w/multiple panes, which represent:
+* Simple shell, which can be used to verify/ensure prerequisites (if needed)
+* Trust0 Gateway
+* Trust0 Client
+* Curl request
+* Shutdown example action
+
+Follow the instructions in step order. The following shows a screencast (using asciinema) of the TLS session:
+
+[![asciicast](https://raw.githubusercontent.com/chewyfish/project-assets/main/trust0/asciicast-web-tls.png)](https://asciinema.org/a/1130687)
 
 ### Example - Reissue Certificate
 
