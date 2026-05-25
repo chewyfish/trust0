@@ -281,15 +281,15 @@ impl tls_server::server_std::ServerVisitor for ServiceGatewayProxyServerVisitor 
         tls_client_config.alpn_protocols =
             vec![alpn::Protocol::create_service_protocol(self.service.service_id).into_bytes()];
 
-        let device_id_parsed = device::Device::parse_id(
-            self.devices_by_proxy_addrs
-                .get(connection.get_session_addrs())
-                .ok_or(AppError::General(format!(
-                    "Unknown device for proxy session address pair: addrs={:?}",
-                    connection.get_session_addrs()
-                )))?
-                .as_str(),
-        )?;
+        let proxy_addrs = connection.get_session_addrs();
+        let device_id = self
+            .devices_by_proxy_addrs
+            .get(proxy_addrs)
+            .ok_or(AppError::General(format!(
+                "Unknown device for proxy session address pair: addrs={:?}",
+                connection.get_session_addrs()
+            )))?;
+        let device_id_parsed = device::Device::parse_id(device_id.as_str())?;
 
         let mut tls_client = tls_client::client_std::Client::new(
             Box::new(ServiceGatewayClientVisitor::new(
@@ -304,11 +304,18 @@ impl tls_server::server_std::ServerVisitor for ServiceGatewayProxyServerVisitor 
         tls_client.connect()?;
 
         let tls_client_conn = tls_client.get_connection().as_ref().unwrap();
+        let tls_client_stream = tls_client_conn.get_tcp_stream();
 
-        let svcgw_stream = stream_utils::clone_std_tcp_stream(
-            tls_client_conn.get_tcp_stream(),
-            "svcgw-proxy-server",
+        let tls_tcp_socket_str = format!("{:?}", tls_client_stream);
+        stream_utils::set_std_tcp_stream_blocking_and_delay(
+            tls_client_stream,
+            false,
+            false,
+            Box::new(move || format!("socket={:?}", &tls_tcp_socket_str)),
         )?;
+
+        let svcgw_stream =
+            stream_utils::clone_std_tcp_stream(tls_client_stream, "svcgw-proxy-server")?;
 
         // Send request to proxy executor to startup new proxy
 
@@ -354,14 +361,6 @@ impl tls_server::server_std::ServerVisitor for ServiceGatewayProxyServerVisitor 
             .lock()
             .unwrap()
             .insert(proxy_key.clone(), self.service.service_id);
-
-        let device_id = self
-            .devices_by_proxy_addrs
-            .get(&proxy_addrs)
-            .ok_or(AppError::General(format!(
-                "Unknown device for proxy address pair: addrs={:?}",
-                &proxy_addrs
-            )))?;
 
         self.proxy_addrs_by_proxy_key
             .insert(proxy_key.clone(), proxy_addrs.clone());
@@ -423,7 +422,7 @@ impl GatewayServiceProxyVisitor for ServiceGatewayProxyServerVisitor {
                     proxy_tasks_sender,
                     ProxyExecutorEvent::Close(proxy_key.0.clone()),
                     Box::new(move || {
-                        format!("Error while sending request to close a TCP proxy connection: proxy_stream={},", &proxy_key_copy)
+                        format!("Error while sending request to close a SVCGW proxy connection: proxy_stream={},", &proxy_key_copy)
                     }),
                 ) {
                     errors.push(format!("{:?}", &err));
@@ -454,7 +453,7 @@ impl GatewayServiceProxyVisitor for ServiceGatewayProxyServerVisitor {
             ProxyExecutorEvent::Close(proxy_key.to_string()),
             Box::new(move || {
                 format!(
-                    "Error while sending request to close a TCP proxy connection: proxy_stream={},",
+                    "Error while sending request to close a SVCGW proxy connection: proxy_stream={},",
                     &proxy_key_copy
                 )
             }),
@@ -907,7 +906,7 @@ pub mod tests {
                     .unwrap(),
                     stream_utils::clone_std_tcp_stream(
                         &connected_tcp_stream.server_stream.0,
-                        "test-tcp-proxy-server",
+                        "test-svcgw-proxy-server",
                     )
                     .unwrap(),
                 ),
@@ -1002,7 +1001,7 @@ pub mod tests {
                     .unwrap(),
                     stream_utils::clone_std_tcp_stream(
                         &connected_tcp_stream.server_stream.0,
-                        "test-tcp-proxy-server",
+                        "test-svcgw-proxy-server",
                     )
                     .unwrap(),
                 ),
