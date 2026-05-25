@@ -206,6 +206,7 @@ fn process_client_pki_creator(app_config: &AppConfig) -> Result<(), AppError> {
                     ),
                 )
                 .dn_common_name(subject_common_name.as_str())
+                .san_dns_names(std::slice::from_ref(subject_common_name))
                 .san_uri_user_id(*auth_user_id)
                 .san_uri_platform(auth_platform.as_str());
             if serial_number.is_some() {
