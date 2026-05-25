@@ -4,5 +4,6 @@
     {"serviceId": 202, "name":  "Service202", "transport": "TCP", "host": "localhost", "port":  8202},
     {"serviceId": 203, "name":  "chat-tcp", "transport": "TCP", "host": "localhost", "port":  xCHAT_PORT},
     {"serviceId": 204, "name":  "echo-udp", "transport": "UDP", "host": "localhost", "port":  xECHO_PORT},
-    {"serviceId": 205, "name":  "sshd-tcp", "transport": "TCP", "host": "localhost", "port":  xSSHD_PORT}
+    {"serviceId": 205, "name":  "sshd-tcp", "transport": "TCP", "host": "localhost", "port":  xSSHD_PORT},
+    {"serviceId": 206, "name":  "examplecom-tls", "transport": "TLS", "host": "www.example.com", "port":  xEXAMPLECOM_PORT}
 ]
