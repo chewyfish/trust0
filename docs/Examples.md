@@ -29,12 +29,10 @@ The following examples are provided in the `examples` directory:
 * [Reissue Certificate](#example---reissue-certificate)
 * [Revoke Certificate](#example---revoke-certificate)
 
-:warning: Example screencasts below use earlier gateway (pre-gateway types) invocation usage
-
 Platforms tested:
 
-* Linux - Fedora 39
-* macOS - Big Sur
+* Linux - Fedora 44
+* macOS - Tahoe
 * Windows - 11
 
 ### Pre-requisites
@@ -45,6 +43,7 @@ To run the examples, the following commands are required:
 |----------------|---------------------------------------------------------------|-----------------------------------------------------------------------------------------|
 | Rust toolchain | Linux, macOS, Windows: `1.95.0`                               |                                                                                         |
 | `bash`         | Linux, macOS, Windows: `5.2.21`                               | Code will assert version is 4 or higher                                                 |
+| `curl`         | Linux: `8.18.0`, macOS: `8.20.0`, Windows: `8.15.0`           | For Windows, use the MSYS2 curl package                                                 |
 | `gmake`        | Linux, macOS, Windows: `4.4.1`                                |                                                                                         |
 | `openssl`      | Linux: `3.3.1`, macOS, Windows: `3.2.0`                       | This is not needed unless you change the example code to use the `OpenSSL` PKI provider |
 | `m4`           | Linux, Windows: `1.4.19` macOS: `1.4.6`                       |                                                                                         |
@@ -66,14 +65,18 @@ Tested with Linux Fedora 39. Other (main) Linux distributions will be tested (ev
 
 #### macOS
 
-Tested with macOS Big Sur.
+Tested with macOS Big Sur originally.
 
-The testing utilized [MacPorts](https://www.macports.org). The following ports were installed:
+The Big Sur testing utilized [MacPorts](https://www.macports.org). The following ports were installed:
 
 * `bash`
 * `gmake`
 * `nmap`
 * `tmux`
+
+Currently testing with Tahoe.
+
+The Tahoe testing utilized HomeBrew packages for various utilities.
 
 #### Windows
 
@@ -86,10 +89,13 @@ The testing utilized [MSYS2](https://www.msys2.org/), using the `UCRT64` environ
 * `openbsd-netcat`
 * `openssl`
 * `tmux`
+* `curl`
 
 Note - The GNU make command is `make` and not `gmake`. Either add `gmake` as a symlink or override the `GMAKE_CMD` variable (as mentioned above).
 
 Additionally, [NMAP](https://nmap.org/download#windows) was installed (not available as a `MSYS2` package as of the time of this writing).
+
+Note - Ensure the MSYS2 installed curl is installed (for the Web TLS example) and prefered by the example over the Windows variant.
 
 ### Example - Chat TCP Service
 
@@ -219,7 +225,7 @@ In the `example` directory, you can run an example, which runs a curl request to
 To run this example, execute the `run-web-tls-example.sh` script. You will be asked for free ports to be used for the client, gateway and the `www.example.com` (HTTPS) web site (script uses these ports to update the examplecom-tls service DB record and also now knows how to run the gateway).
 
 ```
-[example] $ ./run-web-rls-example.sh
+[example] $ ./run-web-tls-example.sh
 If example requires secondary authentication credentials, please use "user1", "pass1"
 Enter an available port for the trust0 gateway (#1): 8300
 ...
