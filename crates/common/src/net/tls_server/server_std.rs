@@ -267,7 +267,16 @@ impl Server {
         let mut acceptor = Acceptor::default();
 
         let accepted = loop {
-            acceptor.read_tls(&mut tcp_stream).unwrap();
+            if let Err(err) = acceptor.read_tls(&mut tcp_stream) {
+                if err.kind() == io::ErrorKind::WouldBlock {
+                    thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                return Err(AppError::General(format!(
+                    "Error during TLS server acceptor read: err={:?}",
+                    &err
+                )));
+            }
             if let Some(accepted) = acceptor.accept().map_err(|err| {
                 AppError::General(format!(
                     "Error reading TLS client hello: server_addr={:?}, peer_addr={:?}, err={:?}",
