@@ -176,7 +176,12 @@ impl tls_server::server_std::ServerVisitor for TlsClientProxyServerVisitor {
         );
         let client_stream = stream_utils::clone_std_tcp_stream(tcp_stream, "tls-client")?;
 
+        #[cfg(not(test))]
         let mut conn_reader_writer: Arc<Mutex<Box<dyn StreamReaderWriter>>> = Arc::new(Mutex::new(
+            Box::<TlsServerConnection>::new(connection.into()),
+        ));
+        #[cfg(test)]
+        let conn_reader_writer: Arc<Mutex<Box<dyn StreamReaderWriter>>> = Arc::new(Mutex::new(
             Box::<TlsServerConnection>::new(connection.into()),
         ));
 
